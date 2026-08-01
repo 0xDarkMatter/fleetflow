@@ -278,6 +278,13 @@
   .spark-l { font-size:9px; color:var(--text-muted); letter-spacing:.05em;
     text-transform:uppercase; margin-top:2px; display:flex; }
   .spark-l span:last-child { margin-left:auto; }
+  /* COLLAPSE HIDES DETAIL, NEVER THE SIGNAL. The activity sparkline is rendered
+     OUTSIDE .body on purpose, so a collapsed card still shows brand, state,
+     model, id and the activity strip - which is the whole reason to collapse in
+     the first place ("just the headlines" on a 37-lane grid). It used to sit
+     inside .body, and the result was that "collapse all lanes" silently blanked
+     every chart on the page: the one pixel you actually wanted was the one thing
+     collapse threw away. Do not move the sparkline back inside .body. */
   .card > .body { display:flex; flex-direction:column; gap:8px; }
   .card.collapsed > .body { display:none; }
   .card .caret { margin-left:auto; border:0; background:transparent; cursor:pointer;
@@ -1337,9 +1344,9 @@ function laneCard(l, age) {
         title="${isCollapsed(l.id) ? "expand" : "collapse"} this lane">${ico("chev")}</button>
     </div>
     <div class="ttl mono">${esc(l.id)}</div>
+    ${sparkline(l.density, l.density_basis, col)}
     <div class="body">
     <div class="sum">${esc(l.activity || "working")}</div>
-    ${sparkline(l.density, l.density_basis, col)}
     <div class="statrow">
       ${l.stalled
         ? chip("clock", fmt(l.last_activity_s + live), "silent", "warn")

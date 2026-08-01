@@ -541,6 +541,17 @@ grep -q 'data-toggle="__history__"' "$DASH" \
   || bad "dashboard: history toggle key mismatch (group will not fold)"
 grep -q 'caret\[data-card\]' "$DASH" \
   && ok "dashboard: per-card caret is bound" || bad "dashboard: caret rendered but unbound"
+# The sparkline must render BEFORE <div class="body">, or collapsing a card
+# blanks the chart - which is exactly the signal collapse is meant to preserve.
+python - "$DASH" <<'PY' && ok "dashboard: sparkline survives card collapse (outside .body)" \
+  || bad "dashboard: sparkline is inside .body - collapse would hide every chart"
+import re, sys
+s = open(sys.argv[1], encoding="utf-8").read()
+card = s[s.index("function laneCard"):]
+card = card[:card.index("\nfunction ")]
+spark, body = card.index("sparkline(l.density"), card.index('<div class="body">')
+sys.exit(0 if spark < body else 1)
+PY
 grep -q -- '--run-rgb' "$DASH" \
   && ok "dashboard: halo keyframe follows the theme" || bad "dashboard: hard-coded halo colour"
 grep -q 'PAL_DARK' "$DASH" && grep -q 'DARK.matches' "$DASH" \
