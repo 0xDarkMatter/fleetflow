@@ -25,6 +25,11 @@ Usage: ff-spawn.sh --run NAME --id ID --brain BRAIN --prompt-file FILE
   --brain BRAIN    glm | codex | grok | pi | sonnet | opus | haiku | fable
   --prompt-file F  packet file (guard preamble is prepended unless --no-guard)
   --phase NAME     progress-group label (default: build) - display only
+  --orchestrator M which brain is DRIVING this fleet (e.g. fable, opus). Nothing
+                   in the environment exposes it - a Claude Code session gives its
+                   children CLAUDE_EFFORT and a session id but NOT its model - so
+                   it must be passed, or set once via $FLEETFLOW_ORCHESTRATOR, or
+                   left to whatever `ff-doctor --live` last probed. Display only.
   --worktree       give the worker its own worktree lane (branch fleetflow/RUN/ID)
   --base BRANCH    worktree base (default: main, falls back to HEAD)
   --repo PATH      repo root (default: git toplevel of cwd)
@@ -48,6 +53,9 @@ ENV (pi brain)
                                    NOTE: lanes get an ISOLATED PI_CODING_AGENT_DIR,
                                    so ~/.pi/agent/auth.json does NOT apply - the
                                    provider's API key env var is the only auth.
+
+ENV
+  FLEETFLOW_ORCHESTRATOR           default for --orchestrator (set once per session)
 
 ENV (codex brain)
   FLEETFLOW_CODEX_MODEL            model passed to `codex exec -m`
@@ -81,10 +89,12 @@ main() {
 
 RUN="" ID="" BRAIN="" PROMPT_FILE="" WORKTREE=0 BASE="main" REPO=""
 MAX_TURNS=100 SCHEMA="" GUARD=1 FORCE=0 DRYRUN=0 PHASE="build" EFFORT=""
+ORCHESTRATOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
     --phase) PHASE="${2:-}"; shift 2 ;;
+    --orchestrator) ORCHESTRATOR="${2:-}"; shift 2 ;;
     --id) ID="${2:-}"; shift 2 ;;
     --brain) BRAIN="${2:-}"; shift 2 ;;
     --prompt-file) PROMPT_FILE="${2:-}"; shift 2 ;;
@@ -221,12 +231,15 @@ MENTRY="$(jq -nc --arg id "$ID" --arg b "$BRAIN" --arg p "$PHASE" --arg pf "$(pr
   '{id:$id,brain:$b,phase:$p,prompt_file:$pf,worktree:$wt,max_turns:$mt,effort:$e,schema:$s,key:$k}')"
 if [ ! -s "$MANIFEST" ]; then
   jq -nc --arg run "$RUN" --arg base "$BASE" --arg by "ff-spawn/$FF_VERSION" \
-    --argjson entry "$MENTRY" --arg phase "$PHASE" \
-    '{run:$run,base:$base,created_by:$by,phases:[$phase],packets:[$entry]}' > "$MANIFEST"
+    --argjson entry "$MENTRY" --arg phase "$PHASE" --arg o "$ORCHESTRATOR" \
+    '{run:$run,base:$base,created_by:$by,
+      orchestrator:(if $o=="" then null else $o end),
+      phases:[$phase],packets:[$entry]}' > "$MANIFEST"
 else
-  jq --argjson entry "$MENTRY" --arg id "$ID" --arg phase "$PHASE" \
+  jq --argjson entry "$MENTRY" --arg id "$ID" --arg phase "$PHASE" --arg o "$ORCHESTRATOR" \
     '.packets = ((.packets // []) | map(select(.id != $id))) + [$entry]
-     | .phases = (((.phases // []) + [$phase]) | unique)' \
+     | .phases = (((.phases // []) + [$phase]) | unique)
+     | .orchestrator = (.orchestrator // (if $o=="" then null else $o end))' \
     "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
 fi
 
@@ -258,6 +271,17 @@ fi
 # workers self-report theirs in result.json's modelUsage, but recording it here
 # too means every lane can answer "what actually ran" the same way. Also display
 # metadata, also deliberately out of the cache key.
+# WHICH BRAIN RAN THE ORCHESTRATOR. Nothing in the environment exposes it - a
+# Claude Code session publishes CLAUDE_EFFORT and a session id to its children but
+# NOT its model - so fleetflow has to be told, in this order:
+#   --orchestrator M  >  $FLEETFLOW_ORCHESTRATOR  >  what ff-doctor last probed
+# and null if nobody said. Recorded because "who decided" is the one thing a run's
+# cost table cannot reconstruct afterwards: the lanes are all in the journal, the
+# judgment that placed them is not.
+: "${ORCHESTRATOR:=}"
+[ -n "$ORCHESTRATOR" ] || ORCHESTRATOR="${FLEETFLOW_ORCHESTRATOR:-}"
+[ -n "$ORCHESTRATOR" ] || ORCHESTRATOR="$(cat "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null | tr -d '\r\n')"
+
 SPAWN_MODEL=""
 case "$BRAIN" in
   codex) SPAWN_MODEL="${FLEETFLOW_CODEX_MODEL:-}" ;;
@@ -267,9 +291,10 @@ case "$BRAIN" in
   *)     SPAWN_MODEL="$BRAIN" ;;
 esac
 jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$BRAIN" --arg p "$PHASE" --arg v "$FF_VERSION" \
-  --arg m "$SPAWN_MODEL" \
+  --arg m "$SPAWN_MODEL" --arg o "$ORCHESTRATOR" \
   '{type:"started",key:$k,id:$id,brain:$b,phase:$p,v:$v,
-    model:(if $m=="" then null else $m end)}' >> "$JOURNAL"
+    model:(if $m=="" then null else $m end),
+    orchestrator:(if $o=="" then null else $o end)}' >> "$JOURNAL"
 
 # --- reap anchor (2026-07-27: TaskStop left 5 orphaned codex.exe alive) --------
 # Killing the wrapper does NOT kill the worker: `codex exec` spawns codex.exe and

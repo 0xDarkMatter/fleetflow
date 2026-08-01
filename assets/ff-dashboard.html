@@ -56,7 +56,6 @@
     font:13px/1.5 "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif; }
   .mono { font-family:var(--font-mono); }
   button, input, select { font:inherit; color:inherit; }
-  svg.bm { width:11px; height:11px; flex:0 0 auto; }
   svg.i { width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2;
     stroke-linecap:round; stroke-linejoin:round; flex:none; }
 
@@ -80,9 +79,26 @@
   .banner.warnstyle { background:var(--warn); color:#1a1a17; }
 
   .wrap { display:grid; grid-template-columns:300px 1fr; align-items:start; }
-  @media (max-width:900px) { .wrap { grid-template-columns:1fr; }
-    aside { border-right:none !important; border-bottom:1px solid var(--border);
-      position:static !important; max-height:none !important; } }
+  /* NARROW PANE (the Claude Code preview pane is ~400-500px wide). Stacking the
+     tree above the content put 1386px of repo list in front of the dashboard -
+     you had to scroll past every repo to see anything. So below 900px the
+     sidebar becomes a DRAWER, closed by default: the run grid is what you came
+     for, and the switcher is one tap away. */
+  .navtoggle { display:none; border:1px solid var(--border); background:var(--surface-1);
+    color:var(--text-secondary); border-radius:6px; padding:3px 9px; cursor:pointer;
+    font-size:11px; align-items:center; gap:5px; }
+  @media (max-width:900px) {
+    .wrap { grid-template-columns:1fr; }
+    .navtoggle { display:inline-flex; }
+    .stamp { display:none; }
+    aside { position:fixed; top:46px; left:0; right:0; bottom:0; z-index:15;
+      background:var(--bg); border-right:none; border-bottom:1px solid var(--border);
+      max-height:none; display:none; overflow-y:auto; }
+    body.nav-open aside { display:block; }
+    main { padding:11px 12px 40px; }
+    .deck { grid-template-columns:1fr; }
+    .stats { gap:13px; }
+  }
 
   /* ── sidebar ─────────────────────────────────────────────────────────── */
   aside { border-right:1px solid var(--border); padding:10px 9px 30px;
@@ -141,11 +157,38 @@
   .sq.done { background:var(--ok); } .sq.failed { background:var(--bad); }
   .sq.stalled { background:var(--warn); }   /* amber and NOT animated - see header */
   @keyframes pulse { 50% { opacity:.3 } }
+  /* Running is the state you are actually here to see, so it gets MOTION the
+     others cannot borrow: a breathing halo on the card dot and a sweep across the
+     card's top edge. `stalled` deliberately gets none of it - a wedged lane that
+     shimmered like a working one would undo the whole point of the amber pip. */
+  @keyframes halo {
+    0%,100% { box-shadow:0 0 0 0 rgba(55,138,221,.55) }
+    50%     { box-shadow:0 0 0 5px rgba(55,138,221,0) } }
+  @keyframes sweep { from { background-position:-140% 0 } to { background-position:240% 0 } }
+  .hd .dot.running { animation:pulse 1.1s ease-in-out infinite, halo 1.8s ease-out infinite; }
+  .card.is-running { border-color:var(--run); position:relative; overflow:hidden; }
+  .card.is-running::before { content:""; position:absolute; inset:0 0 auto 0; height:2px;
+    background:linear-gradient(90deg,transparent,var(--run),transparent);
+    background-size:40% 100%; background-repeat:no-repeat;
+    animation:sweep 2.1s linear infinite; }
+  .runrow.live .nm { color:var(--run); }
+  .repo-h .n.live { color:var(--run); font-weight:600; }
 
   /* ── right pane ──────────────────────────────────────────────────────── */
   main { padding:13px 15px 46px; min-width:0; }
   .rhead { background:var(--surface-2); border:1px solid var(--border);
     border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  /* Who is DRIVING sits above the run, top-left of the main panel: it is the one
+     identity that applies to the whole fleet rather than to any single lane. Same
+     provider marks as the lane cards, so "Claude ran this" reads identically
+     wherever it appears. */
+  .orch { display:inline-flex; align-items:center; gap:7px; margin-bottom:9px;
+    padding:3px 10px 3px 7px; border:1px solid var(--border); border-radius:20px;
+    background:var(--surface-1); font-size:12px; }
+  .orch svg.mark { width:16px; height:16px; }
+  .orch b { font-weight:600; letter-spacing:-.01em; }
+  .orch span { color:var(--text-muted); font-size:11px; }
+  .orch.unknown { border-style:dashed; }
   .rhead-r { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
   .rhead h2 { font-size:19px; font-weight:600; letter-spacing:-.02em; }
   .rhead .path { color:var(--text-muted); font-size:11px; word-break:break-all;
@@ -193,6 +236,15 @@
   .hd { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; row-gap:5px; }
   .hd .dot { width:8px; height:8px; border-radius:50%; flex:none; }
   .hd .dot.running { animation:pulse 1.1s ease-in-out infinite; }
+  /* Provider mark. Sized to sit level with the state dot; `fill:currentColor` is what
+     lets one rule tint every brand the same way the chart tints its bars. */
+  svg.mark { width:15px; height:15px; flex:none; fill:currentColor; }
+  .mark.letter { width:15px; height:15px; border-radius:4px; flex:none; display:flex;
+    align-items:center; justify-content:center; color:#fff; font-size:9px;
+    font-weight:700; font-family:var(--font-mono); }
+  .legend { display:flex; gap:11px; flex-wrap:wrap; margin-top:10px;
+    font-size:11px; color:var(--text-muted); align-items:center; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
   .proj { font-size:12px; color:var(--text-secondary); font-weight:500; min-width:0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tag { font-size:10px; border-radius:5px; padding:0 5px; border:1px solid var(--border);
@@ -210,6 +262,22 @@
   .mix { display:flex; height:5px; border-radius:3px; overflow:hidden;
     background:var(--surface-1); }
   .mix i { display:block; }
+  /* Per-card activity strip. Buckets are wall-clock for claude-family lanes and
+     item-ORDINAL for codex (its --json stream carries no timestamps) - the
+     card's tooltip says which, because a sequence chart passed off as a
+     timeline is a lie the picture cannot disown. */
+  .spark { display:flex; align-items:flex-end; gap:1.5px; height:26px; }
+  .spark i { flex:1; border-radius:1px; min-height:1px; display:block; }
+  .spark-l { font-size:9px; color:var(--text-muted); letter-spacing:.05em;
+    text-transform:uppercase; margin-top:2px; display:flex; }
+  .spark-l span:last-child { margin-left:auto; }
+  .card > .body { display:flex; flex-direction:column; gap:8px; }
+  .card.collapsed > .body { display:none; }
+  .card .caret { margin-left:auto; border:0; background:transparent; cursor:pointer;
+    color:var(--text-muted); padding:1px; border-radius:4px; display:inline-flex; }
+  .card .caret:hover { background:var(--surface-1); color:var(--text-accent); }
+  .card.collapsed .caret svg { transform:rotate(-90deg); }
+  .card .caret svg { transition:transform .12s; }
   .statrow { display:flex; flex-wrap:wrap; gap:4px; }
   .chip { font-size:11px; color:var(--text-secondary); background:var(--surface-1);
     border-radius:6px; padding:2px 7px; display:inline-flex; align-items:center;
@@ -235,22 +303,26 @@
 <body>
 <div class="top">
   <div class="brand">
-    <!-- LOGO SLOT. A conical (Erlenmeyer) flask: this dashboard is the front door
-         to the *.lab services, and the flask is that namespace's mark. Swap the
-         <path> set below to change the logo; nothing else references it. -->
+    <!-- LOGO SLOT. Built from the product's own vocabulary rather than a stock
+         glyph: four columns of differing height, which is exactly what a run looks
+         like in the pip strip and in the column chart below. Blue-to-green is the
+         running-to-done gradient. Swap the <rect> set to change it; nothing else
+         references the logo. (Provider brand marks are separate - see BRAND.) -->
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <defs><linearGradient id="ffg" x1="0" y1="0" x2="1" y2="1">
+      <defs><linearGradient id="ffg" x1="0" y1="1" x2="1" y2="0">
         <stop offset="0" stop-color="#378add"/><stop offset="1" stop-color="#1d9e75"/>
       </linearGradient></defs>
-      <path d="M9.5 2.5v6.2L3.8 18.4A2.4 2.4 0 0 0 5.9 22h12.2a2.4 2.4 0 0 0 2.1-3.6L14.5 8.7V2.5"
-            fill="none" stroke="url(#ffg)" stroke-width="1.8"
-            stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M8.2 2.5h7.6" stroke="url(#ffg)" stroke-width="1.8" stroke-linecap="round"/>
-      <path d="M6.6 15.2h10.8l2.8 4.8A1.6 1.6 0 0 1 18.8 22H5.2a1.6 1.6 0 0 1-1.4-2z"
-            fill="url(#ffg)" stroke="none" opacity=".85"/>
+      <g fill="url(#ffg)">
+        <rect x="2"  y="14" width="4" height="8"  rx="1.4"/>
+        <rect x="7.3" y="9" width="4" height="13" rx="1.4"/>
+        <rect x="12.6" y="4" width="4" height="18" rx="1.4"/>
+        <rect x="18"  y="11" width="4" height="11" rx="1.4" opacity=".55"/>
+      </g>
     </svg>
     <b>fleetflow</b><span class="live" id="dot" title="aggregator status"></span>
   </div>
+  <button class="navtoggle" id="navtoggle" aria-label="Show runs">
+    <svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>runs</button>
   <div class="totals" id="totals">connecting…</div>
   <span class="stamp mono" id="stamp"></span>
 </div>
@@ -328,40 +400,52 @@ const chip = (icon, val, lbl, cls) =>
 const BRAIN = { glm:["G","#7f77dd"], codex:["C","#0f6e56"], sonnet:["S","#d85a30"],
   opus:["O","#ba7517"], haiku:["H","#d4537e"], fable:["F","#378add"],
   grok:["X","#534ab7"], native:["N","#6a8caf"] };
+/* Provider marks, fetched from theSVG (thesvg.org, cdn.jsdelivr.net/gh/glincker/thesvg).
+   Brand fills are stripped so each mark inherits `color` from its card - that makes the
+   icon the SAME colour as that brain's bar in the column chart and its pip in the run
+   strip, so one glance ties the three together. The four Claude tiers share the
+   Anthropic mark and are told apart by that colour, since the provider is the thing the
+   icon should say and the tier is the thing the palette already says. */
+const BRAND = {
+  openai: ["0 0 256 260", '<path d="M239.184 106.203a64.716 64.716 0 0 0-5.576-53.103C219.452 28.459 191 15.784 163.213 21.74A65.586 65.586 0 0 0 52.096 45.22a64.716 64.716 0 0 0-43.23 31.36c-14.31 24.602-11.061 55.634 8.033 76.74a64.665 64.665 0 0 0 5.525 53.102c14.174 24.65 42.644 37.324 70.446 31.36a64.72 64.72 0 0 0 48.754 21.744c28.481.025 53.714-18.361 62.414-45.481a64.767 64.767 0 0 0 43.229-31.36c14.137-24.558 10.875-55.423-8.083-76.483Zm-97.56 136.338a48.397 48.397 0 0 1-31.105-11.255l1.535-.87 51.67-29.825a8.595 8.595 0 0 0 4.247-7.367v-72.85l21.845 12.636c.218.111.37.32.409.563v60.367c-.056 26.818-21.783 48.545-48.601 48.601Zm-104.466-44.61a48.345 48.345 0 0 1-5.781-32.589l1.534.921 51.722 29.826a8.339 8.339 0 0 0 8.441 0l63.181-36.425v25.221a.87.87 0 0 1-.358.665l-52.335 30.184c-23.257 13.398-52.97 5.431-66.404-17.803ZM23.549 85.38a48.499 48.499 0 0 1 25.58-21.333v61.39a8.288 8.288 0 0 0 4.195 7.316l62.874 36.272-21.845 12.636a.819.819 0 0 1-.767 0L41.353 151.53c-23.211-13.454-31.171-43.144-17.804-66.405v.256Zm179.466 41.695-63.08-36.63L161.73 77.86a.819.819 0 0 1 .768 0l52.233 30.184a48.6 48.6 0 0 1-7.316 87.635v-61.391a8.544 8.544 0 0 0-4.4-7.213Zm21.742-32.69-1.535-.922-51.619-30.081a8.39 8.39 0 0 0-8.492 0L99.98 99.808V74.587a.716.716 0 0 1 .307-.665l52.233-30.133a48.652 48.652 0 0 1 72.236 50.391v.205ZM88.061 139.097l-21.845-12.585a.87.87 0 0 1-.41-.614V65.685a48.652 48.652 0 0 1 79.757-37.346l-1.535.87-51.67 29.825a8.595 8.595 0 0 0-4.246 7.367l-.051 72.697Zm11.868-25.58 28.138-16.217 28.188 16.218v32.434l-28.086 16.218-28.188-16.218-.052-32.434Z"/>'],
+  claude: ["0 0 24 24", '<path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/>'],
+  chatglm: ["0 0 24 24", '<path d="M9.917 2c4.906 0 10.178 3.947 8.93 10.58-.014.07-.037.14-.057.21l-.003-.277c-.083-3-1.534-8.934-8.87-8.934-3.393 0-8.137 3.054-7.93 8.158-.04 4.778 3.555 8.4 7.95 8.332l.073-.001c1.2-.033 2.763-.429 3.1-1.657.063-.031.26.534.268.598.048.256.112.369.192.34.981-.348 2.286-1.222 1.952-2.38-.176-.61-1.775-.147-1.921-.347.418-.979 2.234-.926 3.153-.716.443.102.657.38 1.012.442.29.052.981-.2.96.242C17.226 19.632 13.833 22 9.918 22 3.654 22 0 16.574 0 11.737 0 5.947 4.959 2 9.917 2zM9.9 5.3c.484 0 1.125.225 1.38.585 3.669.145 4.313 2.686 4.694 5.444.255 1.838.315 2.3.182 1.387l.083.59c.068.448.554.737.982.516.144-.075.254-.231.328-.47a.2.2 0 01.258-.13l.625.22a.2.2 0 01.124.238 2.172 2.172 0 01-.51.92c-.878.917-2.757.664-3.08-.62-.14-.554-.055-.626-.345-1.242-.292-.621-1.238-.709-1.69-.295-.345.315-.407.805-.406 1.282L12.6 15.9a.9.9 0 01-.9.9h-1.4a.9.9 0 01-.9-.9v-.65a1.15 1.15 0 10-2.3 0v.65a.9.9 0 01-.9.9H4.8a.9.9 0 01-.9-.9l.035-3.239c.012-1.884.356-3.658 2.47-4.134.2-.045.252.13.29.342.025.154.043.252.053.294.701 3.058 1.75 4.299 3.144 3.722l.66-.331.254-.13c.158-.082.25-.131.276-.15.012-.01-.165-.206-.407-.464l-1.012-1.067a8.925 8.925 0 01-.199-.216c-.047-.034-.116.068-.208.306-.074.157-.251.252-.272.326-.013.058.108.298.362.72.164.288.22.508-.31.343-1.04-.8-1.518-2.273-1.684-3.725-.004-.035-.162-1.913-.162-1.913a1.2 1.2 0 011.113-1.281L9.9 5.3zm12.994 8.68c.037.697-.403.704-1.213.591l-1.783-.276c-.265-.053-.385-.099-.313-.147.47-.315 3.268-.93 3.31-.168zm-.915-.083l-.926.042c-.85.077-1.452.24.338.336l.103.003c.815.012 1.264-.359.485-.381zm1.667-3.601h.01c.79.398.067 1.03-.65 1.393-.14.07-.491.176-1.052.315-.241.04-.457.092-.333.16l.01.005c1.952.958-3.123 1.534-2.495 1.285l.38-.148c.68-.266 1.614-.682 1.666-1.337.038-.48 1.253-.442 1.493-.968.048-.106 0-.236-.144-.389-.05-.047-.094-.094-.107-.148-.073-.305.7-.431 1.222-.168zm-2.568-.474c-.135 1.198-2.479 4.192-1.949 2.863l.017-.042c.298-.717.376-2.221 1.337-3.221.25-.26.636.035.595.4zm-7.976-.253c.02-.694 1.002-.968 1.346-.347.01-1.274-1.941-.768-1.346.347z" />'],
+  grok: ["0 0 1024 1024", '<path d="M395.479 633.828L735.91 381.105C752.599 368.715 776.454 373.548 784.406 392.792C826.26 494.285 807.561 616.253 724.288 699.996C641.016 783.739 525.151 802.104 419.247 760.277L303.556 814.143C469.49 928.202 670.987 899.995 796.901 773.282C896.776 672.843 927.708 535.937 898.785 412.476L899.047 412.739C857.105 231.37 909.358 158.874 1016.4 10.6326C1018.93 7.11771 1021.47 3.60279 1024 0L883.144 141.651V141.212L395.392 633.916"/> <path d="M325.226 695.251C206.128 580.84 226.662 403.776 328.285 301.668C403.431 226.097 526.549 195.254 634.026 240.596L749.454 186.994C728.657 171.88 702.007 155.623 671.424 144.2C533.19 86.9942 367.693 115.465 255.323 228.382C147.234 337.081 113.244 504.215 171.613 646.833C215.216 753.423 143.739 828.818 71.7385 904.916C46.2237 931.893 20.6216 958.87 0 987.429L325.139 695.339"/>'],
+};
+const BRAND_OF = { codex:"openai", sonnet:"claude", opus:"claude", haiku:"claude", fable:"claude", native:"claude", glm:"chatglm", grok:"grok" };
+const brandMark = (brain, col) => {
+  const g = BRAND[BRAND_OF[brain]];
+  return g ? `<svg class="mark" viewBox="${g[0]}" style="color:${col}" aria-hidden="true">${g[1]}</svg>`
+           : `<span class="mark letter" style="background:${col}">${(brain||"?")[0].toUpperCase()}</span>`;
+};
+
 const PAL = ["#7F77DD","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#534AB7","#0F6E56","#993C1D"];
 const repoColor = n => { let h = 0; n = n || ""; for (let i=0;i<n.length;i++) h = (h*31 + n.charCodeAt(i))>>>0;
   return PAL[h % PAL.length]; };
 const brainOf = b => BRAIN[b] || ["?", "#888780"];
-/* brandMark(brain, col): tiny inline provider mark for chips and lane cards.
-   Evocative shapes, NOT trademark copies: codex = hex knot, glm = four-petal,
-   grok = orbit arc, anthropic brains = ray burst, fable = ringed burst,
-   anything else = letter monogram in a ring (brainOf letter). Stroke takes the
-   brain colour so the mark and the label always agree. Lost-and-reauthored
-   2026-08-01: the original definition predated the skills-sync incident and
-   survives nowhere; the CALLS survived, so this fills the contract they expect
-   (returns an inline <svg> string). */
-const BM = {
-  codex: '<path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9z"/><path d="M8 5.2 10.4 6.6v2.8L8 10.8 5.6 9.4V6.6z"/>',
-  glm:   '<circle cx="8" cy="4.6" r="2.3"/><circle cx="8" cy="11.4" r="2.3"/><circle cx="4.6" cy="8" r="2.3"/><circle cx="11.4" cy="8" r="2.3"/>',
-  grok:  '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.2 1.8v2.6h-2.6"/>',
-  sonnet:'<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
-  opus:  '<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
-  haiku: '<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
-  fable: '<path d="M8 2.2v11.6M2.98 5.1l10.04 5.8M13.02 5.1 2.98 10.9"/><circle cx="8" cy="8" r="2.6"/>',
-};
-const brandMark = (b, col) => BM[b]
-  ? `<svg class="bm" viewBox="0 0 16 16" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${BM[b]}</svg>`
-  : `<svg class="bm" viewBox="0 0 16 16" fill="none" stroke="${col}" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><text x="8" y="10.8" text-anchor="middle" font-size="7.5" fill="${col}" stroke="none">${brainOf(b)[0]}</text></svg>`;
 const STATE_COLOR = { running:"var(--run)", stalled:"var(--warn)", done:"var(--ok)",
   failed:"var(--bad)", unknown:"var(--idle)" };
 
 /* ── state ───────────────────────────────────────────────────────────────── */
 let doc = null, misses = 0, filter = "";
 let selected = decodeURIComponent(location.hash.slice(1) || "");
-let sortMode = localStorage.getItem("ff.sort") || "state";
+let sortMode = localStorage.getItem("ff.sort") || "recent";
 let stateFilter = new Set(JSON.parse(localStorage.getItem("ff.states") || "[]"));
+// Repo groups start COLLAPSED except the most recently active few. With 22 repos
+// and 53 runs an all-expanded tree is a wall you have to scroll past before you
+// can see anything; the runs you care about are almost always the newest ones.
+// `ff.seeded` records that the default was applied once, so a user who then
+// expands everything does not get re-collapsed on the next load.
+const AUTO_EXPAND = 5;
 let collapsed = new Set(JSON.parse(localStorage.getItem("ff.collapsed") || "[]"));
-const openCards = new Set();
+let seeded = localStorage.getItem("ff.seeded") === "1";
+// Cards collapse INDIVIDUALLY and the set persists, because a 37-lane run is a
+// wall of cards and the two or three you are actually watching should stay open
+// across the 3s repaint. Stored collapsed-by-id, so a new lane appears expanded.
+// ONE page-level setting, not a per-card set. Collapsing an individual lane is
+// busywork nobody wants on a 37-card grid; what you actually want is "show me
+// everything" or "just the headlines", so that is the only control offered.
+let cardsDense = localStorage.getItem("ff.dense") === "1";
 
 const runKey  = r => (r.repo || "") + "|" + (r.run || "");
 const histKey = h => "hist:" + (h.repo || "") + "|" + (h.run || "");
@@ -371,7 +455,9 @@ const inflight = s => s === "running" || s === "stalled";
 const ageOf = r => Math.max(0, (doc?.generated_at || 0) - (r.read_at || doc?.generated_at || 0));
 const save = () => { localStorage.setItem("ff.sort", sortMode);
   localStorage.setItem("ff.states", JSON.stringify([...stateFilter]));
-  localStorage.setItem("ff.collapsed", JSON.stringify([...collapsed])); };
+  localStorage.setItem("ff.collapsed", JSON.stringify([...collapsed]));
+  localStorage.setItem("ff.dense", cardsDense ? "1" : "0");
+  localStorage.setItem("ff.seeded", "1"); };
 
 /* ── polling ─────────────────────────────────────────────────────────────── */
 async function tick() {
@@ -443,7 +529,58 @@ function render() {
     ((doc.errors || []).length ? ` · ${doc.errors.length} dir(s) skipped` : "");
   document.getElementById("stamp").title =
     (doc.errors || []).map(e => `${e.path}: ${e.error}`).join("\n") || "";
+  applyDeepLink();
+  seedCollapse();
   renderChips(); renderNav(); renderDetail();
+}
+
+/* Deep-link: ?repo=<path> (and optional &run=<name>) selects a run on first load,
+   so the skill can open the pane already showing the project you are working in
+   instead of a machine-wide overview you then have to navigate. Path matching is
+   slash- and case-insensitive because the caller's `git rev-parse` spelling
+   ("X:/Forma/forma/slack") rarely matches the aggregator's ("X:\Forma\..."), and
+   an exact compare would silently fall through to the overview. A hash always
+   wins - it is the more specific request and survives reloads. */
+let deepLinked = false;
+function applyDeepLink() {
+  if (deepLinked || selected || !doc.runs.length) return;
+  deepLinked = true;
+  const q = new URLSearchParams(location.search);
+  // Backslash via charCode, and string ops instead of regexes: escaped
+  // backslashes do not survive every tool that edits this file, and a mangled
+  // regex literal here is UNTERMINATED - it swallows the rest of the script and
+  // the whole page silently stops working. No escapes, nothing to mangle.
+  const BSL = String.fromCharCode(92);
+  const norm = v => { let t = String(v || '').split(BSL).join('/').toLowerCase();
+                      while (t.endsWith('/')) t = t.slice(0, -1); return t; };
+  const wantRepo = norm(q.get("repo") || "");
+  const wantRun = (q.get("run") || "").toLowerCase();
+  if (!wantRepo && !wantRun) return;
+  const normRepo = r => norm(r.repo);
+  let hits = doc.runs.filter(r =>
+    (!wantRepo || normRepo(r) === wantRepo || normRepo(r).endsWith("/" + wantRepo.split("/").pop())) &&
+    (!wantRun || (r.run || "").toLowerCase() === wantRun));
+  if (!hits.length) return;
+  // in-flight first, then newest - "what is happening in this repo right now"
+  hits.sort((a, b) =>
+    (inflight(b.summary?.state) ? 1 : 0) - (inflight(a.summary?.state) ? 1 : 0) ||
+    (b.summary?.started || 0) - (a.summary?.started || 0));
+  selected = runKey(hits[0]);
+  location.hash = encodeURIComponent(selected);
+}
+
+function seedCollapse() {
+  if (seeded || !doc.runs.length) return;
+  // newest-active repo first; anything past AUTO_EXPAND starts folded
+  const newest = new Map();
+  for (const r of doc.runs) {
+    const g = r.repo_label || r.repo, t = r.summary?.started || 0;
+    if (!newest.has(g) || newest.get(g) < t) newest.set(g, t);
+  }
+  const order = [...newest.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  order.slice(AUTO_EXPAND).forEach(g => collapsed.add(g));
+  collapsed.add("__history__");
+  seeded = true; save();
 }
 
 const STATES = [["running","live"],["stalled","stalled"],["failed","failed"],["done","done"]];
@@ -500,7 +637,7 @@ function renderNav() {
         ${ico("chev","chev")}
         <span class="dot" style="background:${repoColor(label)}"></span>
         <span class="nm">${esc(label)}</span>
-        <span class="n">${live ? live + " live" : runs.length}</span>
+        <span class="n${live ? " live" : ""}">${live ? live + " live" : runs.length}</span>
       </button>
       <div class="runs">${runs.map(runRow).join("")}</div></div>`;
   }
@@ -539,7 +676,9 @@ function renderNav() {
     save(); renderNav();
   });
   document.querySelectorAll(".runrow").forEach(b => b.onclick = () => {
-    selected = b.dataset.k; location.hash = encodeURIComponent(selected); render();
+    selected = b.dataset.k; location.hash = encodeURIComponent(selected);
+    document.body.classList.remove("nav-open");   // picking a run closes the drawer
+    render();
   });
 }
 
@@ -550,7 +689,7 @@ function runRow(r) {
     : s.state === "stalled" ? `<span style="color:var(--warn)">${fmt((s.idle_s||0)+age)} silent</span>`
     : s.state === "running" ? `${s.counts?.running || 0} running`
     : tok(s.tokens_total);
-  return `<button class="runrow ${selected === k ? "on" : ""}" data-k="${esc(k)}">
+  return `<button class="runrow ${selected === k ? "on" : ""}${inflight(s.state) ? " live" : ""}" data-k="${esc(k)}">
       <div class="rl"><span class="nm mono">${esc(r.run)}</span><span class="rs">${label}</span></div>
       <div class="sq-row" style="margin-top:4px">${pips}</div></button>`;
 }
@@ -559,6 +698,27 @@ function runRow(r) {
 /* One column per item, height proportional to value. This is the chart that makes
    the cross-brain cost story visible at a glance: a codex lane at 5.4M next to a
    GLM lane at 42.6k is a 100x column, not two numbers you have to compare by eye. */
+function sparkline(d, basis, col) {
+  if (!Array.isArray(d) || !d.length || !d.some(v => v > 0)) return "";
+  const max = Math.max(...d, 1);
+  const tip = basis === "time" ? "activity over elapsed time"
+            : basis === "sequence" ? "activity by step order — this brain's stream carries no timestamps"
+            : "activity";
+  return `<div><div class="spark" title="${tip}">${d.map(v =>
+      `<i style="height:${v > 0 ? Math.max(2, Math.round(v/max*26)) : 1}px;background:${col};
+        opacity:${v > 0 ? 1 : .18}"></i>`).join("")}</div>
+    <div class="spark-l"><span>${basis === "sequence" ? "by step" : "over time"}</span>
+      <span>peak ${max}</span></div></div>`;
+}
+
+function brandLegend(brains) {
+  if (!brains || brains.length < 2) return "";
+  return `<div class="legend">${brains.map(b => {
+    const c = brainOf(b)[1];
+    return `<span style="color:${c}">${brandMark(b, c)}<span style="color:var(--text-secondary)">${esc(b)}</span></span>`;
+  }).join("")}</div>`;
+}
+
 function columnChart(items, { label, sub, showX }) {
   if (!items.length) return "";
   const max = Math.max(...items.map(i => i.value), 1);
@@ -596,6 +756,15 @@ function renderDetail() {
   }
   const r = doc.runs.find(x => runKey(x) === selected);
   m.innerHTML = r ? runDetail(r) : overview();
+  bindCardControls(r);
+}
+
+/* Re-bound after every repaint: the pane is innerHTML-replaced on a 3s poll, so
+   listeners attached to the old nodes are gone with them. */
+function bindCardControls(r) {
+  const ex = document.getElementById("cExpand"), co = document.getElementById("cCollapse");
+  if (ex) ex.onclick = () => { cardsDense = false; save(); renderDetail(); };
+  if (co) co.onclick = () => { cardsDense = true;  save(); renderDetail(); };
 }
 
 function overview() {
@@ -617,6 +786,9 @@ function overview() {
       <div class="stat"><b>${tok(doc.totals.tokens_total)}</b><span>tokens</span></div>
       <div class="stat"><b>${usd(cost)}</b><span>cost*</span></div>
       <div class="stat"><b>${doc.totals.history_runs||0}</b><span>archived</span></div>
+      ${doc.cache ? `<div class="stat ${doc.cache.hit_rate >= 0.9 ? "ok" : ""}"
+        title="${doc.cache.hits} of ${doc.cache.hits + doc.cache.misses} runs served from cache this build — ${doc.cache.entries} entries on disk. A finished run whose directory has not changed is never re-read; this is the difference between a 29s build and a 15ms one."
+        ><b>${Math.round((doc.cache.hit_rate ?? 0) * 100)}%</b><span>cache hit</span></div>` : ""}
     </div>
     <div class="note">* summed from lanes that price their own turn — codex and grok
       report none, so real spend is higher. Pick a run on the left for its lane grid.</div>
@@ -628,7 +800,7 @@ function overview() {
 /* Run-level card, same shape as a lane card so the two nest visually. */
 function runCard(r) {
   const s = r.summary || {}, age = ageOf(r), col = repoColor(r.repo_label || r.repo);
-  return `<div class="card ${s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}">
+  return `<div class="card ${s.state==="running"?"is-running":s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}">
     <div class="hd"><span class="dot ${s.state}" style="background:${STATE_COLOR[s.state]||col}"></span>
       <span class="proj">${esc(r.repo_label || "")}</span>${stateTag(s.state, (s.idle_s||0)+age)}</div>
     <div class="ttl mono">${esc(r.run)}</div>
@@ -638,10 +810,23 @@ function runCard(r) {
       ${chip("layers", s.lane_count||0, "lanes")}
       ${chip("clock", fmt((s.elapsed_s||0) + (inflight(s.state)?age:0)))}
       ${chip("activity", tok(s.tokens_total), "tok")}
-      ${chip("coin", usd(s.cost_usd))}
+      ${chip("coin", usd(s.cost_usd) + (s.cost_partial ? "*" : ""))}
+      ${(s.brains||[]).map(b => brandMark(b, brainOf(b)[1])).join("")}
     </div>
     <div class="dir" title="${esc(r.repo)}">${ico("folder")}${esc(r.repo)}</div>
   </div>`;
+}
+
+/* The orchestrator is a brain like any other, so it gets the same provider mark.
+   When it is unrecorded, say so in a dashed badge rather than guessing a model -
+   a Claude Code session does not expose its own model to child processes, so a
+   confident-looking wrong answer here would be pure invention. */
+function orchBadge(name) {
+  if (!name) return `<div class="orch unknown" title="Nothing in a Claude Code session's environment exposes its own model, so this has to be supplied at spawn time: set FLEETFLOW_ORCHESTRATOR, or pass ff-spawn --orchestrator. Runs predating that stay unrecorded rather than guessed.">
+      ${ico("cpu")}<b>orchestrator unrecorded</b><span>who drove this fleet</span></div>`;
+  const col = brainOf(name)[1];
+  return `<div class="orch" style="border-color:${col}">${brandMark(name, col)}
+    <b style="color:${col}">${esc(name)}</b><span>orchestrating</span></div>`;
 }
 
 function stateTag(state, idle) {
@@ -667,15 +852,21 @@ function runDetail(r) {
 
   const chart = columnChart(lanes.map(l => ({
     name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
-    { label:"tokens per lane", sub:(s.brains||[]).join(" + "), showX:true });
+    { label:"tokens per lane", showX:true }) + brandLegend(s.brains);
 
-  const head = `<div class="rhead">
+  const head = `<div class="treectl" style="justify-content:flex-end;margin-bottom:10px">
+      <button class="tbtn" id="cExpand">${ico("chev")}expand all lanes</button>
+      <button class="tbtn" id="cCollapse">${ico("chev")}collapse all lanes</button>
+    </div>
+    <div class="rhead">
+    ${orchBadge(s.orchestrator)}
     <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2>
       ${stateTag(s.state, (s.idle_s||0)+age)}
       ${(s.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
         color:${brainOf(b)[1]};display:inline-flex;align-items:center;gap:4px;padding:1px 6px">
         ${brandMark(b, brainOf(b)[1])}${esc(b)}</span>`).join("")}</div>
     <div class="path mono">${ico("folder")}${esc(r.repo)}</div>
+    ${(s.models||[]).length ? `<div class="path mono">${ico("cpu")}lanes ran ${esc((s.models||[]).join(", "))}</div>` : ""}
     <div class="sq-row" style="margin-top:9px">${lanes.map(l =>
       `<div class="sq ${l.state}" title="${esc(l.id)} — ${esc(l.state)}"></div>`).join("")}</div>
     ${chart}
@@ -709,40 +900,52 @@ function runDetail(r) {
   }).join("");
 }
 
+/* stderr is worth the row when it explains a bad outcome, not merely because the
+   lane wrote to it. Codex logs progress there routinely, so a finished lane's last
+   stderr line is usually noise - unless it actually reads like a failure. */
+const ERRISH = /\b(error|fatal|denied|refused|cannot|unable|panic|traceback|exception|timeout)\b/i;
+const showErr = l => !!l.err_tail && (l.state === "failed" || l.state === "stalled" || ERRISH.test(l.err_tail));
+
 function laneCard(l, age) {
   const [, col] = brainOf(l.brain);
   const live = inflight(l.state) ? age : 0;
   const tot = Math.max(1, l.tokens_total || 0);
-  const pct = v => ((v || 0) / tot * 100).toFixed(1) + "%";
-  return `<div class="card ${l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}">
+  const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
+  return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${cardsDense?" collapsed":""}">
     <div class="hd">
-      <span class="dot ${l.state}" style="background:${STATE_COLOR[l.state]||col}"></span>
       ${brandMark(l.brain, col)}
-      <span class="proj" style="color:${col};font-weight:600">${esc(l.brain)}</span>
+      <span class="dot ${l.state}" style="background:${STATE_COLOR[l.state]||col}"></span>
+      <span class="proj" style="color:${col};font-weight:600"
+        title="${l.model ? "resolved model: " + esc(l.model) : "exact model id not recorded for this lane"}"
+        >${esc(l.model || l.brain)}</span>
       <span class="tag">${esc(l.phase || "build")}</span>
       ${inflight(l.state) && !l.live_signal ? `<span class="tag" title="no live stream — for this
         lane the stall detector reports &quot;cannot tell&quot;, never &quot;healthy&quot;">no stream</span>` : ""}
       ${stateTag(l.state, l.last_activity_s + live)}
+      <button class="caret" data-card="${esc(l.id)}" aria-label="Collapse this lane"
+        >${ico("chev")}</button>
     </div>
     <div class="ttl mono">${esc(l.id)}</div>
+    <div class="body">
     <div class="sum">${esc(l.activity || "working")}</div>
-    <div class="mix" title="${tok(l.tokens_in)} fresh in · ${tok(l.tokens_cached)} cached · ${tok(l.tokens_out)} out">
-      <i style="width:${pct(l.tokens_in)};background:${col}"></i>
-      <i style="width:${pct(l.tokens_cached)};background:${col};opacity:.35"></i>
-      <i style="width:${pct(l.tokens_out)};background:var(--ok)"></i>
-    </div>
+    ${sparkline(l.density, l.density_basis, col)}
     <div class="statrow">
       ${l.stalled
         ? chip("clock", fmt(l.last_activity_s + live), "silent", "warn")
         : chip("clock", fmt(l.elapsed_s + live))}
       ${chip("tool", nf(l.tools), "tools")}
       ${chip("git", nf(l.commits), "commits")}
-      ${chip("activity", tok(l.tokens_total), "tok")}
+      <span class="chip" title="${tok(l.tokens_in)} fresh input · ${tok(l.tokens_cached)} cache reads · ${tok(l.tokens_out)} output">
+        ${ico("activity")}${tok(l.tokens_total)}<span style="color:var(--text-muted)">tok</span></span>
       ${chip("coin", usd(l.cost_usd))}
+      ${freshPct >= 30 ? chip("alert", freshPct + "%", "fresh", "warn") : ""}
     </div>
     ${l.last_commit ? `<div class="dir" title="${esc(l.last_commit)}">${ico("git")}${esc(l.last_commit)}</div>` : ""}
-    ${l.err_tail ? `<div class="errline" title="${esc(l.err_tail)}">${esc(l.err_tail)}</div>` : ""}
+    ${showErr(l) ? `<div class="errline" title="${esc(l.err_tail)}">${esc(l.err_tail)}</div>` : ""}
+    <div class="dir" title="${l.worktree ? esc(l.worktree) : "no worktree lane — this lane wrote into the repo directly"}">
+      ${ico("git")}${l.branch ? esc(l.branch) : "no worktree"}</div>
     <div class="dir">${ico("file")}${esc((l.artifact || "pending").split(/[\\/]/).pop())}</div>
+    </div>
   </div>`;
 }
 
@@ -758,7 +961,7 @@ function historyCard(h) {
        are gone; this is the surviving index.`;
   const chart = columnChart((h.lanes || []).map(l => ({
     name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
-    { label:"tokens per lane", sub:(h.brains||[]).join(" + "), showX:true });
+    { label:"tokens per lane", showX:true }) + brandLegend(h.brains);
   return `<div class="rhead">
     <div class="rhead-r"><h2 class="mono">${esc(h.run)}</h2>
       <span class="tag">archived</span>${stateTag(h.state, 0)}
@@ -791,6 +994,8 @@ function historyCard(h) {
 }
 
 /* ── wiring ──────────────────────────────────────────────────────────────── */
+document.getElementById("navtoggle").onclick = () =>
+  document.body.classList.toggle("nav-open");
 document.getElementById("filter").addEventListener("input", e => {
   filter = e.target.value.trim().toLowerCase(); if (doc) render();
 });

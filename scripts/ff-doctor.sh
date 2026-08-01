@@ -218,6 +218,14 @@ if command -v claude >/dev/null; then
     fi
   done
 fi
+# Persist the probe so ff-spawn has a default when a session forgets to pass
+# --orchestrator. A best guess recorded as such beats a null nobody can fill in
+# later - but it IS a guess about availability, not proof of what is driving, so
+# an explicit --orchestrator / $FLEETFLOW_ORCHESTRATOR always wins over this file.
+if [ "$ORCH" != none ]; then
+  mkdir -p "${FLEETFLOW_HOME:-$HOME/.fleetflow}" 2>/dev/null || true
+  printf '%s\n' "$ORCH" > "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null || true
+fi
 say "orchestrator" "$([ "$ORCH" = none ] && echo unreachable || echo ok)" "$ORCH"
 [ "$ORCH" = "none" ] && UNREACH=1
 

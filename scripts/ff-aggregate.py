@@ -178,6 +178,30 @@ def repo_label(repo: Path, root: Path) -> str:
 # --------------------------------------------------------------------------
 # per-run status (delegated to ff-status.sh)
 # --------------------------------------------------------------------------
+def producer_stamp() -> str:
+    """Identity of the thing that PRODUCED a cached run status.
+
+    The run-dir fingerprint answers "did the data change". It cannot answer "did
+    the reader change" - so after ff-status gained new fields, every cached entry
+    kept serving the old shape forever, because the runs themselves were untouched.
+    Mixing the reader's mtime+size into the cache key makes an edit to ff-status
+    invalidate exactly the entries it affects, on the next build, with no manual
+    cache-clearing step to remember.
+    """
+    # BOTH producers count. ff-status.sh emits the lane fields; THIS file computes
+    # the roll-up on top of them - and forgetting the second is how a new
+    # summary field silently stayed null on every cached run even after the
+    # reader was correctly invalidated.
+    parts = [FF_VERSION]
+    for f in ("ff-status.sh", "ff-aggregate.py"):
+        try:
+            st = (SCRIPT_DIR / f).stat()
+            parts.append(f"{int(st.st_mtime)}:{st.st_size}")
+        except OSError:
+            parts.append("?")
+    return ":".join(parts)
+
+
 def fingerprint(rundir: Path) -> tuple[int, int]:
     """(file count, newest mtime_ns) over the run dir, non-recursive. Every
     signal ff-status reads - journal, events streams, transcripts, artifacts,
@@ -232,6 +256,8 @@ def roll_up(status: dict) -> dict:
         "started": min(started) if started else 0,
         "elapsed_s": max((l.get("elapsed_s") or 0) for l in lanes) if lanes else 0,
         "brains": sorted({l.get("brain", "?") for l in lanes}),
+        "orchestrator": status.get("orchestrator"),
+        "models": sorted({l["model"] for l in lanes if l.get("model")}),
         "phases": [p for p in dict.fromkeys(l.get("phase", "build") for l in lanes)],
     }
 
@@ -347,6 +373,7 @@ def aggregate(
                  "roots": [str(r) for r in roots], "runs": [], "history": [],
                  "errors": errors}, cache)
 
+    stamp = producer_stamp()
     stale: list[dict] = []
     runs: list[dict] = []
     for e in entries:
@@ -356,7 +383,7 @@ def aggregate(
             errors.append({"scope": "run", "path": e["rundir"], "error": "run dir vanished"})
             continue
         c = cache.get(key)
-        if c and tuple(c["fp"]) == fp:
+        if c and tuple(c["fp"]) == fp and c.get("by") == stamp:
             summary = c["run"].get("summary", {})
             counts = summary.get("counts", {})
             live = counts.get("running", 0) + counts.get("stalled", 0)
@@ -385,7 +412,7 @@ def aggregate(
                 # from a cached read (elapsed + age, silence + age) instead of
                 # rendering a frozen number - or forcing a re-read to move it.
                 res["read_at"] = now
-                cache[item["_key"]] = {"fp": item["_fp"], "at": now, "run": res}
+                cache[item["_key"]] = {"fp": item["_fp"], "at": now, "by": stamp, "run": res}
                 runs.append(res)
 
     runs.sort(key=lambda r: (
@@ -400,6 +427,7 @@ def aggregate(
         errors.extend(herr)
 
     live_runs = [r for r in runs if r.get("summary", {}).get("state") in ("running", "stalled")]
+    hits = len(runs) - len(stale)
     doc = {
         "schema": "fleetflow/aggregate/1",
         "version": FF_VERSION,
@@ -408,6 +436,13 @@ def aggregate(
         "discover_ms": discover_ms,
         "rediscovered": discovered,
         "runs_refreshed": len(stale),
+        # Cache effectiveness, surfaced because it is the difference between a
+        # 29s build and a 15ms one - and because a hit rate that quietly collapses
+        # (a bad fingerprint, a churning run dir) is invisible any other way.
+        "cache": {
+            "hits": hits, "misses": len(stale), "entries": len(cache) - 1,
+            "hit_rate": round(hits / len(runs), 3) if runs else None,
+        },
         "roots": [str(r) for r in roots],
         "roots_source": source,
         "totals": {
@@ -448,7 +483,7 @@ EXAMPLES
     ap.add_argument("--max-depth", type=int, default=6)
     ap.add_argument("--live-ttl", type=int, default=15, metavar="SECONDS")
     ap.add_argument("--discover-ttl", type=int, default=60, metavar="SECONDS")
-    ap.add_argument("--timeout", type=int, default=60, metavar="SECONDS")
+    ap.add_argument("--timeout", type=int, default=180, metavar="SECONDS")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--no-cache", action="store_true", help="ignore and do not write the cache")
     ap.add_argument("--no-history", action="store_true")

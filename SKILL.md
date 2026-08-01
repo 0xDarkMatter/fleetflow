@@ -14,6 +14,45 @@ metadata:
 
 > Facts verified as of 2026-07 (Claude Code Workflow tool, codex-cli 0.144, fleet-worker GLM-5.2/z.ai).
 
+## On invocation — open the dashboard
+
+**When this skill is invoked, put the live dashboard on screen first, before
+anything else.** Two steps, both cheap:
+
+1. Confirm the service answers:
+   `curl -s --max-time 5 http://127.0.0.1:8161/api/health`
+   Use the **loopback** address here, not the `.lab` URL: `curl` has no reason to
+   trust the local proxy's CA and fails with exit 7 / status 000 against HTTPS,
+   which reads exactly like a dead service and is not one.
+2. If it answers, open it in the Browser pane (`preview_start`) at
+   **`https://fleetflow.lab/?repo=<git toplevel of cwd>`**. The pane wants the
+   **`.lab` URL**, not loopback — browsers do trust the CA, and it is the address
+   the user knows.
+
+   The `?repo=` deep-link is what makes this useful rather than decorative: a
+   bare URL opens the machine-wide overview, so you would land on 50-odd runs
+   across 22 repos and have to go find the one you are working in. With it the
+   page selects that repo's most relevant run — **in-flight first, then newest**.
+   Slash direction and case do not matter (`git rev-parse` says
+   `X:/Forma/forma/slack`, the aggregator says `X:\Forma\forma\slack`; both
+   match). Add `&run=<name>` to pin a specific run.
+
+   The pane is narrow (~400-500px), and the page handles that: below 900px the
+   repo tree becomes a drawer behind the "runs" button in the top bar, closed by
+   default, so the lane grid is what you actually see. Do not fight it with a
+   wider layout.
+
+Skip this silently when there is no Browser pane (headless `claude -p`, CI, a
+non-desktop host) — the skill's value does not depend on it. Do not narrate the
+step; just have the dashboard there.
+
+If the health check fails, say so and offer the one-liner rather than opening a
+pane onto nothing:
+
+```powershell
+& "X:\00_Orchestration\compose-portless\bin\process-compose.exe" process start fleetflow
+```
+
 Claude Code's native **Workflow tool** is a superb orchestration harness with one
 structural limit: every agent it spawns runs **in-process**, so they all share one
 provider (`ANTHROPIC_BASE_URL` is process-global — only the model *alias slot*
@@ -423,11 +462,41 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   to die silently — the single failure that made the predecessor dashboards
   untrustworthy. If the server is unreachable the page says so in red and stamps
   the snapshot's age; it never renders stale numbers as if they were live.
+- **Per-lane telemetry the single-run view never had:** `density` (20 buckets) +
+  `density_basis`, `model` (the resolved id, e.g. `GLM-5.2`, not the `glm` alias),
+  `worktree` / `branch`. **`density_basis` is load-bearing:** it is `"time"` for
+  claude-family lanes, whose transcripts carry per-record ISO timestamps, and
+  `"sequence"` for codex, whose `--json` stream carries **none** — those buckets
+  are item ordinals, and the dashboard labels them "by step" rather than passing
+  a sequence chart off as a timeline.
+- **`worktree_state` is tri-state, and the middle value matters most:** `present`
+  (lane still on disk), `reclaimed` (it HAD one; ff-clean removed it after landing
+  — the normal end of a healthy lane), `none` (spawned without `--worktree`, so the
+  stall detector cannot attribute a transcript and reports "cannot tell"). Reading
+  a reclaimed lane as `none` inverts the diagnosis.
+- **`trace_id`** is the first 8 hex of the journal's existing
+  `sha256(brain+prompt+opts)` cache key — free correlation for metrics and traces.
+  It answers *"was this the same work?"*, not *"which lane"*; artifact filenames
+  stay `<id>.<ext>` deliberately (see `references/`-adjacent note in ff-status).
+- **`orchestrator`** — which brain drove the fleet. **Nothing in a Claude Code
+  session's environment exposes its own model** (children get `CLAUDE_EFFORT` and a
+  session id, not the model), so it must be supplied:
+  `ff-spawn --orchestrator M` > `$FLEETFLOW_ORCHESTRATOR` > whatever
+  `ff-doctor --live` last probed (it persists to `~/.fleetflow/orchestrator`).
+  Set `FLEETFLOW_ORCHESTRATOR` once per session. Runs predating this read
+  `unrecorded` — deliberately not backfilled with a guess.
+- **Exact model ids.** Claude-family workers self-report theirs in
+  `result.json`'s `modelUsage`. Codex and grok report none anywhere, so
+  `ff-spawn` now journals the launch model — for those brains that record is the
+  *only* one that will ever exist, and runs predating it show the brain alias.
 - **Cold build is minutes, steady state is milliseconds.** The run cache
   (`~/.fleetflow/cache/`) survives restarts; an unchanged finished run is never
   re-read, and abandoned `stalled` runs are re-read on a graduated interval
-  instead of every tick. Measured on 55 runs: **15 ms** when nothing changed,
-  ~4.4 s when one live run needed re-reading, ~6 min for a cold first scan.
+  instead of every tick. Measured on 53 runs: **15 ms** when nothing changed,
+  ~4 s when one live run needed re-reading, **29 s** for a cold scan of every run
+  (was ~6 min before ff-status's per-lane passes were collapsed). The cache key
+  includes ff-status's own mtime, so editing the reader invalidates exactly the
+  entries it affects instead of serving the old shape forever.
 - **Card language is shared with the [summon](../summon/) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the

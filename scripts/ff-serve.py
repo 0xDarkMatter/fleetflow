@@ -273,7 +273,7 @@ EXAMPLES
     ap.add_argument("--live-ttl", type=int, default=15, metavar="SECONDS")
     ap.add_argument("--discover-ttl", type=int, default=120, metavar="SECONDS")
     ap.add_argument("--max-depth", type=int, default=6)
-    ap.add_argument("--timeout", type=int, default=60, metavar="SECONDS")
+    ap.add_argument("--timeout", type=int, default=180, metavar="SECONDS")
     ap.add_argument("--build-timeout", type=int, default=600, metavar="SECONDS")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("-h", "--help", action="help")

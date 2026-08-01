@@ -76,7 +76,84 @@ RUNDIR="$REPO/.fleetflow/$RUN"
 STALL_S="${FLEETFLOW_STALL_SECONDS:-600}"
 echo "$STALL_S" | grep -qE '^[0-9]+$' || { err "FLEETFLOW_STALL_SECONDS must be an integer"; exit 2; }
 
-mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+# One stat for the WHOLE run dir instead of ~6 per lane. Process spawns dominate
+# this script's cost on Windows (~150ms each): a 23-lane run was paying ~20s just
+# to ask the filesystem for mtimes it could have got in a single call.
+declare -A MT
+prime_mtimes() {
+  MT=()
+  local f t
+  while IFS='|' read -r f t; do [ -n "$f" ] && MT["$f"]="$t"; done \
+    < <(stat -c '%n|%Y' "$RUNDIR"/* 2>/dev/null)
+}
+# Falls back to a real stat for anything outside the run dir (a journalled
+# artifact path can be spelled differently from $RUNDIR/...), so the cache is a
+# fast path, never a source of wrong answers.
+mtime() {
+  local v="${MT[$1]:-}"
+  if [ -n "$v" ]; then printf '%s\n' "$v"; else stat -c %Y "$1" 2>/dev/null || echo 0; fi
+}
+
+# scan_transcript FILE -> ONE tab-separated line, ONE gawk pass over a claude/glm
+# session transcript. Replaces three greps plus an awk.
+#
+# Output is TSV, not shell assignments: the values include free-form tool names and
+# model ids, and building `eval`-able quoting inside a single-quoted awk program
+# inside a shell function is three levels of escaping deep - it broke on the first
+# apostrophe. `read` with IFS=tab has no such failure mode. Fields, in order:
+#   dens  basis  tools  tout  tin  tcache  ttotal  lasttool  model
+#
+# Counting rules are matched to the greps this replaces, deliberately: `tools`
+# counts LINES containing a tool_use (what `grep -c` did), while the token sums
+# count EVERY occurrence (what `grep -o | awk` did). They differ, and quietly
+# "fixing" either would move numbers ff-monitor.html already renders.
+#
+# The density strip is REAL wall-clock: these transcripts carry per-record ISO
+# timestamps, so unlike codex's untimed stream the buckets mean elapsed time.
+scan_transcript() {
+  awk -v N=20 '
+    {
+      line = $0
+      if (match(line, /"timestamp":"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}/)) {
+        st = substr(line, RSTART + 13, 19); gsub(/[-T:]/, " ", st)
+        tv = mktime(st)
+        if (tv > 0) { n++; ts[n] = tv; if (lo == 0 || tv < lo) lo = tv; if (tv > hi) hi = tv }
+      }
+      if (line ~ /"type":"tool_use"/) tools++
+      rest = line
+      while (match(rest, /"name":"[A-Za-z_]+"/)) {
+        lasttool = substr(rest, RSTART + 8, RLENGTH - 9); rest = substr(rest, RSTART + RLENGTH)
+      }
+      rest = line
+      while (match(rest, /"model":"[^"]+"/)) {
+        model = substr(rest, RSTART + 9, RLENGTH - 10); rest = substr(rest, RSTART + RLENGTH)
+      }
+      for (k = 1; k <= 4; k++) {
+        key = (k == 1 ? "output_tokens" : k == 2 ? "input_tokens" \
+             : k == 3 ? "cache_read_input_tokens" : "cache_creation_input_tokens")
+        rest = line
+        while (match(rest, "\"" key "\":[0-9]+")) {
+          sums[k] += substr(rest, RSTART + length(key) + 3, RLENGTH - length(key) - 3) + 0
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }
+    }
+    END {
+      for (b = 0; b < N; b++) d[b] = 0
+      if (n > 0) {
+        span = hi - lo
+        for (i = 1; i <= n; i++) {
+          b = (span > 0) ? int((ts[i] - lo) * N / span) : 0
+          if (b > N - 1) b = N - 1
+          d[b]++
+        }
+      }
+      out = "["; for (b = 0; b < N; b++) out = out (b ? "," : "") d[b]; out = out "]"
+      printf "%s\ttime\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", out, tools + 0, sums[1], sums[2],
+             sums[3] + sums[4], sums[1] + sums[2] + sums[3] + sums[4], lasttool, model
+    }
+  ' "$1" 2>/dev/null
+}
 
 emit() {
   local now lanes id brain state started finished elapsed art commits last_c tools activity tokens etail rc
@@ -84,6 +161,16 @@ emit() {
   # NOT local: --exit-stalled reads it after emit returns, and in --watch mode it
   # must reset every tick so a lane that resumes writing clears the verdict.
   STALL_ANY=0
+  prime_mtimes
+  # Which lanes were SPAWNED with --worktree. Without this, a landed-and-cleaned
+  # lane is indistinguishable from one that never had a worktree - and those mean
+  # opposite things: the first is the normal end of a healthy lane, the second is
+  # the case where the stall detector cannot attribute a transcript and therefore
+  # reports "cannot tell" rather than "healthy".
+  WT_INTENT=""
+  [ -f "$RUNDIR/manifest.json" ] && WT_INTENT="|$(jq -r '
+    (.packets // [])[] | select(.worktree == true) | .id' "$RUNDIR/manifest.json" 2>/dev/null \
+    | tr -d '\r' | tr '\n' '|')"
   now=$(date +%s)
   lanes="[]"
   # ONE jq pass over the journal for every lane's identity and state, not six per
@@ -94,7 +181,7 @@ emit() {
   #
   # TSV is safe here because every field is an id, a brain name, a phase name, a
   # record type, an integer rc, or a filesystem path - none of which contain tabs.
-  while IFS="$(printf '\t')" read -r id brain phase last_type rc art; do
+  while IFS="$(printf '\t')" read -r id brain phase last_type rc art jmodel; do
     [ -n "$id" ] || continue
     if [ "$last_type" = "started" ]; then state="running"; finished=0
     elif [ -z "$rc" ]; then state="running"; finished=0
@@ -104,10 +191,18 @@ emit() {
     if [ "$finished" -gt 0 ]; then elapsed=$((finished - started)); else elapsed=$((now - started)); fi
     [ "$elapsed" -ge 0 ] || elapsed=0
 
-    commits=0; last_c=""
+    commits=0; last_c=""; wt=""; branch=""; wtstate="none"
+    case "$WT_INTENT" in *"|$id|"*) wtstate="reclaimed" ;; esac
     if [ -d "$RUNDIR/wt-$id" ]; then
-      commits="$(git -C "$RUNDIR/wt-$id" rev-list --count "main..HEAD" 2>/dev/null || echo 0)"
-      last_c="$(git -C "$RUNDIR/wt-$id" log -1 --format=%s "main..HEAD" -- 2>/dev/null | head -c 90)"
+      wt="$RUNDIR/wt-$id"; branch="fleetflow/$RUN/$id"; wtstate="present"
+      # ONE git invocation for both the count and the newest subject: `git log`
+      # already walks the range, so asking rev-list for the count separately was
+      # paying a second process to redo the same walk.
+      gitlog="$(git -C "$wt" log --format=%s "main..HEAD" -- 2>/dev/null)"
+      if [ -n "$gitlog" ]; then
+        commits="$(printf '%s\n' "$gitlog" | wc -l | tr -d ' ')"
+        last_c="$(printf '%s\n' "$gitlog" | head -1 | head -c 90)"
+      fi
     fi
 
     # --- token accounting ------------------------------------------------------
@@ -121,26 +216,55 @@ emit() {
     # claude brains report `total_cost_usd` themselves, codex reports none, and a
     # fabricated dollar figure is worse than an absent one.
     tools=0; activity=""; tokens=0; T=""
-    tin=0; tcache=0; tout=0; ttotal=0; cost=null
+    tin=0; tcache=0; tout=0; ttotal=0; cost=null; dens="[]"; dbasis=null
+    # Journalled launch model is the FLOOR; a worker that reports what it
+    # actually ran (modelUsage, transcript) overrides it below, because an
+    # alias like "glm" is less true than the resolved "GLM-5.2".
+    model="${jmodel:-}"
     if [ "$brain" = "codex" ] && [ -f "$RUNDIR/$id.events.jsonl" ]; then
-      tools="$(jq -r 'select(.type=="item.completed" and .item.type=="command_execution") | 1' "$RUNDIR/$id.events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
-      activity="$(jq -r 'select(.type=="item.completed") | .item | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))' "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
-      tokens="$(jq -r 'select(.usage != null) | .usage.total_tokens // (.usage.input_tokens + .usage.output_tokens) // 0' "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
-      [ -n "$tokens" ] || tokens=0
-      # codex's input_tokens INCLUDES cached_input_tokens; subtract to get fresh.
-      eval "$(jq -r 'select(.usage != null) | .usage
-              | "tin=\((.input_tokens // 0) - (.cached_input_tokens // 0)) tcache=\(.cached_input_tokens // 0) tout=\(.output_tokens // 0) ttotal=\((.input_tokens // 0) + (.output_tokens // 0))"' \
-              "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
+      # ONE jq over the event stream, not four. Same numbers, a quarter of the
+      # processes - and the density strip rides along for free because the pass is
+      # already walking every item.
+      #
+      # density_basis is "sequence", NOT "time", and that distinction is the whole
+      # reason the field exists: codex's --json stream carries NO timestamps, so
+      # these buckets are item ordinals, not wall-clock. Labelling them a time
+      # series would be a lie the chart cannot disown.
+      eval "$(jq -sr --argjson N 20 '
+        [.[] | select(.type=="item.completed")] as $items
+        | ([.[] | select(.usage != null) | .usage] | last // {}) as $u
+        | ($items | length) as $n
+        | (if $n == 0 then [range($N)|0]
+           else reduce range($n) as $i ([range($N)|0];
+                  .[ (($i * $N / $n) | floor | if . > ($N-1) then ($N-1) else . end) ] += 1)
+           end) as $d
+        | "tools=\([$items[] | select(.item.type=="command_execution")] | length) " +
+          "tokens=\($u.total_tokens // (($u.input_tokens // 0) + ($u.output_tokens // 0))) " +
+          "tin=\(($u.input_tokens // 0) - ($u.cached_input_tokens // 0)) " +
+          "tcache=\($u.cached_input_tokens // 0) tout=\($u.output_tokens // 0) " +
+          "ttotal=\(($u.input_tokens // 0) + ($u.output_tokens // 0)) " +
+          "dens=\($d | tojson | @sh) dbasis=\("\"sequence\"" | @sh) " +
+          "activity=\(($items | last | .item
+              | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))) // "" | @sh)"
+        ' "$RUNDIR/$id.events.jsonl" 2>/dev/null)"
     elif [ "$state" != "running" ] && [ -f "$RUNDIR/$id.result.json" ]; then
-      tokens="$(jq -r '.usage.output_tokens // 0' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
-      tools="$(jq -r '.num_turns // 0' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
-      [ -n "$tokens" ] || tokens=0; [ -n "$tools" ] || tools=0
-      eval "$(jq -r '.usage as $u | "tin=\($u.input_tokens // 0) tcache=\(($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0)) tout=\($u.output_tokens // 0) ttotal=\(($u.input_tokens // 0) + ($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.output_tokens // 0))"' \
-              "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
-      # claude -p prices its own turn; for GLM this is the CLI's Anthropic-rate
-      # estimate, not the z.ai invoice - a magnitude, not an amount owed.
-      cost="$(jq -r '.total_cost_usd // "null"' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
-      [ -n "$cost" ] || cost=null
+      # ONE jq over the result envelope. `model` comes from modelUsage, which is
+      # the only place the EXACT id a claude-brain worker actually ran on survives
+      # (e.g. "GLM-5.2", not the "glm" alias it was launched with). Picked by
+      # output tokens so a run that briefly touched a small model still reports the
+      # model that did the work.
+      eval "$(jq -r '.usage as $u
+        | "tokens=\($u.output_tokens // 0) tools=\(.num_turns // 0) " +
+          "tin=\($u.input_tokens // 0) " +
+          "tcache=\(($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0)) " +
+          "tout=\($u.output_tokens // 0) " +
+          "ttotal=\(($u.input_tokens // 0) + ($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.output_tokens // 0)) " +
+          # claude -p prices its own turn; for GLM this is the CLI Anthropic-rate
+          # estimate, not the z.ai invoice - a magnitude, not an amount owed.
+          "cost=\(.total_cost_usd // "null") " +
+          "model=\((.modelUsage // {} | to_entries | sort_by(-.value.outputTokens) | .[0].key) // "" | @sh)"
+        ' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
+      [ -n "${cost:-}" ] || cost=null
     elif [ "$state" = "running" ]; then
       # claude -p persists its session transcript as it runs - the only live
       # signal a claude-brain lane emits. GLM workers get an isolated config dir
@@ -158,17 +282,24 @@ emit() {
         T="$(ls -t "$HOME/.claude/projects/$enc"/*.jsonl 2>/dev/null | head -1)"
       fi
       if [ -n "$T" ]; then
-        tools="$(grep -c '"type":"tool_use"' "$T" 2>/dev/null | tr -d ' ')"
-        last_tool="$(grep -o '"name":"[A-Za-z_]*"' "$T" 2>/dev/null | tail -1 | cut -d'"' -f4)"
-        [ -z "$last_tool" ] || activity="live: $last_tool"
-        tokens="$(grep -o '"output_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
-        # Summed per API call, which is how they bill: the same context re-read on
-        # turn N is charged again on turn N+1. Not a distinct-token count.
-        tout="$tokens"
-        tin="$(grep -o '"input_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
-        tcache="$(grep -oE '"cache_(read|creation)_input_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
-        ttotal=$((tin + tcache + tout))
+        IFS="$(printf '\t')" read -r dens dbasis tools tout tin tcache ttotal lasttool smodel \
+          < <(scan_transcript "$T")
+        [ -n "${dens:-}" ] || dens="[]"
+        [ -z "${dbasis:-}" ] && dbasis=null || dbasis="\"$dbasis\""
+        tokens="${tout:-0}"
+        [ -z "${lasttool:-}" ] || activity="live: $lasttool"
+        [ -z "${smodel:-}" ] || model="$smodel"
       fi
+    fi
+    # A finished claude-brain lane keeps its archived transcript, so its density
+    # strip is recoverable too. Deliberately NOT fed into the stall block below:
+    # an archived transcript is a record, not a live stream, and treating it as
+    # one would let a long-dead lane look like it was still writing.
+    if [ "$dens" = "[]" ] && [ -f "$RUNDIR/$id.transcript.jsonl" ]; then
+      IFS="$(printf '\t')" read -r dens _b _t _o _i _c _tt _lt _m \
+        < <(scan_transcript "$RUNDIR/$id.transcript.jsonl")
+      [ -n "${dens:-}" ] || dens="[]"
+      [ "$dens" = "[]" ] || dbasis='"time"'
     fi
     for _t in tin tcache tout ttotal; do
       eval "[ -n \"\${$_t:-}\" ] && echo \"\${$_t}\" | grep -qE '^[0-9]+$' || $_t=0"
@@ -179,7 +310,11 @@ emit() {
       activity="hb: $(tail -1 "$RUNDIR/wt-$id/.ff-heartbeat" 2>/dev/null | head -c 70)"
     fi
     [ -n "$activity" ] || activity="${last_c:-working}"
-    etail="$(grep -v '^\s*$' "$RUNDIR/$id.err" 2>/dev/null | tail -1 | head -c 160)"
+    etail="$(awk '{
+        gsub(/\033\[[0-9;]*[a-zA-Z]/, ""); gsub(/\r/, "");
+        sub(/^[ \t|]+/, ""); sub(/[ \t]+$/, "");
+        if ($0 ~ /[A-Za-z]{3,}/) last = $0
+      } END { print substr(last, 1, 200) }' "$RUNDIR/$id.err" 2>/dev/null)"
 
     # --- stall detection (incident 2026-07-27, run bkv2p2) --------------------
     # elapsed_s cannot distinguish a working lane from a wedged one: a codex lane
@@ -234,11 +369,19 @@ emit() {
       --argjson commits "${commits:-0}" --argjson tools "${tools:-0}" --argjson tokens "${tokens:-0}" \
       --argjson tin "${tin:-0}" --argjson tcache "${tcache:-0}" --argjson tout "${tout:-0}" \
       --argjson ttotal "${ttotal:-0}" --argjson cost "${cost:-null}" \
+      --argjson dens "${dens:-[]}" --argjson dbasis "${dbasis:-null}" \
+      --arg model "${model:-}" --arg wt "${wt:-}" --arg branch "${branch:-}" \
+      --arg wtstate "${wtstate:-none}" \
       '$L + [{id:$id,brain:$brain,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
               last_activity_s:$idle,stalled:$stalled,live_signal:$live,
               commits:$commits,tools:$tools,tokens:$tokens,
               tokens_in:$tin,tokens_cached:$tcache,tokens_out:$tout,tokens_total:$ttotal,
-              cost_usd:$cost,activity:$activity,
+              cost_usd:$cost,density:$dens,density_basis:$dbasis,
+              model:(if $model=="" then null else $model end),
+              worktree:(if $wt=="" then null else $wt end),
+              worktree_state:$wtstate,
+              branch:(if $branch=="" then null else $branch end),
+              activity:$activity,
               last_commit:$last_c,artifact:$art,err_tail:$etail}]')"
   done < <(jq -sr '
       . as $all
@@ -260,7 +403,9 @@ emit() {
           (($recs | map(select(.type=="started")) | .[0].phase // "build") | tostring),
           (($sr | last | .type) // ""),
           (if ($res | length) == 0 then "" else (($res | last | .rc) // "null" | tostring) end),
-          (if ($res | length) == 0 then "" else (($res | last | .artifact) // "null" | tostring) end)
+          (if ($res | length) == 0 then "" else (($res | last | .artifact) // "null" | tostring) end),
+          # journalled launch model - the only record of it for codex/grok
+          (($recs | map(select(.type=="started" and .model != null)) | last | .model) // "")
         ] | @tsv' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r')
 # tr -d '\r' is load-bearing, not tidiness: journals are written with CRLF line
 # endings on Windows and jq's stdout carries the CR through. The per-lane
@@ -270,11 +415,21 @@ emit() {
 # No field here can legitimately contain a CR.
   local manifest="null"
   if [ -f "$RUNDIR/manifest.json" ]; then
-    manifest="$(jq -c '{packet_count:(.packets|length), phases:(.phases // [])}' "$RUNDIR/manifest.json" 2>/dev/null)"
+    manifest="$(jq -c '{packet_count:(.packets|length), phases:(.phases // []),
+                        orchestrator:(.orchestrator // null), base:(.base // null)}' \
+                  "$RUNDIR/manifest.json" 2>/dev/null)"
   fi
-  jq -nc --arg run "$RUN" --arg repo "$REPO" --argjson now "$now" --argjson lanes "$lanes" \
+  # Run-level orchestrator: the journal is authoritative (it is written per spawn
+  # and cannot be edited by a later manifest rewrite); the manifest is the fallback.
+  local orch
+  orch="$(jq -r 'select(.type=="started" and .orchestrator != null) | .orchestrator' \
+          "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r' | tail -1)"
+  [ -n "$orch" ] || orch="$(jq -r '.orchestrator // ""' "$RUNDIR/manifest.json" 2>/dev/null | tr -d '\r')"
+  jq -nc --arg run "$RUN" --arg repo "$REPO" --argjson now "$now" --argjson lanes "$lanes" --arg orch "$orch" \
     --argjson manifest "${manifest:-null}" --argjson stall "$STALL_S" \
-    '{run:$run,repo:$repo,generated_at:$now,stall_seconds:$stall,lanes:$lanes,manifest:$manifest}'
+    '{run:$run,repo:$repo,generated_at:$now,stall_seconds:$stall,
+      orchestrator:(if $orch=="" then null else $orch end),
+      lanes:$lanes,manifest:$manifest}'
 }
 
 STALL_ANY=0
