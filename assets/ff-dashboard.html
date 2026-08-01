@@ -434,7 +434,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-01 · worktree-state";
+const PAGE_BUILD = "2026-08-01 · quiet-footer";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -1388,23 +1388,30 @@ function runDetail(r) {
 const ERRISH = /\b(error|fatal|denied|refused|cannot|unable|panic|traceback|exception|timeout)\b/i;
 const showErr = l => !!l.err_tail && (l.state === "failed" || l.state === "stalled" || ERRISH.test(l.err_tail));
 
-/* THREE states, not two, and the middle one is the common one.
-   `reclaimed` means the manifest recorded --worktree but the directory is gone:
-   the lane was landed or cleaned up, which is the NORMAL end of a healthy lane.
-   `none` means the lane never had one and wrote into the repo checkout directly
-   - less isolation, and the stall detector cannot attribute its transcript, so
-   it reports "cannot tell" rather than "healthy".
-   Rendering both as a bare "no worktree" (which this card did) collapses those
-   into one another and states the wrong one: every finished, tidied-up run read
-   as a fleet of unsandboxed workers. ff-status has emitted the tri-state since
-   the telemetry pass; this is the consumer catching up. */
+/* THE ROW APPEARS ONLY WHEN IT HAS SOMETHING TO SAY.
+   worktree_state is a tri-state and each value earns a different amount of
+   space, because each carries a different amount of information:
+
+     present    a branch you can actually check out and diff -> show it.
+     reclaimed  the lane was landed or cleaned up. NOTHING actionable survives:
+                ff-status computes commits/last_commit/branch only while the
+                directory exists, so they are empty by definition. It is also
+                the DEFAULT ending - 287 of 429 lanes here - so a row saying so
+                is the most common line on the page and the least useful.
+                Render nothing.
+     none       spawned without --worktree: shared checkout, and a transcript
+                the stall detector cannot attribute. That is a real caveat, so
+                it gets the row AND the only colour.
+
+   The earlier bug was rendering `reclaimed` and `none` identically as "no
+   worktree" - which stated the wrong one, since it claimed every tidied-up run
+   was a fleet of unsandboxed workers. Keep the three cases distinct even though
+   one of them draws nothing; collapsing them is how that bug comes back. */
 function worktreeLine(l) {
   const st = l.worktree_state || (l.branch ? "present" : "none");
   if (st === "present")
     return `<div class="dir" title="${esc(l.worktree || "")}">${ico("git")}${esc(l.branch || "worktree lane")}</div>`;
-  if (st === "reclaimed")
-    return `<div class="dir" title="This lane ran in its own worktree; the directory (and usually the branch) has since been removed — the normal end of a landed or cleaned-up run, not an escape. ff-clean reclaims zero-commit lanes and keeps committed ones until they are landed.">
-      ${ico("git")}worktree reclaimed</div>`;
+  if (st === "reclaimed") return "";
   return `<div class="dir" style="color:var(--warn)" title="Spawned WITHOUT --worktree: this lane wrote into the repo checkout directly, alongside its siblings. Less isolation, and its session transcript cannot be attributed to this lane, so the stall detector reports &quot;cannot tell&quot; rather than &quot;healthy&quot;.">
     ${ico("git")}no worktree lane</div>`;
 }
