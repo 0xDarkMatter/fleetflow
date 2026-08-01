@@ -267,7 +267,11 @@ judge", applied to yourself).
 ├── journal.jsonl        # started/result records, v2 content-hash keys (v: FF_VERSION)
 ├── manifest.json        # orchestrator plan: {run,base,created_by,phases[],packets[]}
 ├── main-baseline.txt    # main-checkout status snapshot (escape-guard baseline)
-├── <id>.prompt.txt      # guard preamble + packet (what was actually sent)
+├── packets/<id>.task.md # YOUR hand-authored packet (the --prompt-file input)
+├── <id>.prompt.txt      # GENERATED: guard preamble + packet (what was sent).
+│                        #   ff-spawn truncates and rebuilds this file, so never
+│                        #   point --prompt-file at it — that aliased the input
+│                        #   to the output and destroyed the packet; exit 2 now.
 ├── <id>.result.json     # claude JSON envelope (glm/anthropic brains) OR
 │                        #   grok envelope {text,stopReason,…} (grok brain)
 ├── <id>.last.txt        # codex last-message (codex brain)
