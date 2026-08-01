@@ -82,6 +82,8 @@
   .brand .live { width:7px; height:7px; border-radius:50%; background:var(--ok);
     box-shadow:0 0 0 3px var(--bg-success); }
   .brand .live.off { background:var(--bad); box-shadow:0 0 0 3px var(--bg-bad); }
+  .build { color:var(--text-muted); font-size:10px; border:1px solid var(--border);
+    border-radius:var(--r-sm); padding:0 5px; white-space:nowrap; }
   .totals { color:var(--text-secondary); font-size:12px; display:flex; gap:9px;
     flex-wrap:wrap; }
   .totals b { color:var(--text-primary); font-weight:600; }
@@ -365,6 +367,7 @@
       </g>
     </svg>
     <b>fleetflow</b><span class="live" id="dot" title="aggregator status"></span>
+    <span class="build mono" id="build" title="which build of this page your browser is running. An open tab never re-fetches its own HTML, so a stale tab shows an old string here — reload to fix."></span>
   </div>
   <button class="navtoggle" id="navtoggle" aria-label="Show runs">
     <svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>runs</button>
@@ -407,6 +410,14 @@
 <script>
 "use strict";
 const POLL_MS = 3000;
+/* Shown in the top bar. This page is served with `no-store` and read fresh from
+   disk per request, so a reload ALWAYS gets the current file - but an already
+   open tab never re-fetches its own HTML (it only polls api/aggregate.json for
+   data), so it can run last week's JavaScript indefinitely while looking live.
+   That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
+   the build is on screen: if this string is not what you expect, you are looking
+   at a stale tab and a reload is the whole fix. Bump it when you ship. */
+const PAGE_BUILD = "2026-08-01 · fleet-view";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -848,6 +859,23 @@ function sparkline(d, basis, col) {
       <span>peak ${max}</span></div></div>`;
 }
 
+/* Per-harness token distribution, for the fleet view's cards.
+   SORTED DESCENDING on purpose. It borrows the sparkline's bar-strip shape, and
+   an unsorted strip in that shape reads as activity-over-time - which is exactly
+   the lie the sparkline's own comment warns about, because a harness card has no
+   time series to show. Sorted, it is unambiguously a distribution: how wide the
+   spread between this brain's biggest and smallest lane is, which is the thing
+   that actually explains its share of the bill. */
+function distBars(values, col) {
+  const v = (values || []).filter(x => x > 0).sort((a, b) => b - a).slice(0, 28);
+  if (v.length < 2) return "";
+  const max = v[0];
+  return `<div><div class="spark" title="one bar per lane, largest first — the spread between this harness's heaviest and lightest lane">
+    ${v.map(x => `<i style="height:${Math.max(2, Math.round(x / max * 26))}px;background:${col}"></i>`).join("")}
+    </div><div class="spark-l"><span>tokens per lane</span>
+      <span>peak ${tok(max)} · ${v.length} lanes</span></div></div>`;
+}
+
 function brandLegend(brains) {
   if (!brains || brains.length < 2) return "";
   return `<div class="legend">${brains.map(b => {
@@ -974,13 +1002,15 @@ async function probeDoctor(live, force) {
 function fleetStats() {
   const brains = new Map(), models = new Map();
   const blank = () => ({ lanes:0, done:0, failed:0, stalled:0, running:0,
-                         tokens:0, out:0, cost:0, runs:new Set(), models:new Set() });
+                         tokens:0, out:0, cost:0, runs:new Set(), models:new Set(),
+                         laneTokens:[] });
   const addLane = (l, runId, live) => {
     if (!l || !l.brain) return;
     const b = brains.get(l.brain) || brains.set(l.brain, blank()).get(l.brain);
     b.lanes++; b[l.state] = (b[l.state] || 0) + 1;
     b.tokens += l.tokens_total || 0; b.out += l.tokens_out || 0;
     b.cost += l.cost_usd || 0; b.runs.add(runId);
+    b.laneTokens.push(l.tokens_total || 0);
     if (l.model) {
       b.models.add(l.model);
       const m = models.get(l.model) || models.set(l.model, { ...blank(), brain:l.brain }).get(l.model);
@@ -1017,7 +1047,12 @@ function harnessCard(h, stats) {
     ? `${chip("layers", nf(s.lanes), "lanes")}${chip("activity", tok(s.tokens), "tok")}
        ${chip("coin", usd(s.cost))}${s.failed ? chip("alert", nf(s.failed), "failed", "warn") : ""}`
     : `<span class="chip" title="no lane on this machine has ever run on this brain">never used</span>`;
-  return `<div class="card ${!s && worst && worst.status !== "ok" ? "unused" : ""}">
+  // Same collapse mechanism as a lane card, and the same rule about WHAT
+  // collapse may hide: the chart, the numbers and the capacity dot stay, the
+  // spec table folds. Namespaced "h:" so a harness can never collide with a
+  // lane id in the shared `flipped` set.
+  const ck = "h:" + h.k, shut = isCollapsed(ck);
+  return `<div class="card ${!s && worst && worst.status !== "ok" ? "unused" : ""}${shut ? " collapsed" : ""}">
     <div class="hd">
       ${brandMark(h.k, col)}
       <span class="proj" style="color:${col};font-weight:600">${esc(h.k)}</span>
@@ -1025,17 +1060,23 @@ function harnessCard(h, stats) {
       ${h.commits ? "" : `<span class="tag" title="a codex lane cannot git commit: the worktree's git metadata lives in the MAIN repo's .git, outside the sandbox. The orchestrator reviews the diff and commits instead.">no self-commit</span>`}
       ${h.stream === "none — buffered to exit"
         ? `<span class="tag" title="no live stream, so the stall detector cannot substantiate a verdict for these lanes — the worker heartbeat is their only liveness signal">no stream</span>` : ""}
+      <button class="caret" data-card="${esc(ck)}" aria-expanded="${!shut}"
+        aria-label="${shut ? "Expand" : "Collapse"} ${esc(h.k)} details"
+        title="${shut ? "show" : "hide"} the ${esc(h.k)} contract">${ico("chev")}</button>
     </div>
     <div class="sum">${esc(h.role)}</div>
+    ${s ? distBars(s.laneTokens, col) : ""}
     <div class="statrow">${seen}</div>
-    <dl class="spec">
-      <dt>process</dt><dd>${esc(h.proc)}</dd>
-      <dt>auth</dt><dd>${esc(h.auth)}</dd>
-      <dt>isolation</dt><dd>${esc(h.sandbox)}</dd>
-      <dt>live stream</dt><dd>${esc(h.stream)}</dd>
-      <dt>concurrency</dt><dd>${esc(h.conc)} concurrent</dd>
-      ${s && s.models.size ? `<dt>models seen</dt><dd>${esc([...s.models].join(", "))}</dd>` : ""}
-    </dl>
+    <div class="body">
+      <dl class="spec">
+        <dt>process</dt><dd>${esc(h.proc)}</dd>
+        <dt>auth</dt><dd>${esc(h.auth)}</dd>
+        <dt>isolation</dt><dd>${esc(h.sandbox)}</dd>
+        <dt>live stream</dt><dd>${esc(h.stream)}</dd>
+        <dt>concurrency</dt><dd>${esc(h.conc)} concurrent</dd>
+        ${s && s.models.size ? `<dt>models seen</dt><dd>${esc([...s.models].join(", "))}</dd>` : ""}
+      </dl>
+    </div>
     <div class="hcap">${cap}</div>
   </div>`;
 }
@@ -1103,6 +1144,10 @@ function fleetView() {
       <div class="stat"><b>${usd(totalCost)}</b><span>cost*</span></div>
     </div>
     <div class="treectl" style="border:0;padding:9px 0 0;margin:0">
+      <button class="tbtn" id="cExpand" title="Show every harness contract">
+        ${ico("chev")}expand all</button>
+      <button class="tbtn" id="cCollapse" title="Fold every harness down to its headline">
+        ${ico("chev")}collapse all</button>
       <button class="tbtn" id="ffProbe" ${doctorPending || d?.building ? "disabled" : ""}
         title="Runs ff-doctor --live: probes the GLM endpoint, Codex auth, the Grok and Pi keys, and each Anthropic model with a real one-turn call. Takes up to a few minutes and spends real model calls, which is why it is never automatic.">
         ${ico("activity")}${probeLabel}</button>
@@ -1428,6 +1473,7 @@ document.getElementById("bCollapse").onclick = () => {
 window.addEventListener("hashchange", () => {
   selected = decodeURIComponent(location.hash.slice(1) || ""); if (doc) render();
 });
+document.getElementById("build").textContent = PAGE_BUILD;
 tick();
 setInterval(tick, POLL_MS);
 </script>
