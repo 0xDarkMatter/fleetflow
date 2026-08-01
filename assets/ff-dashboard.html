@@ -102,6 +102,16 @@
   .navtoggle { display:none; border:1px solid var(--border); background:var(--surface-1);
     color:var(--text-secondary); border-radius:var(--r-md); padding:3px 9px; cursor:pointer;
     font-size:11px; align-items:center; gap:5px; }
+  /* ALWAYS visible, unlike .navtoggle. The fleet view describes the machine
+     rather than any run, and below 900px the sidebar that held its only entry
+     point is a closed drawer - so without a top-bar button the capacity view is
+     unreachable in a narrow pane and reads as never built. It is a destination,
+     not a row in a list. */
+  .topbtn { border:1px solid var(--border); background:var(--surface-1);
+    color:var(--text-secondary); border-radius:var(--r-md); padding:3px 9px;
+    cursor:pointer; font-size:11px; display:inline-flex; align-items:center; gap:5px; }
+  .topbtn:hover { color:var(--text-accent); border-color:var(--border-strong); }
+  .topbtn.on { border-color:var(--border-accent); color:var(--text-accent); font-weight:600; }
   @media (max-width:900px) {
     .wrap { grid-template-columns:1fr; }
     .navtoggle { display:inline-flex; }
@@ -339,7 +349,11 @@
     text-overflow:ellipsis; white-space:nowrap; }
 
   .empty { color:var(--text-muted); padding:32px 4px; text-align:center; line-height:1.7; }
-  table.hist { width:100%; border-collapse:collapse; font-size:12px; }
+  /* A 7-column table cannot fit a 440px preview pane, and without this the whole
+     PAGE scrolled sideways - every card and the top bar dragged along with it.
+     Wide content scrolls inside its own box; the body never does. */
+  .tablewrap { overflow-x:auto; }
+  table.hist { width:100%; border-collapse:collapse; font-size:12px; min-width:420px; }
   table.hist th { text-align:left; font-size:10px; text-transform:uppercase;
     letter-spacing:.06em; color:var(--text-muted); font-weight:500;
     padding:4px 8px 6px; border-bottom:1px solid var(--border); }
@@ -371,6 +385,9 @@
   </div>
   <button class="navtoggle" id="navtoggle" aria-label="Show runs">
     <svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>runs</button>
+  <button class="topbtn" id="fleetbtn" aria-pressed="false"
+    title="harnesses, models, and live capacity — what this machine can run">
+    <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>fleet</button>
   <div class="totals" id="totals">connecting…</div>
   <span class="stamp mono" id="stamp"></span>
 </div>
@@ -417,7 +434,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-01 · fleet-view";
+const PAGE_BUILD = "2026-08-01 · fleet-nav";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -662,6 +679,9 @@ function render() {
     ((doc.errors || []).length ? ` · ${doc.errors.length} dir(s) skipped` : "");
   document.getElementById("stamp").title =
     (doc.errors || []).map(e => `${e.path}: ${e.error}`).join("\n") || "";
+  const fb = document.getElementById("fleetbtn");
+  fb.classList.toggle("on", selected === "fleet");
+  fb.setAttribute("aria-pressed", String(selected === "fleet"));
   applyDeepLink();
   seedCollapse();
   renderChips(); renderNav(); renderDetail();
@@ -1104,7 +1124,7 @@ function fleetView() {
   const modelTable = models.length ? `
     <div class="phase"><div class="phase-h mono"><span>models observed</span>
       <span class="n">${models.length}</span></div>
-    <table class="hist mono"><thead><tr><th>model</th><th>brain</th>
+    <div class="tablewrap"><table class="hist mono"><thead><tr><th>model</th><th>brain</th>
       <th class="num">lanes</th><th class="num">runs</th><th class="num">tokens</th>
       <th class="num">output</th><th class="num">cost</th></tr></thead><tbody>
       ${models.map(([m, v]) => `<tr><td>${esc(m)}</td>
@@ -1112,7 +1132,7 @@ function fleetView() {
         <td class="num">${nf(v.lanes)}</td><td class="num">${nf(v.runs.size)}</td>
         <td class="num">${tok(v.tokens)}</td><td class="num">${tok(v.out)}</td>
         <td class="num">${usd(v.cost)}</td></tr>`).join("")}
-    </tbody></table>
+    </tbody></table></div>
     <div class="note">Resolved model ids, as reported by the lanes themselves. Covers runs
       still on disk — archived history keeps a reduced lane digest that carries no model id,
       so those lanes count in the harness totals above but not in this table.</div></div>` : "";
@@ -1443,7 +1463,7 @@ function historyCard(h) {
       ${h.cost_partial ? `Cost covers ${h.cost_lanes}/${h.lane_count} lanes (codex/grok report
       none), so the real spend is higher.` : ""}</div>
   </div>
-  <table class="hist mono"><thead><tr><th>lane</th><th>brain</th><th>phase</th><th>state</th>
+  <div class="tablewrap"><table class="hist mono"><thead><tr><th>lane</th><th>brain</th><th>phase</th><th>state</th>
     <th class="num">elapsed</th><th class="num">tokens</th><th class="num">out</th>
     <th class="num">commits</th><th class="num">cost</th></tr></thead><tbody>
     ${(h.lanes||[]).map(l => `<tr><td>${esc(l.id)}</td>
@@ -1453,12 +1473,23 @@ function historyCard(h) {
       <td class="num">${fmt(l.elapsed_s)}</td><td class="num">${tok(l.tokens_total)}</td>
       <td class="num">${tok(l.tokens_out)}</td><td class="num">${l.commits||"—"}</td>
       <td class="num">${usd(l.cost_usd)}</td></tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 /* ── wiring ──────────────────────────────────────────────────────────────── */
 document.getElementById("navtoggle").onclick = () =>
   document.body.classList.toggle("nav-open");
+/* Toggle, not a one-way trip: pressing it again returns you to whatever you had
+   selected, so "check capacity" is a glance rather than a navigation you have to
+   undo by hunting for your run again. */
+let lastSelected = "";
+document.getElementById("fleetbtn").onclick = () => {
+  if (selected === "fleet") { selected = lastSelected; }
+  else { lastSelected = selected; selected = "fleet"; }
+  location.hash = selected ? encodeURIComponent(selected) : "";
+  document.body.classList.remove("nav-open");
+  if (doc) render();
+};
 document.getElementById("filter").addEventListener("input", e => {
   filter = e.target.value.trim().toLowerCase(); if (doc) render();
 });

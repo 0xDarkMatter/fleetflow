@@ -565,6 +565,26 @@ grep -q 'const HARNESS' "$DASH" && grep -q 'function fleetView' "$DASH" \
   && ok "dashboard: fleet view present" || bad "dashboard: fleet view missing"
 grep -q 'data-k="fleet"' "$DASH" \
   && ok "dashboard: fleet entry pinned in the nav" || bad "dashboard: fleet nav entry missing"
+# Below 900px the sidebar is a CLOSED drawer, so the pinned nav row is not a
+# reachable entry point - without an always-visible top-bar button the capacity
+# view is invisible in a preview pane and reads as never built.
+grep -q 'id="fleetbtn"' "$DASH" && grep -q '\.topbtn {' "$DASH" \
+  && ok "dashboard: fleet reachable from the top bar at any width" \
+  || bad "dashboard: fleet unreachable when the sidebar is a drawer"
+# Every wide table scrolls inside its own box; the page body never scrolls
+# sideways (a 7-column table used to drag the whole layout with it).
+[ "$(grep -c '<div class="tablewrap">' "$DASH")" = "$(grep -c 'class="hist mono"' "$DASH")" ] \
+  && ok "dashboard: every wide table is scroll-wrapped" \
+  || bad "dashboard: an unwrapped table will scroll the page body"
+grep -q 'h:" + h.k' "$DASH" \
+  && ok "fleet view: harness cards collapse (namespaced off lane ids)" \
+  || bad "fleet view: harness cards not collapsible"
+grep -q 'function distBars' "$DASH" \
+  && ok "fleet view: harness cards carry a token-distribution chart" \
+  || bad "fleet view: harness cards have no chart"
+grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
+  && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
+  || bad "dashboard: no build marker"
 # Every brain ff-spawn accepts must appear in the capability matrix, or the view
 # claims a capacity inventory it does not actually cover.
 FLEETMISS=""
