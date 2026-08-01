@@ -434,7 +434,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-01 · fleet-nav";
+const PAGE_BUILD = "2026-08-01 · worktree-state";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -1388,6 +1388,27 @@ function runDetail(r) {
 const ERRISH = /\b(error|fatal|denied|refused|cannot|unable|panic|traceback|exception|timeout)\b/i;
 const showErr = l => !!l.err_tail && (l.state === "failed" || l.state === "stalled" || ERRISH.test(l.err_tail));
 
+/* THREE states, not two, and the middle one is the common one.
+   `reclaimed` means the manifest recorded --worktree but the directory is gone:
+   the lane was landed or cleaned up, which is the NORMAL end of a healthy lane.
+   `none` means the lane never had one and wrote into the repo checkout directly
+   - less isolation, and the stall detector cannot attribute its transcript, so
+   it reports "cannot tell" rather than "healthy".
+   Rendering both as a bare "no worktree" (which this card did) collapses those
+   into one another and states the wrong one: every finished, tidied-up run read
+   as a fleet of unsandboxed workers. ff-status has emitted the tri-state since
+   the telemetry pass; this is the consumer catching up. */
+function worktreeLine(l) {
+  const st = l.worktree_state || (l.branch ? "present" : "none");
+  if (st === "present")
+    return `<div class="dir" title="${esc(l.worktree || "")}">${ico("git")}${esc(l.branch || "worktree lane")}</div>`;
+  if (st === "reclaimed")
+    return `<div class="dir" title="This lane ran in its own worktree; the directory (and usually the branch) has since been removed — the normal end of a landed or cleaned-up run, not an escape. ff-clean reclaims zero-commit lanes and keeps committed ones until they are landed.">
+      ${ico("git")}worktree reclaimed</div>`;
+  return `<div class="dir" style="color:var(--warn)" title="Spawned WITHOUT --worktree: this lane wrote into the repo checkout directly, alongside its siblings. Less isolation, and its session transcript cannot be attributed to this lane, so the stall detector reports &quot;cannot tell&quot; rather than &quot;healthy&quot;.">
+    ${ico("git")}no worktree lane</div>`;
+}
+
 function laneCard(l, age) {
   const [, col] = brainOf(l.brain);
   const live = inflight(l.state) ? age : 0;
@@ -1425,8 +1446,7 @@ function laneCard(l, age) {
     </div>
     ${l.last_commit ? `<div class="dir" title="${esc(l.last_commit)}">${ico("git")}${esc(l.last_commit)}</div>` : ""}
     ${showErr(l) ? `<div class="errline" title="${esc(l.err_tail)}">${esc(l.err_tail)}</div>` : ""}
-    <div class="dir" title="${l.worktree ? esc(l.worktree) : "no worktree lane — this lane wrote into the repo directly"}">
-      ${ico("git")}${l.branch ? esc(l.branch) : "no worktree"}</div>
+    ${worktreeLine(l)}
     <div class="dir">${ico("file")}${esc((l.artifact || "pending").split(/[\\/]/).pop())}</div>
     </div>
   </div>`;

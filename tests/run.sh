@@ -582,6 +582,13 @@ grep -q 'h:" + h.k' "$DASH" \
 grep -q 'function distBars' "$DASH" \
   && ok "fleet view: harness cards carry a token-distribution chart" \
   || bad "fleet view: harness cards have no chart"
+# worktree_state is a TRI-state and the card must render all three: collapsing
+# `reclaimed` (landed/cleaned - normal) into `none` (never had one - less
+# isolation, no stall attribution) states the wrong one about a healthy run.
+grep -q 'function worktreeLine' "$DASH" \
+  && grep -q '"reclaimed"' "$DASH" && grep -q 'worktree_state' "$DASH" \
+  && ok "dashboard: lane card distinguishes reclaimed from never-had-a-worktree" \
+  || bad "dashboard: worktree tri-state collapsed back to two"
 grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
   && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
   || bad "dashboard: no build marker"
