@@ -331,7 +331,10 @@ default the script-author follows, not an option — and real runs routinely hit
 | [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-brain result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--check-main-clean` escape guard |
 | [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
 | [scripts/ff-run.sh](scripts/ff-run.sh) | `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
-| [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
+| [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
+| [scripts/ff-archive.sh](scripts/ff-archive.sh) | `--run NAME` appends a compact run summary to `~/.fleetflow/history.jsonl` so the run outlives its own directory; `--dry-run` prints without appending |
+| [scripts/ff-aggregate.py](scripts/ff-aggregate.py) | discovers every run under the configured roots and emits ONE aggregate JSON (all repos, all runs, roll-ups, history); `--init-roots PATH...` writes the roots file |
+| [scripts/ff-serve.py](scripts/ff-serve.py) | serves the machine-wide dashboard + builds its aggregate on request; the process behind `https://fleetflow.lab` |
 | [scripts/ff-import.sh](scripts/ff-import.sh) | `--wf DIR --run NAME` imports a native Claude Code Workflow run dir (`wf_*/`) — completed agents become lanes (prompt + result envelope + journal + manifest), started-only agents are flagged incomplete; native keys are terminal, not replayable |
 | [scripts/ff-serve.py](scripts/ff-serve.py) | machine-wide dashboard server: discovers every fleetflow run (live + historical, across repos) by scanning the roots in `~/.fleetflow/roots.txt` for `.fleetflow/<run>/journal.jsonl`, serves [assets/ff-dashboard.html](assets/ff-dashboard.html) at `/` plus `/api/aggregate.json` / `/api/refresh` / `/api/health`; per-run state comes from `ff-status.sh` (never reimplemented). One process by design — request-driven, non-blocking rebuilds, no detachable watcher to die silently. Run it as a supervised service (e.g. Process Compose + a probe on `/api/health`) |
 
@@ -375,7 +378,58 @@ layout doctrine as the monitor: pinned summary, cards beneath.
 grid (the Background-tasks panel analogue). In-chat, the orchestrator emits a
 compact *snapshot* card at phase boundaries (spawn, phase change, all-done) —
 chat-widget sandboxes cannot poll localhost, so the inline card is a
-moment-in-time render by design, re-emitted rather than self-updating. A
+moment-in-time render by design, re-emitted rather than self-updating.
+
+## The machine-wide dashboard
+
+`ff-monitor.html` shows **one run in one repo** and needs a watcher and a static
+server wired up per run. That is the right tool while you are driving a single
+fleet, and it is unchanged. But it cannot answer "what is running on this box",
+and a run vanished entirely once `ff-clean` deleted its directory.
+
+**[https://fleetflow.lab](https://fleetflow.lab)** ([ff-dashboard.html](assets/ff-dashboard.html),
+served by [ff-serve.py](scripts/ff-serve.py)) is the permanent surface: every run
+in every repo, grouped by repo, live section and history section, with token and
+cost totals per run. It is registered with the Process Compose stack (port 8161,
+`shared/services/fleetflow.md`) and needs no per-run setup at all.
+
+- **Discovery is configurable, never hardcoded.** Roots resolve from `--root` →
+  `$FLEETFLOW_ROOTS` → `~/.fleetflow/roots.txt` → the current git repo. Seed the
+  file once with `ff-aggregate.py --init-roots <PATH>...`.
+- **One implementation of lane state.** `ff-aggregate.py` shells out to
+  `ff-status.sh` per run rather than reimplementing it — the stall detector's
+  `live_signal:false` = *cannot tell* distinction is exactly the kind of subtlety
+  a second copy would quietly lose.
+- **History survives cleanup.** `ff-clean` now calls `ff-archive` **before**
+  removing anything, appending a compact record to `~/.fleetflow/history.jsonl`
+  (outside every repo). A cleaned run keeps its card: lanes, brains, states,
+  elapsed, tokens, commits, cost. Prompts, diffs, and transcripts are not copied —
+  this is an index, not a backup. `--no-archive` opts out.
+- **Rebuilds are request-driven and non-blocking.** No standing watcher process
+  to die silently — the single failure that made the predecessor dashboards
+  untrustworthy. If the server is unreachable the page says so in red and stamps
+  the snapshot's age; it never renders stale numbers as if they were live.
+- **Cold build is minutes, steady state is milliseconds.** The run cache
+  (`~/.fleetflow/cache/`) survives restarts; an unchanged finished run is never
+  re-read, and abandoned `stalled` runs are re-read on a graduated interval
+  instead of every tick. Measured on 55 runs: **15 ms** when nothing changed,
+  ~4.4 s when one live run needed re-reading, ~6 min for a cold first scan.
+- **Card language is shared with the [summon](../summon/) session picker** — same
+  header, title/summary, bar strip, chip row, path footer. Change one, change both.
+  The right pane leads with a **column chart** (tokens per lane, or per run on the
+  overview), which is what makes the cross-brain cost story visible at a glance.
+
+**Compare runs with `tokens_total`, not `tokens`.** The legacy `tokens` field is
+brain-INCONSISTENT — codex reports a grand total, claude brains report output
+only — and is frozen because `ff-monitor.html` renders it. A codex lane's 5.4M
+against a GLM lane's 42.6k is a total against an output count; measured
+consistently that GLM lane had consumed 4.5M. `ff-status` now also emits
+`tokens_in` / `tokens_cached` / `tokens_out` / `tokens_total`, which mean the
+same thing for every brain, plus `cost_usd` where the worker prices its own turn.
+**Cost is partial by construction:** claude-family workers self-report
+`total_cost_usd`; codex and grok report none, so run totals say how many lanes
+they cover and the dashboard marks them `*`. For GLM the figure is the CLI's
+Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an amount owed. A
 snapshot card follows the monitor's layout doctrine: the run summary (name,
 totals, per-lane strip) sits in a header pinned via `position: sticky` at the
 card's top, with agent/lane cards listed vertically beneath it ordered

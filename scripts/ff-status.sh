@@ -14,7 +14,7 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-FF_VERSION="1.1.0"
+FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
@@ -29,11 +29,18 @@ Usage: ff-status.sh --run NAME [--repo PATH] [--out FILE] [--watch SECONDS]
                    until a lane stalls, then exits 14.
 
 Lane state: running | stalled | done | failed. A lane is `stalled` once its
-LIVE stream (codex --json events, claude/glm session transcript) has been silent
-longer than FLEETFLOW_STALL_SECONDS (default 600). `last_activity_s` is reported
-for every lane; `live_signal` says whether the lane has a stream that could
-substantiate a stall at all - where it is false, `stalled` is always false and
-means "cannot tell", not "healthy".
+LIVE stream (codex/pi --json events, claude/glm session transcript, or the
+worker-authored wt-<id>/.ff-heartbeat file) has been silent longer than
+FLEETFLOW_STALL_SECONDS (default 600). `last_activity_s` is reported for every
+lane; `live_signal` says whether the lane has a stream that could substantiate
+a stall at all - where it is false, `stalled` is always false and means
+"cannot tell", not "healthy".
+
+Tokens: `tokens` is LEGACY and brain-INCONSISTENT (codex = grand total, claude
+brains = output only) - frozen because ff-monitor.html renders it. Compare lanes
+and runs with `tokens_total` / `tokens_in` / `tokens_cached` / `tokens_out`,
+which mean the same thing for every brain. `cost_usd` is the worker's own
+self-reported spend (claude brains only) and is null where unavailable.
 
 ENV
   FLEETFLOW_STALL_SECONDS  silence before a running lane reads stalled (600)
@@ -79,19 +86,16 @@ emit() {
   STALL_ANY=0
   now=$(date +%s)
   lanes="[]"
-  for id in $(jq -r 'select(.type=="started") | .id' "$RUNDIR/journal.jsonl" | awk '!seen[$0]++'); do
-    brain="$(jq -r --arg id "$id" 'select(.id==$id) | .brain' "$RUNDIR/journal.jsonl" | head -1)"
-    phase="$(jq -r --arg id "$id" 'select(.type=="started" and .id==$id) | .phase // "build"' "$RUNDIR/journal.jsonl" | head -1)"
-    # state derives from the LAST STATE-BEARING journal record for this id: a
-    # respawn appends a fresh "started" AFTER an old "result", which means the
-    # lane is running again. last-result-wins (tail -1 of result records) would
-    # wrongly show done/failed.
-    # The started/result filter is load-bearing: ff-spawn also appends "proc"
-    # records (reap anchors), and any future record type would otherwise become
-    # the "last" one and silently break state derivation for that lane.
-    last_type="$(jq -r --arg id "$id" 'select(.id==$id and (.type=="started" or .type=="result")) | .type' "$RUNDIR/journal.jsonl" | tail -1)"
-    rc="$(jq -r --arg id "$id" 'select(.type=="result" and .id==$id) | .rc' "$RUNDIR/journal.jsonl" | tail -1)"
-    art="$(jq -r --arg id "$id" 'select(.type=="result" and .id==$id) | .artifact' "$RUNDIR/journal.jsonl" | tail -1)"
+  # ONE jq pass over the journal for every lane's identity and state, not six per
+  # lane. Semantics are unchanged, field for field (see each line below); this is
+  # purely about process count. Windows spawns cost ~150ms, so a 23-lane run was
+  # paying ~17s just to re-read the same small file 138 times - enough that the
+  # machine-wide aggregator timed out on its biggest runs.
+  #
+  # TSV is safe here because every field is an id, a brain name, a phase name, a
+  # record type, an integer rc, or a filesystem path - none of which contain tabs.
+  while IFS="$(printf '\t')" read -r id brain phase last_type rc art; do
+    [ -n "$id" ] || continue
     if [ "$last_type" = "started" ]; then state="running"; finished=0
     elif [ -z "$rc" ]; then state="running"; finished=0
     elif [ "$rc" = "0" ]; then state="done"; finished=$(mtime "$art")
@@ -106,16 +110,37 @@ emit() {
       last_c="$(git -C "$RUNDIR/wt-$id" log -1 --format=%s "main..HEAD" -- 2>/dev/null | head -c 90)"
     fi
 
+    # --- token accounting ------------------------------------------------------
+    # `tokens` is LEGACY and deliberately unchanged: codex lanes report a grand
+    # total, claude-brain lanes report output only. ff-monitor.html renders that
+    # field, so its meaning is frozen. The tokens_* quartet added beside it is
+    # brain-CONSISTENT (in = fresh input, cached = cache reads, out, total) and is
+    # what any cross-lane or cross-run comparison must use - comparing a codex
+    # lane's legacy 5.4M against a glm lane's legacy 42.6k compares a total
+    # against an output count. cost_usd is null wherever it cannot be sourced:
+    # claude brains report `total_cost_usd` themselves, codex reports none, and a
+    # fabricated dollar figure is worse than an absent one.
     tools=0; activity=""; tokens=0; T=""
+    tin=0; tcache=0; tout=0; ttotal=0; cost=null
     if [ "$brain" = "codex" ] && [ -f "$RUNDIR/$id.events.jsonl" ]; then
       tools="$(jq -r 'select(.type=="item.completed" and .item.type=="command_execution") | 1' "$RUNDIR/$id.events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
       activity="$(jq -r 'select(.type=="item.completed") | .item | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))' "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
       tokens="$(jq -r 'select(.usage != null) | .usage.total_tokens // (.usage.input_tokens + .usage.output_tokens) // 0' "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
       [ -n "$tokens" ] || tokens=0
+      # codex's input_tokens INCLUDES cached_input_tokens; subtract to get fresh.
+      eval "$(jq -r 'select(.usage != null) | .usage
+              | "tin=\((.input_tokens // 0) - (.cached_input_tokens // 0)) tcache=\(.cached_input_tokens // 0) tout=\(.output_tokens // 0) ttotal=\((.input_tokens // 0) + (.output_tokens // 0))"' \
+              "$RUNDIR/$id.events.jsonl" 2>/dev/null | tail -1)"
     elif [ "$state" != "running" ] && [ -f "$RUNDIR/$id.result.json" ]; then
       tokens="$(jq -r '.usage.output_tokens // 0' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
       tools="$(jq -r '.num_turns // 0' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
       [ -n "$tokens" ] || tokens=0; [ -n "$tools" ] || tools=0
+      eval "$(jq -r '.usage as $u | "tin=\($u.input_tokens // 0) tcache=\(($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0)) tout=\($u.output_tokens // 0) ttotal=\(($u.input_tokens // 0) + ($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.output_tokens // 0))"' \
+              "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
+      # claude -p prices its own turn; for GLM this is the CLI's Anthropic-rate
+      # estimate, not the z.ai invoice - a magnitude, not an amount owed.
+      cost="$(jq -r '.total_cost_usd // "null"' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
+      [ -n "$cost" ] || cost=null
     elif [ "$state" = "running" ]; then
       # claude -p persists its session transcript as it runs - the only live
       # signal a claude-brain lane emits. GLM workers get an isolated config dir
@@ -137,7 +162,21 @@ emit() {
         last_tool="$(grep -o '"name":"[A-Za-z_]*"' "$T" 2>/dev/null | tail -1 | cut -d'"' -f4)"
         [ -z "$last_tool" ] || activity="live: $last_tool"
         tokens="$(grep -o '"output_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+        # Summed per API call, which is how they bill: the same context re-read on
+        # turn N is charged again on turn N+1. Not a distinct-token count.
+        tout="$tokens"
+        tin="$(grep -o '"input_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+        tcache="$(grep -oE '"cache_(read|creation)_input_tokens":[0-9]*' "$T" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+        ttotal=$((tin + tcache + tout))
       fi
+    fi
+    for _t in tin tcache tout ttotal; do
+      eval "[ -n \"\${$_t:-}\" ] && echo \"\${$_t}\" | grep -qE '^[0-9]+$' || $_t=0"
+    done
+    # heartbeat fallback: for running lanes with no introspectable stream
+    # (grok), the worker's own last heartbeat line is the best activity we have
+    if [ "$state" = "running" ] && [ -z "$activity" ] && [ -s "$RUNDIR/wt-$id/.ff-heartbeat" ]; then
+      activity="hb: $(tail -1 "$RUNDIR/wt-$id/.ff-heartbeat" 2>/dev/null | head -c 70)"
     fi
     [ -n "$activity" ] || activity="${last_c:-working}"
     etail="$(grep -v '^\s*$' "$RUNDIR/$id.err" 2>/dev/null | tail -1 | head -c 160)"
@@ -162,8 +201,15 @@ emit() {
     # NEVER CLAIM A STALL YOU CANNOT SUBSTANTIATE: no live stream, no verdict.
     # `live_signal` reports which lanes the detector actually covers, so a
     # `stalled: false` it cannot back up is never read as a clean bill of health.
+    #
+    # wt-<id>/.ff-heartbeat is the third live stream: the WORKER creates and
+    # appends it per major step (guard clause injected by ff-spawn for worktree
+    # lanes). Unlike the artifact/.err redirects it cannot exist without the
+    # worker having written it, so its existence proves convention-following
+    # and its mtime is real work - this is what covers grok worktree lanes
+    # without touching grok's buffered result envelope.
     last_act=0; live=false
-    for f in "$RUNDIR/$id.events.jsonl" "$T"; do
+    for f in "$RUNDIR/$id.events.jsonl" "$T" "$RUNDIR/wt-$id/.ff-heartbeat"; do
       [ -n "$f" ] && [ -f "$f" ] || continue
       live=true
       m="$(mtime "$f")"; [ "$m" -gt "$last_act" ] && last_act="$m"
@@ -186,11 +232,42 @@ emit() {
       --argjson started "$started" --argjson elapsed "$elapsed" \
       --argjson idle "$idle" --argjson stalled "$stalled" --argjson live "$live" \
       --argjson commits "${commits:-0}" --argjson tools "${tools:-0}" --argjson tokens "${tokens:-0}" \
+      --argjson tin "${tin:-0}" --argjson tcache "${tcache:-0}" --argjson tout "${tout:-0}" \
+      --argjson ttotal "${ttotal:-0}" --argjson cost "${cost:-null}" \
       '$L + [{id:$id,brain:$brain,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
               last_activity_s:$idle,stalled:$stalled,live_signal:$live,
-              commits:$commits,tools:$tools,tokens:$tokens,activity:$activity,
+              commits:$commits,tools:$tools,tokens:$tokens,
+              tokens_in:$tin,tokens_cached:$tcache,tokens_out:$tout,tokens_total:$ttotal,
+              cost_usd:$cost,activity:$activity,
               last_commit:$last_c,artifact:$art,err_tail:$etail}]')"
-  done
+  done < <(jq -sr '
+      . as $all
+      # lane ids: every id that has a "started" record, in first-appearance order
+      | ([$all[] | select(.type=="started") | .id]
+         | reduce .[] as $i ([]; if (index($i) == null) then . + [$i] else . end)) as $ids
+      | $ids[] | . as $id
+      | ([$all[] | select(.id == $id)]) as $recs
+      # state derives from the LAST STATE-BEARING record for this id: a respawn
+      # appends a fresh "started" AFTER an old "result", which means the lane is
+      # running again. last-result-wins would wrongly show done/failed.
+      # The started/result filter is load-bearing: ff-spawn also appends "proc"
+      # records (reap anchors), and any future record type would otherwise become
+      # the "last" one and silently break state derivation for that lane.
+      | ($recs | map(select(.type=="started" or .type=="result"))) as $sr
+      | ($recs | map(select(.type=="result"))) as $res
+      | [ $id,
+          (($recs[0].brain) // "null" | tostring),
+          (($recs | map(select(.type=="started")) | .[0].phase // "build") | tostring),
+          (($sr | last | .type) // ""),
+          (if ($res | length) == 0 then "" else (($res | last | .rc) // "null" | tostring) end),
+          (if ($res | length) == 0 then "" else (($res | last | .artifact) // "null" | tostring) end)
+        ] | @tsv' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r')
+# tr -d '\r' is load-bearing, not tidiness: journals are written with CRLF line
+# endings on Windows and jq's stdout carries the CR through. The per-lane
+# `jq | head -1` pipes this replaced were absorbing it; reading jq directly does
+# not, and a lone trailing CR on the artifact path silently turned every
+# `stat` on it into "file not found" (so every done lane reported elapsed 0).
+# No field here can legitimately contain a CR.
   local manifest="null"
   if [ -f "$RUNDIR/manifest.json" ]; then
     manifest="$(jq -c '{packet_count:(.packets|length), phases:(.phases // [])}' "$RUNDIR/manifest.json" 2>/dev/null)"

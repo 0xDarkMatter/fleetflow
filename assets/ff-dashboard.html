@@ -56,6 +56,7 @@
     font:13px/1.5 "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif; }
   .mono { font-family:var(--font-mono); }
   button, input, select { font:inherit; color:inherit; }
+  svg.bm { width:11px; height:11px; flex:0 0 auto; }
   svg.i { width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2;
     stroke-linecap:round; stroke-linejoin:round; flex:none; }
 
@@ -331,6 +332,26 @@ const PAL = ["#7F77DD","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#534AB
 const repoColor = n => { let h = 0; n = n || ""; for (let i=0;i<n.length;i++) h = (h*31 + n.charCodeAt(i))>>>0;
   return PAL[h % PAL.length]; };
 const brainOf = b => BRAIN[b] || ["?", "#888780"];
+/* brandMark(brain, col): tiny inline provider mark for chips and lane cards.
+   Evocative shapes, NOT trademark copies: codex = hex knot, glm = four-petal,
+   grok = orbit arc, anthropic brains = ray burst, fable = ringed burst,
+   anything else = letter monogram in a ring (brainOf letter). Stroke takes the
+   brain colour so the mark and the label always agree. Lost-and-reauthored
+   2026-08-01: the original definition predated the skills-sync incident and
+   survives nowhere; the CALLS survived, so this fills the contract they expect
+   (returns an inline <svg> string). */
+const BM = {
+  codex: '<path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9z"/><path d="M8 5.2 10.4 6.6v2.8L8 10.8 5.6 9.4V6.6z"/>',
+  glm:   '<circle cx="8" cy="4.6" r="2.3"/><circle cx="8" cy="11.4" r="2.3"/><circle cx="4.6" cy="8" r="2.3"/><circle cx="11.4" cy="8" r="2.3"/>',
+  grok:  '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.2 1.8v2.6h-2.6"/>',
+  sonnet:'<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
+  opus:  '<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
+  haiku: '<path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6"/>',
+  fable: '<path d="M8 2.2v11.6M2.98 5.1l10.04 5.8M13.02 5.1 2.98 10.9"/><circle cx="8" cy="8" r="2.6"/>',
+};
+const brandMark = (b, col) => BM[b]
+  ? `<svg class="bm" viewBox="0 0 16 16" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${BM[b]}</svg>`
+  : `<svg class="bm" viewBox="0 0 16 16" fill="none" stroke="${col}" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><text x="8" y="10.8" text-anchor="middle" font-size="7.5" fill="${col}" stroke="none">${brainOf(b)[0]}</text></svg>`;
 const STATE_COLOR = { running:"var(--run)", stalled:"var(--warn)", done:"var(--ok)",
   failed:"var(--bad)", unknown:"var(--idle)" };
 
@@ -492,7 +513,7 @@ function renderNav() {
     matches(h.run + " " + (h.repo_label || "") + " " + h.repo) &&
     (!stateFilter.size || stateFilter.has(h.state)));
   if (hist.length) {
-    const isC = collapsed.has(" history");
+    const isC = collapsed.has("__history__");
     html += `<div class="repo ${isC ? "collapsed" : ""}">
       <button class="repo-h" data-toggle="&#0;history">${ico("chev","chev")}
         ${ico("db")}<span class="nm">history · cleaned up</span>
@@ -779,7 +800,7 @@ sortEl.addEventListener("change", e => { sortMode = e.target.value; save(); if (
 document.getElementById("bExpand").onclick = () => { collapsed.clear(); save(); if (doc) renderNav(); };
 document.getElementById("bCollapse").onclick = () => {
   doc.runs.forEach(r => collapsed.add(r.repo_label || r.repo));
-  collapsed.add(" history"); save(); renderNav();
+  collapsed.add("__history__"); save(); renderNav();
 };
 window.addEventListener("hashchange", () => {
   selected = decodeURIComponent(location.hash.slice(1) || ""); if (doc) render();

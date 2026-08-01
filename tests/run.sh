@@ -219,13 +219,13 @@ grep -q 'corrected JSON' "$REPO/.fleetflow/r1/rp-repair.prompt-src.txt" 2>/dev/n
   && ok "collect: --repair lane got the corrective prompt" || bad "collect: repair prompt missing"
 
 # --- FF_VERSION in journal (feature 4) -----------------------------------------
-grep -q '"v":"1.1.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.1.0" || bad "journal missing FF_VERSION"
+grep -q '"v":"1.2.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.2.0" || bad "journal missing FF_VERSION"
 # every operational script pins the same version (version-skew spine)
 VS=0
 for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.sh ff-import.sh; do
-  grep -q '^FF_VERSION="1.1.0"$' "$S/$s" || VS=1
+  grep -q '^FF_VERSION="1.2.0"$' "$S/$s" || VS=1
 done
-[ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.1.0" || bad "version skew across scripts"
+[ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.2.0" || bad "version skew across scripts"
 
 # --- effort lever (feature 5): effort is part of the cache key ------------------
 EP="$TMP/effort.txt"; echo "effort test. FINAL REPLY: e" > "$EP"
@@ -277,16 +277,16 @@ printf '%s' "$CL2" | awk -F'\t' '$1=="keeplane"&&$2=="kept"{f=1} END{exit !f}' &
 RD5="$REPO/.fleetflow/r5"; mkdir -p "$RD5"
 : > "$RD5/z.prompt.txt"   # mtime source for elapsed
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.1.0"}' \
+  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
   '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.1.0"}' \
+  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
   > "$RD5/journal.jsonl"
 bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null \
   | jq -e '.lanes[]|select(.id=="z")|.state=="running"' >/dev/null \
   && ok "status: respawned lane (started,result,started) is running" || bad "status: respawned lane state wrong"
 # regression guard: same lane with result-last is still done (common path unchanged)
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.1.0"}' \
+  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
   '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
   > "$RD5/journal.jsonl"
 bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null \
@@ -308,8 +308,8 @@ NOWS="$(date +%s)"
 if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
   RD6="$REPO/.fleetflow/r6"; mkdir -p "$RD6"
   printf '%s\n' \
-    '{"type":"started","key":"v2:w","id":"wedged","brain":"codex","phase":"build","v":"1.1.0"}' \
-    '{"type":"started","key":"v2:v","id":"livewire","brain":"codex","phase":"build","v":"1.1.0"}' \
+    '{"type":"started","key":"v2:w","id":"wedged","brain":"codex","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:v","id":"livewire","brain":"codex","phase":"build","v":"1.2.0"}' \
     > "$RD6/journal.jsonl"
   : > "$RD6/wedged.prompt.txt"; : > "$RD6/livewire.prompt.txt"
   EV='{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}'
@@ -344,8 +344,8 @@ if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
   # long lane, so those report live_signal=false and are never stalled.
   RD7="$REPO/.fleetflow/r7"; mkdir -p "$RD7/wt-son"
   printf '%s\n' \
-    '{"type":"started","key":"v2:s","id":"son","brain":"sonnet","phase":"build","v":"1.1.0"}' \
-    '{"type":"started","key":"v2:g","id":"grk","brain":"grok","phase":"build","v":"1.1.0"}' \
+    '{"type":"started","key":"v2:s","id":"son","brain":"sonnet","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:g","id":"grk","brain":"grok","phase":"build","v":"1.2.0"}' \
     > "$RD7/journal.jsonl"
   for lid in son grk; do : > "$RD7/$lid.prompt.txt"; : > "$RD7/$lid.err"; : > "$RD7/$lid.result.json"; done
   touch -d "@$((NOWS-1200))" "$RD7"/son.* "$RD7"/grk.*
@@ -393,7 +393,7 @@ jq -e 'select(.type=="proc" and .id=="a") | has("pid") and has("winpid") and has
 # the proc record must not hijack state derivation (it is not state-bearing)
 RD8="$REPO/.fleetflow/r8"; mkdir -p "$RD8"; : > "$RD8/z.prompt.txt"
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.1.0"}' \
+  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
   '{"type":"proc","id":"z","brain":"sonnet","pid":1,"winpid":2,"at":1}' \
   '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
   '{"type":"proc","id":"z","brain":"sonnet","pid":3,"winpid":4,"at":2}' > "$RD8/journal.jsonl"

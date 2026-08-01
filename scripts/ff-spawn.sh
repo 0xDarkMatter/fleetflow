@@ -11,7 +11,7 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-FF_VERSION="1.1.0"
+FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
@@ -146,6 +146,10 @@ mkdir -p "$RUNDIR"
 EXCL="$(git -C "$REPO" rev-parse --absolute-git-dir)/info/exclude"
 mkdir -p "$(dirname "$EXCL")"
 grep -qs '^\.fleetflow/$' "$EXCL" 2>/dev/null || echo ".fleetflow/" >> "$EXCL"
+# .ff-heartbeat is the worker-authored liveness file (see the heartbeat clause
+# below). Excluded so it never dirties a lane (ff-clean's zero-commit+clean
+# reclaim, git worktree remove) and never trips --check-main-clean.
+grep -qs '^\.ff-heartbeat$' "$EXCL" 2>/dev/null || echo ".ff-heartbeat" >> "$EXCL"
 
 # escape-guard baseline: snapshot the main checkout's status once per run
 BASELINE="$RUNDIR/main-baseline.txt"
@@ -156,7 +160,24 @@ SENT="$RUNDIR/$ID.prompt.txt"
 : > "$SENT"
 if [ "$GUARD" = 1 ]; then
   PRE="$(dirname "${BASH_SOURCE[0]}")/../assets/guard-preamble.txt"
-  [ -f "$PRE" ] && { cat "$PRE" >> "$SENT"; echo >> "$SENT"; }
+  [ -f "$PRE" ] && cat "$PRE" >> "$SENT"
+  # Heartbeat clause (worktree lanes only) - rookery's `parcel progress`
+  # pattern, filed down to one file: the worker appends a line per major step,
+  # ff-status reads the mtime as a live stall signal. This is the ONLY liveness
+  # coverage for brains with no native stream (grok buffers --output-format
+  # json to exit). Worktree-only because a non-worktree lane's cwd is the MAIN
+  # checkout, shared with sibling lanes and the orchestrator - a heartbeat
+  # there could not be attributed to a lane (same reasoning as ff-status's
+  # transcript rule). NB: this changes the prompt for guard+worktree packets,
+  # so pre-2026-08 journal keys for them invalidate - old runs replay live
+  # once, then re-cache (same deal as the model-in-key change).
+  if [ "$WORKTREE" = 1 ]; then
+    cat >> "$SENT" <<'EOF'
+- HEARTBEAT: after each major step (a file finished, tests run, a phase begun), append one short line to ./.ff-heartbeat in your cwd, e.g.:  echo "tests green" >> .ff-heartbeat
+  This is your liveness signal to the orchestrator; a long silence reads as a wedged worker. Do not commit this file.
+EOF
+  fi
+  echo >> "$SENT"
 fi
 cat "$PROMPT_FILE" >> "$SENT"
 # codex and grok take a native structured-output flag (--output-schema /

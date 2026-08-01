@@ -11,19 +11,29 @@
 # lane is reported and skipped, and the script exits 0 once it has tried them all.
 # stdout: one TSV line per lane: id<TAB>status<TAB>detail. stderr: chatter.
 #
+# CONTRACT CHANGE (1.2.0): this script now ARCHIVES the run before it removes
+# anything - one JSON line appended to ~/.fleetflow/history.jsonl via
+# ff-archive.sh. Nothing about lane removal changed, and the TSV on stdout is
+# byte-identical; the addition is a write to a file OUTSIDE the repo. It is the
+# default because teardown is the last moment the run's data exists, and a
+# history step you have to remember is a history step that does not happen.
+# Opt out with --no-archive. Archiving is best-effort: its failure is reported
+# and never blocks the clean.
+#
 # Exit codes: 0 done (incl. some locked lanes) | 2 usage / no such run
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-FF_VERSION="1.1.0"
+FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
-Usage: ff-clean.sh --run NAME [--repo PATH] [--force]
+Usage: ff-clean.sh --run NAME [--repo PATH] [--force] [--no-archive]
        ff-clean.sh --run NAME --reap [--force]
 
   --run NAME      run name under <repo>/.fleetflow/
   --repo PATH     repo root (default: git toplevel of cwd)
+  --no-archive    skip the pre-clean history append (see below)
   --force         also remove DIRTY zero-commit lanes (committed lanes are
                   ALWAYS kept - land or branch them first, then clean).
                   With --reap, actually terminate the orphans.
@@ -36,9 +46,14 @@ Usage: ff-clean.sh --run NAME [--repo PATH] [--force]
   after ff-collect has gated them and the orchestrator has landed/branched the
   keepers. Locked codex sandbox-litter dirs are reported and skipped.
 
+  BEFORE removing anything, the run is archived to ~/.fleetflow/history.jsonl
+  (ff-archive.sh) so it survives in the dashboard's history section after its
+  directory is gone. --no-archive skips that. Archiving never blocks a clean.
+
 EXAMPLES
   ff-clean.sh --run currency
   ff-clean.sh --run currency --force
+  ff-clean.sh --run currency --no-archive       # tear down, keep no record
   ff-clean.sh --run currency --repo /path/to/repo | column -t
   ff-clean.sh --run currency --reap             # list this run's stray workers
   ff-clean.sh --run currency --reap --force     # and kill them
@@ -48,13 +63,15 @@ EOF
 err() { echo "ff-clean: $*" >&2; }
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }   # id <TAB> status <TAB> detail
 
-RUN="" REPO="" FORCE=0 REAP=0
+RUN="" REPO="" FORCE=0 REAP=0 ARCHIVE=1
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
     --repo) REPO="${2:-}"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --reap) REAP=1; shift ;;
+    --no-archive) ARCHIVE=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage >&2; exit 2 ;;
   esac
@@ -92,16 +109,23 @@ $(basename "$d" | sed 's/^wt-//')"
 
 # remove_lane <id> <force>: worktree remove (+ branch -D on success). Reports
 # "locked" if the OS refuses to delete (codex AppContainer-ACL litter).
+# Removal is retried 3x with 1s backoff: on NTFS a just-exited worker (or AV
+# scanner) often holds a transient junction/handle lock that clears within a
+# second - rookery's GitWorktreeLifecycle carries the same load-bearing retry.
+# Only a lock that survives all attempts is a real "locked" (needs elevation).
 remove_lane() {
-  local id="$1" f="$2" wt="$RUNDIR/wt-$id" br="fleetflow/$RUN/$id" wflag=""
+  local id="$1" f="$2" wt="$RUNDIR/wt-$id" br="fleetflow/$RUN/$id" wflag="" try
   [ "$f" = 1 ] && wflag="--force"
-  if git -C "$REPO" worktree remove $wflag "$wt" 2>>"$RUNDIR/$id.clean.err"; then
-    git -C "$REPO" branch -D "$br" >/dev/null 2>>"$RUNDIR/$id.clean.err" \
-      && emit "$id" removed "worktree + branch gone" \
-      || emit "$id" removed "worktree gone (branch delete skipped)"
-  else
-    emit "$id" locked "needs elevation (see $RUNDIR/$id.clean.err)"
-  fi
+  for try in 1 2 3; do
+    if git -C "$REPO" worktree remove $wflag "$wt" 2>>"$RUNDIR/$id.clean.err"; then
+      git -C "$REPO" branch -D "$br" >/dev/null 2>>"$RUNDIR/$id.clean.err" \
+        && emit "$id" removed "worktree + branch gone" \
+        || emit "$id" removed "worktree gone (branch delete skipped)"
+      return 0
+    fi
+    [ "$try" -lt 3 ] && { err "worktree remove failed for $id (attempt $try/3), retrying in 1s"; sleep 1; }
+  done
+  emit "$id" locked "needs elevation (see $RUNDIR/$id.clean.err)"
 }
 
 # clean_cache <id>: best-effort removal of the lane's cache/tmp dir.
@@ -173,6 +197,17 @@ foreach (\$p in @(\$map.Values)) {
 if [ "$REAP" = 1 ]; then
   reap_run
   exit 0
+fi
+
+# Archive FIRST: after the loop below, the lanes ff-status reads may be gone.
+# Best-effort by design - losing the history record is bad, but refusing to
+# clean up because of it would be worse, so this can only ever warn.
+if [ "$ARCHIVE" = 1 ]; then
+  if bash "$HERE/ff-archive.sh" --run "$RUN" --repo "$REPO" >/dev/null 2>>"$RUNDIR/archive.err"; then
+    err "archived to ${FLEETFLOW_HOME:-$HOME/.fleetflow}/history.jsonl"
+  else
+    err "WARNING: archive failed (see $RUNDIR/archive.err) - cleaning anyway"
+  fi
 fi
 
 NLANES="$(list_lane_ids | wc -l | tr -d ' ')"

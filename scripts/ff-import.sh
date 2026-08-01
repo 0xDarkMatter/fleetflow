@@ -23,7 +23,7 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-FF_VERSION="1.1.0"
+FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
