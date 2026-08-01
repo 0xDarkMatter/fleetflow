@@ -39,7 +39,7 @@ Serve `scripts/ff-serve.py` under a process supervisor with a readiness probe on
 bash tests/run.sh
 ```
 
-162 assertions over the scripts, monitor, dashboard wiring, and import/resume
+172 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics.
 
 ## License

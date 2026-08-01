@@ -23,6 +23,7 @@ FF_VERSION="1.2.0"
 usage() {
   cat <<'EOF'
 Usage: ff-collect.sh --run NAME --id ID [--repo PATH] [--schema] [--repair]
+                     [--auto-commit]
        ff-collect.sh --check-main-clean [--repo PATH] [--run NAME]
 
   --run NAME           run name
@@ -33,6 +34,13 @@ Usage: ff-collect.sh --run NAME --id ID [--repo PATH] [--schema] [--repair]
   --repair             on --schema failure: save the bad output to
                        <run>/<id>.invalid.txt and respawn a <id>-repair lane
                        (one attempt); print the repaired text on success
+  --auto-commit        after the gate PASSES: if the lane worktree is dirty,
+                       stage and commit it so landing has a HEAD (a worker that
+                       did the work but forgot to commit otherwise leaves an
+                       empty branch ff-clean will reclaim). Skipped when the
+                       tree is clean; a failed auto-commit warns and never
+                       changes the verdict. Opt-in - the default posture stays
+                       "orchestrator reviews the diff, then commits".
   --check-main-clean   escape guard - compare the MAIN checkout's git status
                        against the run's baseline; exit 12 on new entries
 
@@ -40,13 +48,14 @@ EXAMPLES
   ff-collect.sh --run audit --id ts-refresh
   ff-collect.sh --run audit --id dissent-1 --schema
   ff-collect.sh --run audit --id verdict --schema --repair
+  ff-collect.sh --run audit --id batch-7 --auto-commit
   ff-collect.sh --check-main-clean --run audit
 EOF
 }
 
 err() { echo "ff-collect: $*" >&2; }
 
-RUN="" ID="" REPO="" SCHEMA=0 CHECK_CLEAN=0 REPAIR=0 JQERR=""
+RUN="" ID="" REPO="" SCHEMA=0 CHECK_CLEAN=0 REPAIR=0 AUTO_COMMIT=0 JQERR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
@@ -54,6 +63,7 @@ while [ $# -gt 0 ]; do
     --repo) REPO="${2:-}"; shift 2 ;;
     --schema) SCHEMA=1; shift ;;
     --repair) REPAIR=1; shift ;;
+    --auto-commit) AUTO_COMMIT=1; shift ;;
     --check-main-clean) CHECK_CLEAN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage >&2; exit 2 ;;
@@ -70,6 +80,36 @@ COLLECT="$HERE/ff-collect.sh"
 
 # strip markdown code fences (```json ... ```) so schema gating tolerates fenced replies
 strip_fences() { sed -E '/^[[:space:]]*```[[:alnum:]]*[[:space:]]*$/d'; }
+
+# --- auto-commit on gate pass (rookery's auto-commit-on-PASS, opt-in) ----------
+# Fired from an EXIT trap so every success path is covered (grok/codex/default,
+# schema and plain, repair). Three rules, all load-bearing:
+#   1. only on exit 0 - a failed gate must never have its output committed;
+#   2. skip when the tree is clean - a worker that committed keeps sole
+#      authorship of its history;
+#   3. a failed auto-commit WARNS and leaves the exit code alone - the verdict
+#      is the gate's product, the commit is a convenience (rookery's rule).
+# .ff-heartbeat never lands in these commits: ff-spawn git-excludes it.
+auto_commit_lane() {
+  local wt="$RUNDIR/wt-$ID"
+  [ -d "$wt" ] || { err "auto-commit: no worktree lane at $wt (skipped)"; return 0; }
+  [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || return 0
+  if git -C "$wt" add -A >/dev/null 2>&1 \
+     && git -C "$wt" commit -q -m "chore($ID): auto-commit gated worker output [ff-collect]" >/dev/null 2>&1; then
+    err "auto-commit: committed dirty lane tree ($ID)"
+  else
+    err "WARNING: auto-commit failed for $ID (verdict unaffected)"
+  fi
+  return 0
+}
+on_exit() {
+  rc=$?
+  if [ "$rc" = 0 ] && [ "$AUTO_COMMIT" = 1 ] && [ "$CHECK_CLEAN" = 0 ] \
+     && [ -n "${RUNDIR:-}" ] && [ -n "$ID" ]; then
+    auto_commit_lane
+  fi
+}
+trap on_exit EXIT
 
 # stdin = text; returns 0 if valid JSON else 1; sets global JQERR to the parse error
 json_ok() {

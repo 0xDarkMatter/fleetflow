@@ -181,6 +181,13 @@ The ones to actually use:
   <exact shape>". For machine-parseable results use `--schema` (Codex
   `--output-schema` is native; Claude workers get the schema embedded in the
   prompt and validated at collect time).
+- **Verdict metadata in the FINAL REPLY (rookery's structured-verdict rule):**
+  packets whose lanes run tests or mutate files include `TESTS: <passed>/<failed>`
+  and `FILES_CHANGED: <n>` lines in the reply shape (any subset; omit what the
+  lane cannot know). Tokens and cost are measured by ff-status - never
+  self-reported - but test results and file counts exist only inside the lane,
+  and a gate that can read "TESTS: 12/0" catches a green-sounding failure the
+  prose would hide.
 
 ## Default posture: verify by default, scale to the ask
 
@@ -260,17 +267,24 @@ default the script-author follows, not an option — and real runs routinely hit
   assuming a long wave is progressing:
   `ff-status.sh --run <name> | jq '.lanes[]|select(.stalled)|{id,last_activity_s}'`.
 - **Know what the stall detector covers — `live_signal` tells you.** A stall can
-  only be proven where the brain writes *while it works*: codex's `--json` event
-  stream, or a claude/glm session transcript. Artifact and `.err` files are
-  created by the shell redirect at launch and untouched until exit, so they
-  cannot distinguish work from a wedge — an early build of this detector counted
-  them and flagged every healthy 10-minute sonnet lane as stalled. Uncovered
-  today: **grok** (`--output-format json` buffers to exit) and **claude lanes
-  spawned without `--worktree`** (their transcript dir is shared with sibling
-  lanes and the orchestrator's own session, so attributing it would be worse than
-  reporting nothing). Those report `live_signal: false`, and their `stalled:
-  false` means *cannot tell*, never *healthy* — one more reason to spawn mutating
-  workers with `--worktree`, which makes them fully covered.
+  only be proven where the brain writes *while it works*: codex's/pi's `--json`
+  event stream, a claude/glm session transcript, or the **worker heartbeat** —
+  worktree lanes' guard preamble instructs the worker to append a line to
+  `./.ff-heartbeat` after each major step (rookery's `parcel progress` pattern,
+  filed down to one git-excluded file), and ff-status counts its mtime as a live
+  stream. That closes the gap for **grok worktree lanes** (grok's
+  `--output-format json` buffers to exit — the heartbeat is their only live
+  signal, and it never touches the buffered envelope ff-collect gates on).
+  Artifact and `.err` files are created by the shell redirect at launch and
+  untouched until exit, so they cannot distinguish work from a wedge — an early
+  build of this detector counted them and flagged every healthy 10-minute sonnet
+  lane as stalled. Uncovered today: **claude/grok lanes spawned without
+  `--worktree`** (no heartbeat clause — a non-worktree lane's cwd is the shared
+  main checkout, so a heartbeat there could not be attributed to a lane; and a
+  shared transcript dir has the same attribution problem). Those report
+  `live_signal: false`, and their `stalled: false` means *cannot tell*, never
+  *healthy* — one more reason to spawn mutating workers with `--worktree`, which
+  makes them fully covered.
 - **Killing a lane leaves orphans — reap them.** `TaskStop` (or killing the
   background Bash task) kills the *wrapper*, not the worker's children; the
   2026-07-27 cleanup left five live `codex.exe` / `codex-code-mode-host.exe`
@@ -327,8 +341,8 @@ default the script-author follows, not an option — and real runs routinely hit
 | Script | Purpose |
 |---|---|
 | [scripts/ff-doctor.sh](scripts/ff-doctor.sh) | `--offline` structural preflight (+ which `windows.sandbox` mode codex lanes will get); `--live` probes GLM endpoint, Codex auth, Grok key, Anthropic models, the `windows.sandbox` key tripwire, and reports orchestrator tier (fable/opus) |
-| [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble + journal + per-brain launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
-| [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-brain result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--check-main-clean` escape guard |
+| [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-brain launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
+| [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-brain result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
 | [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
 | [scripts/ff-run.sh](scripts/ff-run.sh) | `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
 | [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |

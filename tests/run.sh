@@ -82,6 +82,18 @@ check "spawn: worktree lane" 0 bash "$S/ff-spawn.sh" --run r1 --id lane --brain 
 git -C "$REPO" show-ref --verify --quiet refs/heads/fleetflow/r1/lane && ok "lane branch created" || bad "lane branch missing"
 [ -d "$REPO/.fleetflow/r1/wt-lane" ] && ok "lane worktree created" || bad "lane worktree missing"
 
+# --- worker heartbeat (stall signal for brains with no native stream) ------------
+grep -q 'HEARTBEAT' "$REPO/.fleetflow/r1/lane.prompt.txt" \
+  && ok "spawn: worktree lane prompt carries HEARTBEAT clause" || bad "spawn: heartbeat clause missing (worktree lane)"
+grep -q 'HEARTBEAT' "$REPO/.fleetflow/r1/a.prompt.txt" \
+  && bad "spawn: non-worktree lane must NOT get the heartbeat clause" || ok "spawn: non-worktree lane has no heartbeat clause"
+echo "step 1: tests" > "$REPO/.fleetflow/r1/wt-lane/.ff-heartbeat"
+bash "$S/ff-status.sh" --run r1 --repo "$REPO" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="lane")|.live_signal==true' >/dev/null \
+  && ok "status: heartbeat file counts as a live signal" || bad "status: heartbeat not counted as live signal"
+git -C "$REPO/.fleetflow/r1/wt-lane" status --porcelain 2>/dev/null | grep -q 'ff-heartbeat' \
+  && bad "heartbeat file dirties the lane (must be git-excluded)" || ok "heartbeat file is git-excluded (never dirties the lane)"
+
 # --- collect gating ---------------------------------------------------------------
 check "collect: dry-run result passes" 0 bash "$S/ff-collect.sh" --run r1 --id a --repo "$REPO"
 OUT="$(bash "$S/ff-collect.sh" --run r1 --id a --repo "$REPO" 2>/dev/null)"
@@ -90,6 +102,25 @@ jq -nc '{is_error:true,result:"boom"}' > "$REPO/.fleetflow/r1/bad.result.json"
 jq -nc '{type:"result",key:"v2:x",id:"bad",brain:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
 check "collect: is_error=true fails gate" 10 bash "$S/ff-collect.sh" --run r1 --id bad --repo "$REPO"
 check "collect: missing artifact" 3 bash "$S/ff-collect.sh" --run r1 --id ghost --repo "$REPO"
+# --- auto-commit on gate pass (opt-in; rookery's auto-commit-on-PASS) ------------
+echo "worker output" > "$REPO/.fleetflow/r1/wt-lane/out.txt"
+check "collect: --auto-commit still passes gate" 0 bash "$S/ff-collect.sh" --run r1 --id lane --repo "$REPO" --auto-commit
+[ -z "$(git -C "$REPO/.fleetflow/r1/wt-lane" status --porcelain 2>/dev/null)" ] \
+  && ok "collect: --auto-commit left a clean lane tree" || bad "collect: lane still dirty after --auto-commit"
+git -C "$REPO/.fleetflow/r1/wt-lane" log -1 --format=%s 2>/dev/null | grep -q 'auto-commit gated worker output' \
+  && ok "collect: auto-commit message shape" || bad "collect: auto-commit message wrong"
+# a FAILED gate must never commit (the verdict rule)
+# NB: distinct packet - the journal cache keys on (brain,prompt,opts), not id,
+# so reusing $PKT+--worktree here would cache-hit the "lane" spawn and skip
+# worktree creation entirely.
+ACP="$TMP/acfail-packet.txt"; echo "acfail task. FINAL REPLY: x" > "$ACP"
+bash "$S/ff-spawn.sh" --run r1 --id acfail --brain sonnet --prompt-file "$ACP" --repo "$REPO" --dry-run --worktree >/dev/null 2>&1
+jq -nc '{is_error:true,result:"boom"}' > "$REPO/.fleetflow/r1/acfail.result.json"
+echo "doomed" > "$REPO/.fleetflow/r1/wt-acfail/doomed.txt"
+check "collect: --auto-commit failed gate still exits 10" 10 bash "$S/ff-collect.sh" --run r1 --id acfail --repo "$REPO" --auto-commit
+git -C "$REPO/.fleetflow/r1/wt-acfail" status --porcelain 2>/dev/null | grep -q 'doomed' \
+  && ok "collect: failed gate leaves the dirty tree uncommitted" || bad "collect: failed gate committed (must never)"
+
 # codex-style artifact: last.txt path with schema validation
 printf '{"verdict":"ok"}' > "$REPO/.fleetflow/r1/cx.last.txt"
 check "collect: codex last-message passes" 0 bash "$S/ff-collect.sh" --run r1 --id cx --repo "$REPO"
@@ -226,6 +257,9 @@ for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.
   grep -q '^FF_VERSION="1.2.0"$' "$S/$s" || VS=1
 done
 [ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.2.0" || bad "version skew across scripts"
+# NTFS transient-lock retry in ff-clean (rookery's load-bearing worktree-remove retry)
+grep -q 'retrying in 1s' "$S/ff-clean.sh" \
+  && ok "clean: worktree-remove NTFS retry present" || bad "clean: NTFS retry loop missing"
 
 # --- effort lever (feature 5): effort is part of the cache key ------------------
 EP="$TMP/effort.txt"; echo "effort test. FINAL REPLY: e" > "$EP"

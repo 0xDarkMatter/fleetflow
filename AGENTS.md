@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (162 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (172 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -30,7 +30,13 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 - **`C:\Users\Mack\.claude\skills\fleetflow` is a JUNCTION to this repo.** Edits
   here are live in every Claude session's skill copy immediately. Renaming or
-  moving root files breaks skill resolution.
+  moving root files breaks skill resolution. **Any skills-sync/installer that
+  copies INTO the skills dir writes THROUGH the junction into this repo** — the
+  2026-08-01 11:48 sync test overwrote uncommitted work here with stale copies
+  and git stayed CLEAN (content matched HEAD), so the loss was invisible to
+  `git status`. Two incident classes now confirmed: untracked files get
+  deleted, tracked files get silently REVERTED. After any sync event, diff
+  against the newest authoring transcript, not just git.
 - **The `fleetflow` Process Compose service (https://fleetflow.lab, port 8161)
   runs `scripts/ff-serve.py` FROM THIS REPO** with this repo as CWD. Editing
   `ff-dashboard.html` changes the live page on the next request; editing
@@ -43,7 +49,14 @@ operational playbook — read it first; this file only carries repo mechanics.
   `STATE_RANK`) — keep those strings when refactoring.
 - **Grok lanes have no live stream** (buffered `--output-format json` by design;
   see SKILL.md) — do not "fix" the monitor to show grok activity without
-  re-verifying the streaming envelope against `ff-collect`'s gate.
+  re-verifying the streaming envelope against `ff-collect`'s gate. Stall
+  coverage for grok WORKTREE lanes comes from the worker-authored
+  `.ff-heartbeat` file instead (guard clause in ff-spawn; mtime read by
+  ff-status) — it deliberately never touches the envelope.
+- **`ff-clean` archives before it removes** (`ff-archive.sh` →
+  `~/.fleetflow/history.jsonl`, `--no-archive` opts out) — teardown is the last
+  moment the run's data exists, so do not reorder the archive step below the
+  removal loop.
 - **`ff-serve.py` is deliberately ONE process** (server + request-driven
   rebuilds). Do not split out a watcher — the predecessor's detached watcher
   dying silently is the exact failure this design removes (contract block in
