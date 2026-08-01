@@ -27,11 +27,14 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ASSETS = SCRIPT_DIR.parent / "assets"
@@ -164,8 +167,124 @@ class State:
             return self.doc, meta
 
 
+class Doctor:
+    """Runs ff-doctor.sh and caches its verdict for the dashboard's Fleet view.
+
+    The two modes have wildly different costs and MUST NOT be treated alike:
+    `--offline` is binaries + `bash -n` (~1-2s, safe to run inline on a request),
+    while `--live` probes every provider over the network - including a real
+    `claude -p` per Anthropic model at up to 120s each - so it is minutes. Live
+    therefore runs in a BACKGROUND thread and the request returns the last good
+    verdict with `building: true`, exactly like the aggregate does, for exactly
+    the same reason: a page that blocks for two minutes is indistinguishable
+    from a dead one.
+
+    Never probes on its own schedule. Capacity is a question the operator asks,
+    not a thing to poll - `--live` spends real model calls, and a dashboard that
+    quietly billed a provider probe every few seconds would be a bug with an
+    invoice attached.
+    """
+
+    #: ff-doctor emits `name<TAB>status<TAB>detail`; status is one of these.
+    #: `unavailable` is the model probe's own word for "did not answer" and is
+    #: counted separately from `unreachable` (a provider we could not reach at
+    #: all) - conflating them would hide which half of the fleet is actually up.
+    STATUSES = ("ok", "advisory", "unavailable", "unreachable", "fail")
+
+    def __init__(self, opts):
+        self.opts = opts
+        self.lock = threading.Lock()
+        self.docs: dict[str, dict] = {}     # mode -> last good verdict
+        self.running: set[str] = set()
+
+    def _script(self) -> Path:
+        return SCRIPT_DIR / "ff-doctor.sh"
+
+    def _run(self, mode: str) -> None:
+        t0 = time.time()
+        bash = shutil.which("bash") or "bash"
+        # Bounded well above --live's own internal per-probe timeouts so a slow
+        # provider reports as slow rather than as a killed doctor.
+        budget = self.opts.doctor_timeout if mode == "live" else 90
+        try:
+            p = subprocess.run(
+                [bash, str(self._script()), f"--{mode}"],
+                capture_output=True, text=True, timeout=budget,
+                cwd=str(SCRIPT_DIR.parent))
+            out, rc = p.stdout, p.returncode
+        except subprocess.TimeoutExpired:
+            out, rc = "", 124
+        except (OSError, subprocess.SubprocessError) as e:
+            err(f"doctor {mode} failed to launch: {e}")
+            out, rc = "", 125
+
+        checks, counts = [], {s: 0 for s in self.STATUSES}
+        for line in out.splitlines():
+            parts = line.rstrip("\r").split("\t")
+            if len(parts) < 2 or not parts[0]:
+                continue
+            name, status = parts[0], parts[1]
+            checks.append({"name": name, "status": status,
+                           "detail": parts[2] if len(parts) > 2 else ""})
+            if status in counts:
+                counts[status] += 1
+
+        orch = next((c["detail"] for c in checks
+                     if c["name"] == "orchestrator" and c["status"] == "ok"), None)
+        doc = {
+            "schema": "fleetflow/doctor/1", "mode": mode,
+            "ran_at": int(time.time()), "took_ms": int((time.time() - t0) * 1000),
+            "exit_code": rc,
+            # rc 0 = every REQUIRED check passed. Advisories (a brain whose CLI
+            # is not installed) are informational and deliberately not failures:
+            # an absent grok is a capability you do not have, not a broken fleet.
+            "ok": rc == 0, "counts": counts, "checks": checks,
+            "orchestrator": orch,
+            "error": ("timed out after %ds" % budget) if rc == 124
+                     else ("could not launch ff-doctor.sh" if rc == 125 else None),
+        }
+        with self.lock:
+            self.docs[mode] = doc
+            self.running.discard(mode)
+        err(f"doctor {mode}: rc={rc} "
+            f"ok={counts['ok']} advisory={counts['advisory']} "
+            f"unreachable={counts['unreachable']} fail={counts['fail']} "
+            f"in {doc['took_ms']}ms")
+
+    def get(self, mode: str, force: bool) -> dict:
+        """Return the last good verdict, refreshing it when stale or forced."""
+        ttl = self.opts.doctor_live_ttl if mode == "live" else self.opts.doctor_ttl
+        with self.lock:
+            doc = self.docs.get(mode)
+            busy = mode in self.running
+            fresh = doc is not None and time.time() - doc["ran_at"] < ttl and not force
+            if not fresh and not busy:
+                self.running.add(mode)
+                start = True
+            else:
+                start = False
+        if start:
+            if mode == "offline":
+                self._run(mode)          # fast enough to answer this request
+                with self.lock:
+                    doc = self.docs.get(mode)
+            else:
+                threading.Thread(target=self._run, args=(mode,), daemon=True).start()
+        with self.lock:
+            doc = self.docs.get(mode)
+            building = mode in self.running
+        if doc is None:
+            return {"schema": "fleetflow/doctor/1", "mode": mode, "checks": [],
+                    "counts": {s: 0 for s in self.STATUSES}, "building": building,
+                    "ran_at": None, "age_s": None, "ok": None, "orchestrator": None,
+                    "error": None if building else "no verdict yet"}
+        return {**doc, "building": building,
+                "age_s": int(time.time() - doc["ran_at"])}
+
+
 class Handler(BaseHTTPRequestHandler):
     state: State = None  # type: ignore[assignment]
+    doctor: Doctor = None  # type: ignore[assignment]
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):  # noqa: A002 - signature is the base class's
@@ -239,6 +358,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "forced": True})
             return
 
+        if path == "/api/doctor.json":
+            q = parse_qs(urlsplit(self.path).query)
+            truthy = {"1", "true", "yes", ""}
+            mode = "live" if (q.get("live", [None])[0] in truthy) else "offline"
+            force = q.get("force", [None])[0] in truthy
+            self._json(200, self.doctor.get(mode, force=force))
+            return
+
         if path in ("/api/health", "/health"):
             doc, meta = self.state.snapshot()
             self._json(200, {"ok": True, "has_aggregate": doc is not None,
@@ -257,6 +384,12 @@ def main(argv: list[str]) -> int:
   /api/aggregate.json   last good aggregate + freshness meta; triggers a
                         background rebuild when older than --ttl
   /api/refresh          force a rebuild on the next poll
+  /api/doctor.json      ff-doctor verdict for the Fleet view. Default --offline
+                        (binaries + syntax, runs inline). ?live=1 additionally
+                        probes every provider - minutes, and it spends real
+                        model calls, so it runs in the background and is only
+                        ever started by an explicit request. ?force=1 ignores
+                        the cache.
   /api/health           liveness + whether an aggregate exists yet
 
 EXAMPLES
@@ -276,6 +409,12 @@ EXAMPLES
     ap.add_argument("--timeout", type=int, default=180, metavar="SECONDS")
     ap.add_argument("--build-timeout", type=int, default=600, metavar="SECONDS")
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--doctor-ttl", type=int, default=30, metavar="SECONDS",
+                    help="cache life of an --offline doctor verdict")
+    ap.add_argument("--doctor-live-ttl", type=int, default=900, metavar="SECONDS",
+                    help="cache life of a --live verdict (it spends real model calls)")
+    ap.add_argument("--doctor-timeout", type=int, default=420, metavar="SECONDS",
+                    help="hard budget for a --live probe")
     ap.add_argument("-h", "--help", action="help")
     try:
         a = ap.parse_args(argv)
@@ -290,6 +429,7 @@ EXAMPLES
 
     state = State(roots, source, a)
     Handler.state = state
+    Handler.doctor = Doctor(a)
     err(f"fleetflow {FF_VERSION} - roots from {source}: "
         f"{', '.join(str(r) for r in roots)}")
 

@@ -71,6 +71,39 @@ grep -qs '^\.fleetflow/$' "$REPO/.git/info/exclude" && ok ".fleetflow gitignored
 [ -f "$REPO/.fleetflow/r1/main-baseline.txt" ] && ok "escape baseline snapshotted" || bad "baseline missing"
 grep -q "relative to cwd" "$REPO/.fleetflow/r1/a.prompt.txt" && ok "guard preamble injected" || bad "guard preamble absent"
 
+# --- prompt-file aliasing guard (incident 2026-08-01, run bkv4) -----------------
+# --prompt-file pointing at <rundir>/<id>.prompt.txt - the path ff-spawn writes
+# its own effective prompt to - used to truncate the author's packet before
+# reading it, launching a worker with a guard preamble and NO TASK while every
+# gate downstream still reported success. The packet has no backup anywhere, so
+# "left INTACT" is the assertion that actually matters here.
+AL_RD="$REPO/.fleetflow/ralias"; mkdir -p "$AL_RD"
+ALP="$AL_RD/al.prompt.txt"
+echo "PRECIOUS PACKET. FINAL REPLY: one line." > "$ALP"
+check "spawn: --prompt-file aliasing the effective-prompt path -> 2" 2 \
+  bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet --prompt-file "$ALP" --repo "$REPO" --dry-run
+grep -q "PRECIOUS PACKET" "$ALP" \
+  && ok "spawn: aliased packet left INTACT (not truncated)" || bad "spawn: aliased packet was DESTROYED"
+# a different SPELLING of the same file must be caught too - the check is a
+# canonical-path compare, not a string compare
+ALRC=0
+( cd "$AL_RD" && bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet \
+    --prompt-file "./al.prompt.txt" --repo "$REPO" --dry-run ) >/dev/null 2>&1 || ALRC=$?
+[ "$ALRC" = "2" ] && ok "spawn: relative spelling of the aliased path also rejected" \
+  || bad "spawn: relative aliased path slipped through (rc=$ALRC)"
+grep -q "PRECIOUS PACKET" "$ALP" \
+  && ok "spawn: packet intact after the relative-path attempt" || bad "spawn: relative attempt destroyed the packet"
+# the documented convention (<rundir>/packets/<id>.task.md) still spawns, and its
+# body reaches the effective prompt byte-for-byte (trailing newline included -
+# the packet is part of the journal's content-hash cache key)
+mkdir -p "$AL_RD/packets"; printf 'real task. FINAL REPLY: x\n' > "$AL_RD/packets/al.task.md"
+check "spawn: packets/<id>.task.md convention still works" 0 \
+  bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet --prompt-file "$AL_RD/packets/al.task.md" --repo "$REPO" --dry-run
+grep -q "real task" "$ALP" && ok "spawn: non-colliding packet body reaches the effective prompt" \
+  || bad "spawn: packet body missing from effective prompt"
+tail -c 26 "$ALP" | cmp -s - "$AL_RD/packets/al.task.md" \
+  && ok "spawn: packet appended byte-for-byte" || bad "spawn: packet bytes altered on append"
+
 # resume: identical packet -> cache hit (exit 3); --force -> re-run (exit 0)
 check "spawn: cache hit on identical packet" 3 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
 check "spawn: --force re-runs" 0 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --force
@@ -476,6 +509,88 @@ grep -q 'data-size="s"' "$HERE/../assets/ff-monitor.html" \
   && grep -q '"ff.size"' "$HERE/../assets/ff-monitor.html" \
   && ok "monitor: card-size control present + persisted" \
   || bad "monitor: card-size control missing"
+
+# --- dashboard: polish invariants -----------------------------------------------
+DASH="$HERE/../assets/ff-dashboard.html"
+# The zero-dependency rule IS the dashboard's architecture - one external URL
+# would break file:// use, offline use, and the preview pane. Guard it here so a
+# well-meaning CDN link cannot land quietly. Matches only real REFERENCES
+# (src=/href=/url()/@import); the file also names a CDN inside a provenance
+# comment, which is prose about where four SVG paths were copied from and is
+# deliberately not a fetch.
+grep -qE '(src|href)="https?://|url\(["'"'"']?https?://|@import' "$DASH" \
+  && bad "dashboard: external asset reference introduced" \
+  || ok "dashboard: still zero external dependencies"
+grep -q 'rel="icon"' "$DASH" \
+  && ok "dashboard: inline favicon present (no /favicon.ico 404)" \
+  || bad "dashboard: favicon missing"
+# The repaint suppressor: without it the pane is rebuilt every 3s and eats the
+# page scroll offset and any keyboard focus inside it.
+grep -q 'function paint' "$DASH" && grep -q 'lastHTML' "$DASH" \
+  && ok "dashboard: paint() suppresses no-op repaints" \
+  || bad "dashboard: repaint suppressor missing"
+grep -q 'preventScroll' "$DASH" \
+  && ok "dashboard: focus restored across a repaint" || bad "dashboard: focus restore missing"
+# ff-monitor also stores "ff.sort" with a DISJOINT value set; served from one
+# origin the two silently overwrite each other.
+grep -q 'const LS = k => "ffd\.' "$DASH" \
+  && ok "dashboard: localStorage namespaced away from ff-monitor" \
+  || bad "dashboard: localStorage key collision with monitor"
+grep -q 'data-toggle="__history__"' "$DASH" \
+  && ok "dashboard: history toggle key matches its guard" \
+  || bad "dashboard: history toggle key mismatch (group will not fold)"
+grep -q 'caret\[data-card\]' "$DASH" \
+  && ok "dashboard: per-card caret is bound" || bad "dashboard: caret rendered but unbound"
+grep -q -- '--run-rgb' "$DASH" \
+  && ok "dashboard: halo keyframe follows the theme" || bad "dashboard: hard-coded halo colour"
+grep -q 'PAL_DARK' "$DASH" && grep -q 'DARK.matches' "$DASH" \
+  && ok "dashboard: brain/repo palettes have dark variants" \
+  || bad "dashboard: palettes are light-only"
+grep -q '\.mix {' "$DASH" \
+  && bad "dashboard: dead .mix CSS is back" || ok "dashboard: no dead .mix CSS"
+
+# --- dashboard: fleet inventory view --------------------------------------------
+grep -q 'const HARNESS' "$DASH" && grep -q 'function fleetView' "$DASH" \
+  && ok "dashboard: fleet view present" || bad "dashboard: fleet view missing"
+grep -q 'data-k="fleet"' "$DASH" \
+  && ok "dashboard: fleet entry pinned in the nav" || bad "dashboard: fleet nav entry missing"
+# Every brain ff-spawn accepts must appear in the capability matrix, or the view
+# claims a capacity inventory it does not actually cover.
+FLEETMISS=""
+for b in glm codex grok pi sonnet opus haiku fable; do
+  grep -q "k:\"$b\"" "$DASH" || FLEETMISS="$FLEETMISS $b"
+done
+[ -z "$FLEETMISS" ] && ok "fleet view covers every spawnable brain" \
+  || bad "fleet view missing brain(s):$FLEETMISS"
+grep -q 'pi:.*#1f8a9c' "$DASH" \
+  && ok "dashboard: pi brain has a palette entry" || bad "dashboard: pi missing from BRAIN"
+# A --live probe spends real model calls; it must never be on the poll path.
+grep -q 'probeDoctor(false, false)' "$DASH" && grep -q 'probeDoctor(true, true)' "$DASH" \
+  && grep -q 'id="ffProbe"' "$DASH" \
+  && ok "fleet view: live probe is click-gated, offline is automatic" \
+  || bad "fleet view: doctor probe wiring wrong"
+# The follow-up poll must stay on the SAME cache slot: re-polling the offline
+# slot would silently discard the live verdict it is waiting for.
+grep -q 'probeDoctor(live, false)' "$DASH" \
+  && ok "fleet view: live probe polls its own slot until it settles" \
+  || bad "fleet view: follow-up poll would discard the live verdict"
+grep -q 'setInterval.*probeDoctor' "$DASH" \
+  && bad "fleet view: live probe on a timer (spends model calls)" \
+  || ok "fleet view: no timer-driven capacity probe"
+
+# --- ff-serve: doctor endpoint ---------------------------------------------------
+SRV="$HERE/../scripts/ff-serve.py"
+grep -q '/api/doctor.json' "$SRV" \
+  && ok "ff-serve: doctor endpoint routed" || bad "ff-serve: doctor endpoint missing"
+grep -q 'class Doctor' "$SRV" \
+  && ok "ff-serve: doctor cache/runner present" || bad "ff-serve: Doctor class missing"
+# offline runs inline (fast); live MUST be backgrounded or the request blocks for
+# minutes and is indistinguishable from a dead server.
+grep -q 'threading.Thread(target=self._run' "$SRV" \
+  && ok "ff-serve: live doctor probe is backgrounded" \
+  || bad "ff-serve: live probe would block the request"
+python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$SRV" \
+  && ok "ff-serve: parses" || bad "ff-serve: syntax error"
 
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by

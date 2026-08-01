@@ -75,6 +75,17 @@ EOF
 
 err() { echo "ff-spawn: $*" >&2; }
 
+# Canonical absolute path. `realpath` is not on every host bash (and MSYS's
+# emits a mixed-style path), so cd+pwd is the portable equivalent - and because
+# BOTH sides of a comparison go through this one helper, the two land in the
+# same path flavour (MSYS `/x/...` vs git's `X:/...`) and compare correctly.
+# Falls back to the literal path when the directory does not exist.
+abspath() {
+  local p="$1" d
+  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || { printf '%s' "$p"; return; }
+  printf '%s/%s' "$d" "$(basename "$p")"
+}
+
 # main() wrapper - parse-before-execute guard (incident 2026-08-01, run
 # atdw-sync, lane verify-cli-2). bash parses script files INCREMENTALLY during
 # execution: when this file was rewritten mid-run (a concurrent session edit +
@@ -166,7 +177,30 @@ BASELINE="$RUNDIR/main-baseline.txt"
 [ -f "$BASELINE" ] || git -C "$REPO" status --porcelain > "$BASELINE" 2>/dev/null
 
 # --- build the effective prompt ---------------------------------------------
+# ALIASING HAZARD (incident 2026-08-01, run bkv4 - three lanes lost in one wave).
+# $SENT is an OUTPUT: truncated here, then rebuilt from the guard preamble plus
+# $PROMPT_FILE. If the caller points --prompt-file at this same path, it is also
+# the INPUT, and `: > "$SENT"` destroys the author's packet before the `cat`
+# below can read it. Everything downstream then reports success: the worker
+# launches with a guard preamble and NO TASK, replies "I don't see a task
+# description in this session yet", exits 0, and ff-collect's gate passes.
+# Nothing anywhere holds a backup of the packet.
+# This is a LIKELY mistake, not an exotic one - `<rundir>/<id>.prompt.txt` is
+# exactly the filename a person authoring packets into the run dir would choose.
+# Two defences, both deliberate; DO NOT "simplify" either away:
+#   1. refuse the aliased path outright, canonically compared, before any write;
+#   2. read the packet into memory BEFORE the truncate, so ordering alone can
+#      never destroy input if a future refactor reintroduces an aliasing path.
 SENT="$RUNDIR/$ID.prompt.txt"
+if [ "$(abspath "$PROMPT_FILE")" = "$(abspath "$SENT")" ]; then
+  err "prompt file $PROMPT_FILE is the path ff-spawn writes its effective prompt to;"
+  err "author packets elsewhere (e.g. $RUNDIR/packets/$ID.task.md)"
+  exit 2
+fi
+# defence in depth (see above). The `printf x` / `%x` bracket preserves the
+# packet's exact trailing newlines, which command substitution would strip -
+# byte fidelity here keeps the journal's content-hash cache key stable.
+PACKET="$(cat "$PROMPT_FILE"; printf x)"; PACKET="${PACKET%x}"
 : > "$SENT"
 if [ "$GUARD" = 1 ]; then
   PRE="$(dirname "${BASH_SOURCE[0]}")/../assets/guard-preamble.txt"
@@ -189,7 +223,7 @@ EOF
   fi
   echo >> "$SENT"
 fi
-cat "$PROMPT_FILE" >> "$SENT"
+printf '%s' "$PACKET" >> "$SENT"
 # codex and grok take a native structured-output flag (--output-schema /
 # --json-schema), so their schema is passed out-of-band, not appended to the
 # prompt. Every other brain gets the schema embedded and validated at collect.
@@ -220,11 +254,8 @@ JOURNAL="$RUNDIR/journal.jsonl"
 # --- run manifest (orchestrator-side packet metadata; ff-run replays it) ----
 # Created on first spawn; each spawn upserts its packet by id (idempotent).
 MANIFEST="$RUNDIR/manifest.json"
-prompt_abs() {
-  local d
-  d="$(cd "$(dirname "$PROMPT_FILE")" 2>/dev/null && pwd)" || { printf '%s' "$PROMPT_FILE"; return; }
-  printf '%s/%s' "$d" "$(basename "$PROMPT_FILE")"
-}
+# one canonicalizer for the whole script (also the aliasing check's comparator)
+prompt_abs() { abspath "$PROMPT_FILE"; }
 WT_JSON="false"; [ "$WORKTREE" = 1 ] && WT_JSON="true"
 MENTRY="$(jq -nc --arg id "$ID" --arg b "$BRAIN" --arg p "$PHASE" --arg pf "$(prompt_abs)" \
   --argjson wt "$WT_JSON" --argjson mt "$MAX_TURNS" --arg e "$EFFORT" --arg s "${SCHEMA:-}" --arg k "$KEY" \

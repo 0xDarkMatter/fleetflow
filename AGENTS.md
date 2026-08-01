@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (172 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (192 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -61,3 +61,20 @@ operational playbook — read it first; this file only carries repo mechanics.
   rebuilds). Do not split out a watcher — the predecessor's detached watcher
   dying silently is the exact failure this design removes (contract block in
   the file).
+- **`ff-dashboard.html` has ZERO external references and must keep them.** No
+  CDN, webfont, remote image, or build step: it is one file that has to work
+  offline, from `file://`, and in a preview pane with no network. A test
+  enforces it. (The one CDN string in the file is a provenance comment naming
+  where four inline SVG paths were copied from — prose, not a fetch.)
+- **`/api/doctor.json?live=1` spends real model calls** (a one-turn `claude -p`
+  per Anthropic model, plus provider auth probes). It is click-gated in the UI
+  and cached for 15 min server-side. Never put it on the poll path or a timer —
+  a test asserts there is no `setInterval` driving it.
+- **The dashboard's Fleet view carries a hand-maintained capability matrix**
+  (`const HARNESS`). It encodes contracts that live in prose — sandbox posture,
+  whether a brain may self-commit, concurrency ceilings — and that no run
+  artifact reports. When a brain's contract changes in SKILL.md, change it there
+  in the SAME commit; a test asserts every spawnable brain appears in it.
+- **Dashboard `localStorage` keys are `ffd.*`, the monitor's are `ff.*`.** They
+  are served from one origin and `ff.sort` means different things to each; the
+  split is load-bearing, not cosmetic.

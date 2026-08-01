@@ -141,7 +141,14 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    under `.claude/`), injects the guard preamble
    ([assets/guard-preamble.txt](assets/guard-preamble.txt)), journals a
    `started` record, runs the worker to completion, journals the `result`.
-4. **Collect + gate:** `scripts/ff-collect.sh <run> <id>` — per-brain success
+   **Author packets at `.fleetflow/<run>/packets/<id>.task.md`** (any path
+   outside the run dir works too) — **never `.fleetflow/<run>/<id>.prompt.txt`**,
+   which is where ff-spawn writes its own effective prompt (guard preamble +
+   your packet). Pointing `--prompt-file` at that path used to destroy the
+   packet and launch a task-less worker that still passed every gate; ff-spawn
+   now refuses it with exit 2, but the convention is what keeps you clear of it.
+4. **Collect + gate:** `scripts/ff-collect.sh --run <run> --id <id>` — flags,
+   not positionals (a positional invocation is rejected with exit 2) — per-brain success
    semantics (Claude JSON `is_error`; Codex exit + last-message), then the
    orchestrator reviews the three-dot diff (`git diff main...fleetflow/<run>/<id>`)
    and runs the lane's tests. **Always finish with
@@ -389,7 +396,7 @@ default the script-author follows, not an option — and real runs routinely hit
 | [scripts/ff-aggregate.py](scripts/ff-aggregate.py) | discovers every run under the configured roots and emits ONE aggregate JSON (all repos, all runs, roll-ups, history); `--init-roots PATH...` writes the roots file |
 | [scripts/ff-serve.py](scripts/ff-serve.py) | serves the machine-wide dashboard + builds its aggregate on request; the process behind `https://fleetflow.lab` |
 | [scripts/ff-import.sh](scripts/ff-import.sh) | `--wf DIR --run NAME` imports a native Claude Code Workflow run dir (`wf_*/`) — completed agents become lanes (prompt + result envelope + journal + manifest), started-only agents are flagged incomplete; native keys are terminal, not replayable |
-| [scripts/ff-serve.py](scripts/ff-serve.py) | machine-wide dashboard server: discovers every fleetflow run (live + historical, across repos) by scanning the roots in `~/.fleetflow/roots.txt` for `.fleetflow/<run>/journal.jsonl`, serves [assets/ff-dashboard.html](assets/ff-dashboard.html) at `/` plus `/api/aggregate.json` / `/api/refresh` / `/api/health`; per-run state comes from `ff-status.sh` (never reimplemented). One process by design — request-driven, non-blocking rebuilds, no detachable watcher to die silently. Run it as a supervised service (e.g. Process Compose + a probe on `/api/health`) |
+| [scripts/ff-serve.py](scripts/ff-serve.py) | machine-wide dashboard server: discovers every fleetflow run (live + historical, across repos) by scanning the roots in `~/.fleetflow/roots.txt` for `.fleetflow/<run>/journal.jsonl`, serves [assets/ff-dashboard.html](assets/ff-dashboard.html) at `/` plus `/api/aggregate.json` / `/api/refresh` / `/api/doctor.json` / `/api/health`; per-run state comes from `ff-status.sh` and capacity from `ff-doctor.sh` (neither reimplemented). `/api/doctor.json` is `--offline` by default and runs inline; `?live=1` probes every provider in a background thread (minutes, and it spends real model calls). One process by design — request-driven, non-blocking rebuilds, no detachable watcher to die silently. Run it as a supervised service (e.g. Process Compose + a probe on `/api/health`) |
 
 **Live monitor** ([assets/ff-monitor.html](assets/ff-monitor.html)): a
 zero-dependency page reproducing the native /workflows progress surface — run
@@ -462,6 +469,33 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   to die silently — the single failure that made the predecessor dashboards
   untrustworthy. If the server is unreachable the page says so in red and stamps
   the snapshot's age; it never renders stale numbers as if they were live.
+- **The Fleet view answers "what can this box run"** — pinned at the top of the
+  sidebar, and the only view that is about capability rather than history. It
+  holds three registers deliberately kept apart, because they have different
+  truth values and merging them is how a dashboard starts lying:
+  **spec** (static doctrine per brain — process, auth, isolation, live-stream,
+  concurrency ceiling, whether the brain may self-commit — transcribed from this
+  file and [worker-contracts](references/worker-contracts.md), hand-maintained,
+  so change it here in the same commit as a contract change);
+  **observed** (measured across every run under the roots *plus* archived
+  history — lanes, tokens, cost, failures per harness, and a resolved-model
+  table); and **capacity** (an `ff-doctor` probe via `api/doctor.json`, always
+  shown with its age because it is a point-in-time claim).
+  `--offline` (binaries + `bash -n`) runs automatically when the view opens;
+  **`--live` is click-gated and never on a timer** — it spends real model calls,
+  and a dashboard that quietly billed a provider round-trip on every poll would
+  be a bug with an invoice attached. Live probes run in the server's background
+  and the page polls until they settle.
+- **Zero external dependencies, still.** No CDN, no webfont, no remote image, no
+  build step — the page is one file that works offline, from `file://`, and in a
+  preview pane with no network. A test asserts it (`dashboard: still zero
+  external dependencies`); the only URL in the file is a provenance comment.
+- **The pane is not repainted when nothing changed.** `paint()` compares the
+  generated HTML against what is on screen and no-ops on a match, which is most
+  ticks on a mostly-idle fleet. Before it, the 3s poll rebuilt the DOM
+  unconditionally and took the page scroll offset and any keyboard focus with it
+  — tabbing through the run list was impossible because focus died within three
+  seconds. When it does paint, scroll and focus are restored.
 - **Per-lane telemetry the single-run view never had:** `density` (20 buckets) +
   `density_basis`, `model` (the resolved id, e.g. `GLM-5.2`, not the `glm` alias),
   `worktree` / `branch`. **`density_basis` is load-bearing:** it is `"time"` for
