@@ -1,0 +1,10 @@
+# Python bytecode (ff-serve.py)
+__pycache__/
+*.pyc
+
+# Claude Code session state (this repo is also mounted as a live skill)
+.claude/
+
+# fleetflow run dirs — runs belong to the TARGET repo's .fleetflow/, but guard
+# against an accidental fleet launched with this repo as cwd
+.fleetflow/
