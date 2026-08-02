@@ -37,6 +37,15 @@ operational playbook — read it first; this file only carries repo mechanics.
   `git status`. Two incident classes now confirmed: untracked files get
   deleted, tracked files get silently REVERTED. After any sync event, diff
   against the newest authoring transcript, not just git.
+- **Never `git add -A` / `git add .` here — stage explicit paths.** Because the
+  repo root is a live skill behind that junction, other sessions edit these same
+  files while you work, and `-A` silently annexes their in-flight changes into
+  your commit. `0a83f5d` and `0bca912` (2026-08-01) each carry a slice of an
+  unrelated prompt-file aliasing guard (`ff-spawn.sh`, `tests/run.sh`,
+  `references/worker-contracts.md`) for exactly this reason. History was left
+  as-is — the content is correct and tested, only the attribution is wrong — so
+  do not be misled by those two commit messages when reading `git log -p` for
+  the aliasing guard's rationale.
 - **The `fleetflow` Process Compose service (https://fleetflow.lab, port 8161)
   runs `scripts/ff-serve.py` FROM THIS REPO** with this repo as CWD. Editing
   `ff-dashboard.html` changes the live page on the next request; editing
