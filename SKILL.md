@@ -167,6 +167,19 @@ results, that is a barrier — collect everything first, then compose. (True
 peer-to-peer between long-lived workers is out of scope; that's what a message
 bus like pigeon is for.)
 
+**Why not Claude Desktop's `ccd_session_mgmt` messaging here** (asked and settled
+2026-08-03): it addresses *Desktop sessions* — wrapper JSONs under
+`claude-code-sessions/`. A fleetflow worker is an OS process (`claude -p`,
+`codex exec`, a GLM/Grok endpoint call); it registers no wrapper, and the
+non-Anthropic brains are not Claude at all, so `send_message` has no address for
+them. The tools are also absent from the terminal CLI binary entirely, so a
+headless worker could not call them even if it had an address. Hub-and-spoke is
+not a shortcut here — it is the only topology this process model permits. Where
+cross-worker signalling IS wanted, use `pigeon` (a real CLI, works for any
+harness). The Desktop-only channel is documented in
+[fleet-ops SKILL.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-ops/SKILL.md),
+which also owns the MAIN-coordinator role that fleetflow runs land through.
+
 **Clean-room / benchmark runs get their own target repo.** Lanes are worktrees
 *of some repo* — don't graft a build experiment onto an unrelated repo's object
 store. Seed a standalone repo (e.g. under `X:\Benching`), and **vendor any
