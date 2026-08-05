@@ -536,9 +536,16 @@ grep -q 'preventScroll' "$DASH" \
 grep -q 'const LS = k => "ffd\.' "$DASH" \
   && ok "dashboard: localStorage namespaced away from ff-monitor" \
   || bad "dashboard: localStorage key collision with monitor"
-grep -q 'data-toggle="__history__"' "$DASH" \
+# The history section's toggle key must be the literal the guards read
+# (`__history__`) — it now flows through the navSection helper, so assert the
+# call site rather than the rendered attribute.
+grep -q 'navSection("__history__"' "$DASH" \
   && ok "dashboard: history toggle key matches its guard" \
   || bad "dashboard: history toggle key mismatch (group will not fold)"
+# Accordion sections reuse the repo-group fold contract (shared collapsed set)
+grep -q 'const navSection' "$DASH" && grep -q 'navSection("__projects__"' "$DASH" \
+  && ok "dashboard: nav is sectioned (live/projects/history accordions)" \
+  || bad "dashboard: nav accordion sections missing"
 grep -q 'caret\[data-card\]' "$DASH" \
   && ok "dashboard: per-card caret is bound" || bad "dashboard: caret rendered but unbound"
 # The sparkline must render BEFORE <div class="body">, or collapsing a card

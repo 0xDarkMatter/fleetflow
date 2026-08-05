@@ -152,6 +152,15 @@
   .tbtn .cnt { margin-left:auto; }
 
   .repo { margin-bottom:3px; }
+  /* Accordion section headers (live now / projects / history / …): quieter than
+     repo rows, louder than nothing — they carve the sidebar into strata. */
+  .nsec { width:100%; display:flex; align-items:center; gap:5px; border:0;
+    background:none; cursor:pointer; font-size:10px; text-transform:uppercase;
+    letter-spacing:.07em; color:var(--text-muted); padding:7px 4px 4px;
+    border-top:1px solid var(--border); margin-top:7px; border-radius:0; }
+  .nsec:hover { color:var(--text-accent); }
+  .nsec svg.i { width:12px; height:12px; transition:transform .12s; }
+  .nsec .n { margin-left:auto; font-family:var(--font-mono); text-transform:none; }
   /* The repo header is TWO controls, not one: the chevron folds the group, the
      name drills into the PROJECT view. One button doing both meant the project
      level had no entry point at all. */
@@ -502,7 +511,10 @@ const tok = n => !n ? "—" : n >= 1e9 ? (n/1e9).toFixed(2)+"B" : n >= 1e6 ? (n/
   : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n);
 const usd = v => v == null ? "—" : v >= 100 ? "$"+v.toFixed(0) : "$"+v.toFixed(2);
 const nf  = n => (n||0).toLocaleString("en-US");
-const esc = t => (t||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* String() first: callers pass numbers and occasionally structured objects
+   (a roost profile's `error` is a dict) — `.replace` on those threw and took
+   the whole render down. Escaping must never be the thing that crashes. */
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* Inline SVG instead of an icon webfont - this page is served standalone under a
    strict no-external-assets rule. Same glyph vocabulary as the summon picker's
@@ -1038,6 +1050,19 @@ function renderNav() {
   const brainsSeen = new Set();
   for (const r of doc.runs) (r.summary?.brains || []).forEach(b => brainsSeen.add(b));
   for (const h of (doc.history || [])) (h.brains || []).forEach(b => brainsSeen.add(b));
+  /* Accordion section: same fold contract as a repo group (data-toggle key in
+     the shared `collapsed` set, `.repo.collapsed .runs` hides the body), so
+     paint(), persistence, and the collapse-all buttons all keep working.
+     Section keys are `__name__` — reserved namespace that can never collide
+     with a repo label (labels come from paths and never start with _). */
+  const navSection = (key, icon, title, count, body) =>
+    `<div class="repo ${collapsed.has(key) ? "collapsed" : ""}">
+      <button class="nsec" data-toggle="${key}">${ico("chev","chev")}
+        ${ico(icon)}<span>${title}</span><span class="n">${count}</span></button>
+      <div class="runs">${body}</div></div>`;
+
+  // Pinned capability destinations — never filtered, never folded: they
+  // describe the machine, not any subset of runs.
   let html = `<button class="runrow ${selected === "fleet" ? "on" : ""}" data-k="fleet"
       title="harnesses, models, and live capacity">
       <div class="rl">${ico("cpu")}<span class="nm">fleet · harnesses</span>
@@ -1051,12 +1076,29 @@ function renderNav() {
       <div class="rl">${ico("key")}<span class="nm">roost · accounts</span>
         <span class="rs">${rc.ok ?? "…"}${rc.count != null ? "/" + rc.count + " ok" : ""}</span></div></button>`;
   }
-  html += `<div style="height:7px"></div>`;
+
+  // LIVE NOW — every in-flight run across every repo, one click deep. The same
+  // runs also appear under their project; the duplication IS the feature.
+  const liveRuns = [...groups.values()].flat().filter(r => inflight(r.summary?.state));
+  if (liveRuns.length) {
+    html += navSection("__live__", "activity", "live now", liveRuns.length,
+      liveRuns.map(r => {
+        const s = r.summary || {};
+        return `<button class="runrow live ${selected === runKey(r) ? "on" : ""}"
+          data-k="${esc(runKey(r))}">
+          <div class="rl"><span class="sq ${s.state}"></span>
+            <span class="nm mono">${esc(r.run)}</span>
+            <span class="rs">${esc(r.repo_label || "")}</span></div></button>`;
+      }).join(""));
+  }
+
+  // PROJECTS — the grouped-by-repo tree.
+  let repoHtml = "";
   for (const [label, runs] of groups) {
     const live = runs.filter(r => inflight(r.summary?.state)).length;
     const isC = collapsed.has(label);
     const pk = "repo:" + label;
-    html += `<div class="repo ${isC ? "collapsed" : ""}" data-g="${esc(label)}">
+    repoHtml += `<div class="repo ${isC ? "collapsed" : ""}" data-g="${esc(label)}">
       <div class="repo-h">
         <button class="tgl" data-toggle="${esc(label)}"
           aria-label="${isC ? "Expand" : "Collapse"} ${esc(label)}">${ico("chev","chev")}</button>
@@ -1069,25 +1111,22 @@ function renderNav() {
       </div>
       <div class="runs">${runs.map(runRow).join("")}</div></div>`;
   }
-  // History is a peer group in the same tree, not a separate screen: a run that was
-  // live an hour ago and cleaned since should be one click away. Runs still on disk
-  // are suppressed so nothing appears twice while it is both live and archived.
+  if (groups.size) html += navSection("__projects__", "folder", "projects", groups.size, repoHtml);
+
+  // HISTORY — a peer section in the same tree, not a separate screen: a run that
+  // was live an hour ago and cleaned since should be one click away. Runs still
+  // on disk are suppressed so nothing appears twice while both live and archived.
   const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
   const hist = (doc.history || []).filter(h =>
     !onDisk.has((h.repo + "|" + h.run).toLowerCase()) &&
     matches(h.run + " " + (h.repo_label || "") + " " + h.repo) &&
     (!stateFilter.size || stateFilter.has(h.state)));
   if (hist.length) {
-    const isC = collapsed.has("__history__");
-    // data-toggle MUST equal the key the handler stores. It was `&#0;history`
-    // here while the guards read `__history__`, so clicking this header wrote a
-    // key nothing ever matched and the group refused to fold - while the
-    // collapse-all button, which adds `__history__` directly, folded it fine.
-    html += `<div class="repo ${isC ? "collapsed" : ""}">
-      <button class="repo-h" data-toggle="__history__">${ico("chev","chev")}
-        ${ico("db")}<span class="nm">history · cleaned up</span>
-        <span class="n">${hist.length}</span></button>
-      <div class="runs">${hist.map(h => `
+    // data-toggle MUST equal the key the handler stores (`__history__`) — a
+    // mismatched key here once made the group refuse to fold while the
+    // collapse-all button folded it fine.
+    html += navSection("__history__", "db", "history · cleaned up", hist.length,
+      hist.map(h => `
         <button class="runrow archived ${selected === histKey(h) ? "on" : ""}"
           data-k="${esc(histKey(h))}">
           <div class="rl"><span class="sq ${h.state}"></span>
@@ -1095,7 +1134,7 @@ function renderNav() {
             <span class="rs">${tok(h.tokens_total)}</span></div>
           <div class="rl" style="margin-top:2px"><span class="rs" style="margin-left:14px">
             ${esc(h.repo_label||"")} · ${h.lane_count} lanes · ${costFmt(costRollup(h.lanes))}</span></div>
-        </button>`).join("")}</div></div>`;
+        </button>`).join(""));
   }
   if (!groups.size && !hist.length)
     html += `<div class="empty" style="padding:18px 4px">no runs match</div>`;
@@ -1339,7 +1378,8 @@ function roostView() {
       </div>
       ${meterRow("session", pr.session_pct, pr.session_reset_at)}
       ${meterRow("weekly", pr.weekly_pct, pr.weekly_reset_at)}
-      ${pr.error ? `<div class="errline" title="${esc(pr.error)}">${esc(pr.error)}</div>` : ""}
+      ${pr.error ? (e => `<div class="errline" title="${esc(e)}">${esc(e)}</div>`)(
+        typeof pr.error === "string" ? pr.error : JSON.stringify(pr.error)) : ""}
     </div>`).join("");
   return `<div class="rhead">
     <button class="crumb" data-k="">${ico("chev")}fleet</button>
