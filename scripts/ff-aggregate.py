@@ -255,9 +255,11 @@ def roll_up(status: dict) -> dict:
         "cost_partial": len(costed) < len(lanes),
         "started": min(started) if started else 0,
         "elapsed_s": max((l.get("elapsed_s") or 0) for l in lanes) if lanes else 0,
-        "brains": sorted({l.get("brain", "?") for l in lanes}),
+        # `models` = spawnable aliases (was `brains` pre-rename);
+        # `model_ids` = exact resolved ids (was `models`).
+        "models": sorted({l.get("model") or l.get("brain") or "?" for l in lanes}),
         "orchestrator": status.get("orchestrator"),
-        "models": sorted({l["model"] for l in lanes if l.get("model")}),
+        "model_ids": sorted({l["model_id"] for l in lanes if l.get("model_id")}),
         "phases": [p for p in dict.fromkeys(l.get("phase", "build") for l in lanes)],
     }
 
@@ -330,6 +332,13 @@ def load_history(limit: int) -> tuple[list[dict], list[dict]]:
                 except json.JSONDecodeError:
                     continue  # a torn final line is expected on an append-only file
                 key = f"{rec.get('repo', '')}|{rec.get('run', '')}".lower()
+                # Normalise pre-rename archives at the read boundary so every
+                # consumer sees ONE shape: `models`/lane `model`, never `brain*`.
+                if "models" not in rec and "brains" in rec:
+                    rec["models"] = rec.get("brains")
+                for lane in rec.get("lanes") or []:
+                    if "model" not in lane and "brain" in lane:
+                        lane["model"] = lane.get("brain")
                 by_key[key] = rec
     except OSError as e:
         errors.append({"scope": "history", "path": str(path), "error": str(e)})

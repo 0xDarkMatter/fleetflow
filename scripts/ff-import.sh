@@ -8,10 +8,10 @@
 # incomplete agents (started, never finished) as respawn candidates.
 #
 #   result record  -> <id>.prompt.txt + <id>.result.json envelope + journal
-#                     started/result (brain "native", phase "imported") +
-#                     manifest packet {id, brain:"native", imported_from}
+#                     started/result (model "native", phase "imported") +
+#                     manifest packet {id, model:"native", imported_from}
 #   started-only   -> <id>.prompt.txt only; reported INCOMPLETE (respawn via
-#                     ff-spawn --run <run> --id <id> --brain <choice> --prompt-file)
+#                     ff-spawn --run <run> --id <id> --model <choice> --prompt-file)
 #
 # CAVEAT: native hash keys are NOT replayable here. An imported result is a
 # terminal fact (the object the agent returned); the native script's control
@@ -102,7 +102,7 @@ prompt_abs() { ( cd "$RUNDIR" && pwd ) >/dev/null 2>&1; printf '%s/%s' "$RUNDIR"
 already_imported() {  # <id> <key>  -> rc 0 if present, 1 if not (stdout suppressed)
   [ -f "$JOURNAL" ] || return 1
   jq -es --arg id "$1" --arg k "$2" \
-    '[.[] | objects | select(.type=="started" and .brain=="native" and .id==$id and .key==$k)] | length > 0' \
+    '[.[] | objects | select(.type=="started" and .model=="native" and .id==$id and .key==$k)] | length > 0' \
     "$JOURNAL" >/dev/null 2>&1
 }
 
@@ -111,7 +111,7 @@ upsert_packet() {  # <id> <key>
   local id="$1" key="$2" entry
   entry="$(jq -nc --arg id "$id" --arg pf "$(prompt_abs "$id.prompt.txt")" \
     --arg k "$key" --arg wf "$WF" \
-    '{id:$id,brain:"native",phase:"imported",prompt_file:$pf,imported_from:$wf,key:$k}')"
+    '{id:$id,model:"native",phase:"imported",prompt_file:$pf,imported_from:$wf,key:$k}')"
   if [ ! -s "$MANIFEST" ]; then
     jq -nc --arg run "$RUN" --arg by "ff-import/$FF_VERSION" --argjson entry "$entry" \
       '{run:$run,base:"main",created_by:$by,phases:["imported"],packets:[$entry]}' > "$MANIFEST"
@@ -157,9 +157,9 @@ printf '%s\n' "$RESULT_IDS" | while IFS=$'\t' read -r id key; do
   upsert_packet "$id" "$key"
   if ! already_imported "$id" "$key"; then
     jq -nc --arg k "$key" --arg id "$id" --arg v "$FF_VERSION" \
-      '{type:"started",key:$k,id:$id,brain:"native",phase:"imported",v:$v}' >> "$JOURNAL"
+      '{type:"started",key:$k,id:$id,model:"native",phase:"imported",v:$v}' >> "$JOURNAL"
     jq -nc --arg k "$key" --arg id "$id" --arg a "$(prompt_abs "$id.result.json")" \
-      '{type:"result",key:$k,id:$id,brain:"native",rc:0,artifact:$a}' >> "$JOURNAL"
+      '{type:"result",key:$k,id:$id,model:"native",rc:0,artifact:$a}' >> "$JOURNAL"
     err "imported $id (result)"
   else
     err "imported $id (result, already present - refreshed files)"

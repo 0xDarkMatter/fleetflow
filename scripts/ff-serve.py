@@ -235,7 +235,7 @@ class Doctor:
             "schema": "fleetflow/doctor/1", "mode": mode,
             "ran_at": int(time.time()), "took_ms": int((time.time() - t0) * 1000),
             "exit_code": rc,
-            # rc 0 = every REQUIRED check passed. Advisories (a brain whose CLI
+            # rc 0 = every REQUIRED check passed. Advisories (a model whose CLI
             # is not installed) are informational and deliberately not failures:
             # an absent grok is a capability you do not have, not a broken fleet.
             "ok": rc == 0, "counts": counts, "checks": checks,

@@ -1,7 +1,7 @@
 ---
 name: fleetflow
 description: "Heterogeneous cross-provider fleet - GLM (z.ai), Codex (OpenAI), Grok (xAI), Anthropic Sonnet/Opus/Haiku - from one session, porting the native Workflow tool's patterns (adversarial verify, judge panels, journal resume) to OS-process workers. Triggers: fleetflow, heterogeneous/mixed-model fleet, codex worker, grok worker, cross-provider fan-out, cross-model verify."
-when_to_use: "Use when a fan-out wants DIFFERENT brains per work class - e.g. 'fan this backlog out to GLM and Codex workers', 'mixed fleet with cross-model adversarial verify', 'Codex second opinion on each lane'."
+when_to_use: "Use when a fan-out wants DIFFERENT models per work class - e.g. 'fan this backlog out to GLM and Codex workers', 'mixed fleet with cross-model adversarial verify', 'Codex second opinion on each lane'."
 license: MIT
 allowed-tools: "Read Write Edit Bash Glob Grep Task"
 metadata:
@@ -57,14 +57,14 @@ Claude Code's native **Workflow tool** is a superb orchestration harness with on
 structural limit: every agent it spawns runs **in-process**, so they all share one
 provider (`ANTHROPIC_BASE_URL` is process-global — only the model *alias slot*
 varies per agent). fleetflow ports the Workflow tool's patterns to **OS-process
-workers**, where each worker gets its own env block — and therefore its own brain:
+workers**, where each worker gets its own env block — and therefore its own model:
 
-| Worker brain | Process | Harness |
+| Worker model | Process | Harness |
 |---|---|---|
-| **GLM-5.2 / GLM-4.5-Air** | `claude -p` → z.ai endpoint | Claude Code tools, cheap brain (via `fleet-worker`) |
+| **GLM-5.2 / GLM-4.5-Air** | `claude -p` → z.ai endpoint | Claude Code tools, cheap model (via `fleet-worker`) |
 | **Codex** (GPT-class) | `codex exec` | OpenAI's own agent harness — a genuinely different toolchain *and* model |
 | **Grok** (xAI grok-4.5) | `grok -p` | xAI's own agentic CLI — a different provider, model, *and* toolchain (like Codex); `GROK_DEPLOYMENT_KEY` auth |
-| **Pi** (wildcard: gemini/deepseek/zai/groq/…) | `pi -p` | earendil-works Pi — one harness fronting 15+ providers; `FLEETFLOW_PI_PROVIDER`/`_MODEL` pick the brain, provider API-key env auth ([contract §4](references/worker-contracts.md)) |
+| **Pi** (wildcard: gemini/deepseek/zai/groq/…) | `pi -p` | earendil-works Pi — one harness fronting 15+ providers; `FLEETFLOW_PI_PROVIDER`/`_MODEL` pick the model, provider API-key env auth ([contract §4](references/worker-contracts.md)) |
 | **Sonnet / Haiku** | `claude -p --model sonnet\|haiku` | Claude Code tools, host auth |
 | **Opus** | `claude -p --model opus` | reserve for verify/judge lanes |
 
@@ -81,7 +81,7 @@ plays the script's role and the journal keeps it resumable.
 |---|---|
 | Fan-out where all agents can share the session's provider | **native Workflow tool** (cheaper, integrated progress UI, schema-forced outputs) |
 | One-off cheap delegation, single worker | **fleet-worker** directly |
-| Worker brains should differ by work class, or you want cross-provider dissent in verification | **fleetflow** |
+| Worker models should differ by work class, or you want cross-provider dissent in verification | **fleetflow** |
 | Landing the resulting branches | **fleet-ops** (always) |
 
 Rule of thumb from fleet-worker's locus rule, extended: shell out to process
@@ -89,18 +89,18 @@ workers only for a **large, independent, file-mutating, cost-dominant** fan-out
 you can gate before landing — *or* when the point is **model diversity** (a
 Codex refuter catches what three same-model skeptics miss).
 
-## Model routing (work class × brain)
+## Model routing (work class × model)
 
 Extends [fleet-worker's routing convention](../fleet-worker/references/model-routing.md)
 with the Codex/Grok columns and the orchestrator rule:
 
-| Work class | Brain | Why |
+| Work class | Model | Why |
 |---|---|---|
 | **mechanical** (batch edits, verifier clones, backfills) | GLM-5.2, Haiku | proven cheap; gate catches misses |
 | **scout** (survey, inventory, locate) | Sonnet, GLM-5.2 | breadth over depth |
 | **build** (scoped features, refactors) | Sonnet, Codex, Grok | Codex/Grok = independent harnesses; good second implementations for judge panels |
 | **verify / judge** | Opus + one cross-provider dissenter (Codex, Grok, GLM, or Pi) | *never under-power a judge*; diversity beats redundancy |
-| **wildcard / third-opinion** (a provider none of the fixed brains cover) | Pi (`FLEETFLOW_PI_PROVIDER=gemini\|deepseek\|…`) | one integration, 15+ providers; no sandbox and no turn cap — worktree + stall detector are the bounds |
+| **wildcard / third-opinion** (a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=gemini\|deepseek\|…`) | one integration, 15+ providers; no sandbox and no turn cap — worktree + stall detector are the bounds |
 | **synthesize / land decisions** | orchestrator (Fable > Opus) | needs the conversation's context |
 
 Two guardrails carried over verbatim from the native tool's doctrine: reach for
@@ -134,7 +134,7 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
 2. **Preflight:** `scripts/ff-doctor.sh --live` — probes every provider (GLM
    endpoint, `codex login status`, Anthropic model availability incl. Fable) and
    reports the orchestrator tier. Don't spawn a fleet a doctor won't bless.
-3. **Spawn:** `scripts/ff-spawn.sh --run <name> --id <id> --brain <brain>
+3. **Spawn:** `scripts/ff-spawn.sh --run <name> --id <id> --model <model>
    --prompt-file <f> --worktree` from the orchestrator's Bash tool with
    `run_in_background: true`, one call per lane. ff-spawn creates the worktree
    lane (`fleetflow/<run>/<id>` at `.fleetflow/<run>/wt-<id>`, repo top — never
@@ -148,7 +148,7 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    packet and launch a task-less worker that still passed every gate; ff-spawn
    now refuses it with exit 2, but the convention is what keeps you clear of it.
 4. **Collect + gate:** `scripts/ff-collect.sh --run <run> --id <id>` — flags,
-   not positionals (a positional invocation is rejected with exit 2) — per-brain success
+   not positionals (a positional invocation is rejected with exit 2) — per-model success
    semantics (Claude JSON `is_error`; Codex exit + last-message), then the
    orchestrator reviews the three-dot diff (`git diff main...fleetflow/<run>/<id>`)
    and runs the lane's tests. **Always finish with
@@ -171,7 +171,7 @@ bus like pigeon is for.)
 2026-08-03): it addresses *Desktop sessions* — wrapper JSONs under
 `claude-code-sessions/`. A fleetflow worker is an OS process (`claude -p`,
 `codex exec`, a GLM/Grok endpoint call); it registers no wrapper, and the
-non-Anthropic brains are not Claude at all, so `send_message` has no address for
+non-Anthropic models are not Claude at all, so `send_message` has no address for
 them. The tools are also absent from the terminal CLI binary entirely, so a
 headless worker could not call them even if it had an address. Hub-and-spoke is
 not a shortcut here — it is the only topology this process model permits. Where
@@ -189,7 +189,7 @@ sandbox is confined to the lane, so out-of-repo specs are unreadable anyway.
 
 **Resume.** The journal (`.fleetflow/<run>/journal.jsonl`) uses the native
 tool's mechanism: each spawn is keyed by a content hash of
-`(brain, prompt, opts)` — and `opts` includes `--effort`, so changing only the
+`(model, prompt, opts)` — and `opts` includes `--effort`, so changing only the
 effort lever is a cache miss (a different run). Re-running `ff-spawn` with an
 unchanged packet returns the cached result instantly (exit 3 + path); change
 the prompt and only that lane re-runs. Corollary (same reason the native tool
@@ -198,7 +198,7 @@ the key changes and the cache never hits.
 
 **Manifest & resume.** Each spawn also upserts a packet into
 `.fleetflow/<run>/manifest.json` (`{run, base, created_by, phases[], packets[]}`,
-one entry per id — idempotent — carrying `{id, brain, phase, prompt_file,
+one entry per id — idempotent — carrying `{id, model, phase, prompt_file,
 worktree, max_turns, effort, schema, key}`). It is the orchestrator-side plan,
 distinct from the per-spawn journal: it records *what was intended* so a whole
 run can be replayed. `ff-run.sh resume --run NAME` snapshots the manifest's
@@ -326,7 +326,7 @@ default the script-author follows, not an option — and real runs routinely hit
   assuming a long wave is progressing:
   `ff-status.sh --run <name> | jq '.lanes[]|select(.stalled)|{id,last_activity_s}'`.
 - **Know what the stall detector covers — `live_signal` tells you.** A stall can
-  only be proven where the brain writes *while it works*: codex's/pi's `--json`
+  only be proven where the model writes *while it works*: codex's/pi's `--json`
   event stream, a claude/glm session transcript, or the **worker heartbeat** —
   worktree lanes' guard preamble instructs the worker to append a line to
   `./.ff-heartbeat` after each major step (rookery's `parcel progress` pattern,
@@ -400,8 +400,8 @@ default the script-author follows, not an option — and real runs routinely hit
 | Script | Purpose |
 |---|---|
 | [scripts/ff-doctor.sh](scripts/ff-doctor.sh) | `--offline` structural preflight (+ which `windows.sandbox` mode codex lanes will get); `--live` probes GLM endpoint, Codex auth, Grok key, Anthropic models, the `windows.sandbox` key tripwire, and reports orchestrator tier (fable/opus) |
-| [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-brain launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
-| [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-brain result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
+| [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-model launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
+| [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-model result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
 | [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
 | [scripts/ff-run.sh](scripts/ff-run.sh) | `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
 | [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
@@ -424,8 +424,8 @@ keeps arrival order; and **card size** — `S` (dense grid, stat columns hidden)
 `M` (default), `L` (one full-width card per row). Wire-up: copy it into the run dir as `index.html`, run
 `ff-status --watch 3 --out <rundir>/status.json`, serve the run dir with any
 static server, open in a browser/preview panel. It polls `status.json` every
-2.5s. Live claude-brain lanes are introspected via their session transcript (GLM:
-the isolated config dir; Anthropic brains: `~/.claude/projects/<encoded-workdir>/`,
+2.5s. Live claude-model lanes are introspected via their session transcript (GLM:
+the isolated config dir; Anthropic models: `~/.claude/projects/<encoded-workdir>/`,
 worktree lanes only); codex lanes via their `--json` event stream. **Grok lanes
 have no live stream**: `ff-spawn` launches grok with `--output-format json`, which
 buffers the whole turn and writes once at exit, so a grok lane shows no tools and
@@ -475,7 +475,7 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   a second copy would quietly lose.
 - **History survives cleanup.** `ff-clean` now calls `ff-archive` **before**
   removing anything, appending a compact record to `~/.fleetflow/history.jsonl`
-  (outside every repo). A cleaned run keeps its card: lanes, brains, states,
+  (outside every repo). A cleaned run keeps its card: lanes, models, states,
   elapsed, tokens, commits, cost. Prompts, diffs, and transcripts are not copied —
   this is an index, not a backup. `--no-archive` opts out.
 - **Rebuilds are request-driven and non-blocking.** No standing watcher process
@@ -486,8 +486,8 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   sidebar, and the only view that is about capability rather than history. It
   holds three registers deliberately kept apart, because they have different
   truth values and merging them is how a dashboard starts lying:
-  **spec** (static doctrine per brain — process, auth, isolation, live-stream,
-  concurrency ceiling, whether the brain may self-commit — transcribed from this
+  **spec** (static doctrine per model — process, auth, isolation, live-stream,
+  concurrency ceiling, whether the model may self-commit — transcribed from this
   file and [worker-contracts](references/worker-contracts.md), hand-maintained,
   so change it here in the same commit as a contract change);
   **observed** (measured across every run under the roots *plus* archived
@@ -534,10 +534,10 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   stall detector cannot attribute a transcript and reports "cannot tell"). Reading
   a reclaimed lane as `none` inverts the diagnosis.
 - **`trace_id`** is the first 8 hex of the journal's existing
-  `sha256(brain+prompt+opts)` cache key — free correlation for metrics and traces.
+  `sha256(model+prompt+opts)` cache key — free correlation for metrics and traces.
   It answers *"was this the same work?"*, not *"which lane"*; artifact filenames
   stay `<id>.<ext>` deliberately (see `references/`-adjacent note in ff-status).
-- **`orchestrator`** — which brain drove the fleet. **Nothing in a Claude Code
+- **`orchestrator`** — which model drove the fleet. **Nothing in a Claude Code
   session's environment exposes its own model** (children get `CLAUDE_EFFORT` and a
   session id, not the model), so it must be supplied:
   `ff-spawn --orchestrator M` > `$FLEETFLOW_ORCHESTRATOR` > whatever
@@ -546,8 +546,8 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   `unrecorded` — deliberately not backfilled with a guess.
 - **Exact model ids.** Claude-family workers self-report theirs in
   `result.json`'s `modelUsage`. Codex and grok report none anywhere, so
-  `ff-spawn` now journals the launch model — for those brains that record is the
-  *only* one that will ever exist, and runs predating it show the brain alias.
+  `ff-spawn` now journals the launch model — for those models that record is the
+  *only* one that will ever exist, and runs predating it show the model alias.
 - **Cold build is minutes, steady state is milliseconds.** The run cache
   (`~/.fleetflow/cache/`) survives restarts; an unchanged finished run is never
   re-read, and abandoned `stalled` runs are re-read on a graduated interval
@@ -570,21 +570,21 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
 - **Card language is shared with the [summon](../summon/) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the
-  overview), which is what makes the cross-brain cost story visible at a glance.
+  overview), which is what makes the cross-model cost story visible at a glance.
 
 **Compare runs with `tokens_total`, not `tokens`.** The legacy `tokens` field is
-brain-INCONSISTENT — codex reports a grand total, claude brains report output
+model-INCONSISTENT — codex reports a grand total, claude models report output
 only — and is frozen because `ff-monitor.html` renders it. A codex lane's 5.4M
 against a GLM lane's 42.6k is a total against an output count; measured
 consistently that GLM lane had consumed 4.5M. `ff-status` now also emits
 `tokens_in` / `tokens_cached` / `tokens_out` / `tokens_total`, which mean the
-same thing for every brain, plus `cost_usd` where the worker prices its own turn.
+same thing for every model, plus `cost_usd` where the worker prices its own turn.
 **Cost is partial by construction:** claude-family workers self-report
 `total_cost_usd`; codex and grok report none. For GLM the self-reported figure
 is the CLI's Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an
 amount owed. The dashboard therefore carries its own hand-maintained `PRICING`
 registry (rates verified against Anthropic/z.ai/OpenAI/xAI published pricing,
-date stamped in the file) and a per-brain **pricing basis** the operator picks
+date stamped in the file) and a per-model **pricing basis** the operator picks
 in the ⚙ costs modal: `api` (compute from the lane's token counts at published
 per-MTok rates — the default wherever a rate card exists; this is what fixes
 GLM), `plan` (flat subscription with a **tier** picked per provider group —
@@ -603,6 +603,16 @@ card's top, with agent/lane cards listed vertically beneath it ordered
 active-first — so when the card is tall enough to scroll in a side panel, the
 summary never scrolls out of view.
 
+**Naming (renamed from `brain`, 2026-08-05):** the spawnable alias is the
+**model** (`--model glm|codex|grok|pi|sonnet|opus|haiku|fable`; wire fields
+`model` in journal/manifest/status lanes, `models` in roll-ups and archives)
+and the exact resolved id is **`model_id`** (e.g. `GLM-5.2`). Pre-rename
+artifacts wrote `brain`/`brains`, with the launch id under `model` — so in a
+legacy record `brain` must win the alias fallback. Every reader falls back
+(`.brain // .model` on journals, `.model // .brain` on manifests/archives),
+ff-aggregate normalises legacy history at the read boundary, and `--brain`
+survives as a deprecated flag alias. Tests pin both directions.
+
 All follow the Skill Resource Protocol: stdout is data, chatter on stderr,
 semantic exit codes (`0` ok, `2` usage, `3` cached/missing, `7` unreachable,
 `10` worker failed, `12` escape detected, `14` lane stalled), `--help` with
@@ -616,18 +626,18 @@ keys and `agentId`) plus per-agent `agent-<id>.jsonl` transcripts — and lands
 each completed agent as a fleetflow lane: the agent's first user-role message
 (string content or content-array-with-text-blocks, both handled) becomes
 `<id>.prompt.txt`, its native `result` object becomes `<id>.result.json`
-(`{is_error:false, result:<native-result>|tojson}`), and a `native`-brain
+(`{is_error:false, result:<native-result>|tojson}`), and a `native`-model
 packet is appended to the manifest (`imported_from: <DIR>`) for provenance.
 Agents with a `started` but no `result` get a prompt file only and are
 reported `incomplete` on stdout's TSV — respawn candidates.
 
 **Caveat — imported results are terminal facts, not a replayable cache.** The
 native `v2:` keys are content hashes of the *native* `(prompt, opts)` call, not
-fleetflow's `sha256(brain+prompt+opts)`, and `native` is not a spawnable brain
+fleetflow's `sha256(model+prompt+opts)`, and `native` is not a spawnable model
 — so `ff-run resume` **skips** native packets rather than replaying them (it
 reports each `imported` and exits 0). The native script's control flow
 (pipeline/barrier/loop) is not recovered either. To continue from an imported
-result, spawn a fresh lane with a real brain and paste the imported result into
+result, spawn a fresh lane with a real model and paste the imported result into
 its packet (the hub-and-spoke handoff). Use import for salvage, provenance, and
 visual continuity in the monitor — not to resume native work in place.
 
@@ -636,7 +646,7 @@ visual continuity in the monitor — not to resume native work in place.
 - [references/native-workflow-insights.md](references/native-workflow-insights.md)
   — the extraction: journal format on disk, resume semantics, control-flow
   doctrine, quality patterns, caps and budget spine, with evidence.
-- [references/worker-contracts.md](references/worker-contracts.md) — per-brain
+- [references/worker-contracts.md](references/worker-contracts.md) — per-model
   launch/collect/auth contracts (GLM env knobs, full `codex exec` flag map, the
   Grok `grok -p` headless/schema/auth contract, Anthropic alias notes) and the
   Fable/Opus orchestrator probe.

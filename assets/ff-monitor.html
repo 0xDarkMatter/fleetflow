@@ -150,15 +150,16 @@ function render(d) {
   document.getElementById("meta").textContent = bits.join(" · ");
   document.getElementById("sqs").innerHTML = lanes.map(l =>
     `<div class="sq ${l.state}" title="${esc(l.id)} — ${esc(l.state)}"></div>`).join("");
-  const BRAIN = { glm:["G","#7f77dd"], codex:["C","#0f6e56"], sonnet:["S","#d85a30"],
+  const MODEL_HUES = { glm:["G","#7f77dd"], codex:["C","#0f6e56"], sonnet:["S","#d85a30"],
     opus:["O","#ba7517"], haiku:["H","#d4537e"], fable:["F","#378add"] };
   const card = l => {
-    const [ltr, col] = BRAIN[l.brain] || ["?", "#888780"];
+    const alias = l.model || l.brain;   // status.json pre-rename wrote `brain`
+    const [ltr, col] = MODEL_HUES[alias] || ["?", "#888780"];
     return `
     <details class="agent" data-id="${esc(l.id)}" ${open.has(l.id) ? "open" : ""}>
       <summary>
         <div class="row1"><span class="chip" style="background:${col}">${ltr}</span>
-          <span class="id mono">${esc(l.id)}</span><span class="brain mono">${esc(l.brain)}</span>
+          <span class="id mono">${esc(l.id)}</span><span class="brain mono">${esc(alias)}</span>
           <span class="sq state ${l.state}"></span></div>
         <div class="cols mono">
           ${l.stalled

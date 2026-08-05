@@ -4,7 +4,7 @@
 #
 # Reads the run journal + artifacts; never modifies anything. Lane state is
 # derived from journal records (started-without-result = running), timings
-# from artifact mtimes, activity from lane commits (claude brains) or the
+# from artifact mtimes, activity from lane commits (claude models) or the
 # codex event stream (item.completed counts + last item). A running lane whose
 # activity signal has gone silent past FLEETFLOW_STALL_SECONDS is reported
 # `stalled` (see the stall block below for why that state has to exist).
@@ -36,11 +36,11 @@ lane; `live_signal` says whether the lane has a stream that could substantiate
 a stall at all - where it is false, `stalled` is always false and means
 "cannot tell", not "healthy".
 
-Tokens: `tokens` is LEGACY and brain-INCONSISTENT (codex = grand total, claude
-brains = output only) - frozen because ff-monitor.html renders it. Compare lanes
+Tokens: `tokens` is LEGACY and model-INCONSISTENT (codex = grand total, claude
+models = output only) - frozen because ff-monitor.html renders it. Compare lanes
 and runs with `tokens_total` / `tokens_in` / `tokens_cached` / `tokens_out`,
-which mean the same thing for every brain. `cost_usd` is the worker's own
-self-reported spend (claude brains only) and is null where unavailable.
+which mean the same thing for every model. `cost_usd` is the worker's own
+self-reported spend (claude models only) and is null where unavailable.
 
 ENV
   FLEETFLOW_STALL_SECONDS  silence before a running lane reads stalled (600)
@@ -98,10 +98,10 @@ mtime() {
 # session transcript. Replaces three greps plus an awk.
 #
 # Output is TSV, not shell assignments: the values include free-form tool names and
-# model ids, and building `eval`-able quoting inside a single-quoted awk program
+# model_id ids, and building `eval`-able quoting inside a single-quoted awk program
 # inside a shell function is three levels of escaping deep - it broke on the first
 # apostrophe. `read` with IFS=tab has no such failure mode. Fields, in order:
-#   dens  basis  tools  tout  tin  tcache  ttotal  lasttool  model
+#   dens  basis  tools  tout  tin  tcache  ttotal  lasttool  model_id
 #
 # Counting rules are matched to the greps this replaces, deliberately: `tools`
 # counts LINES containing a tool_use (what `grep -c` did), while the token sums
@@ -125,8 +125,10 @@ scan_transcript() {
         lasttool = substr(rest, RSTART + 8, RLENGTH - 9); rest = substr(rest, RSTART + RLENGTH)
       }
       rest = line
+      # the TRANSCRIPT record key is "model" - external format, not renamed by
+      # the fleetflow brain->model refactor; the awk var holds our model_id
       while (match(rest, /"model":"[^"]+"/)) {
-        model = substr(rest, RSTART + 9, RLENGTH - 10); rest = substr(rest, RSTART + RLENGTH)
+        model_id = substr(rest, RSTART + 9, RLENGTH - 10); rest = substr(rest, RSTART + RLENGTH)
       }
       for (k = 1; k <= 4; k++) {
         key = (k == 1 ? "output_tokens" : k == 2 ? "input_tokens" \
@@ -150,13 +152,13 @@ scan_transcript() {
       }
       out = "["; for (b = 0; b < N; b++) out = out (b ? "," : "") d[b]; out = out "]"
       printf "%s\ttime\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", out, tools + 0, sums[1], sums[2],
-             sums[3] + sums[4], sums[1] + sums[2] + sums[3] + sums[4], lasttool, model
+             sums[3] + sums[4], sums[1] + sums[2] + sums[3] + sums[4], lasttool, model_id
     }
   ' "$1" 2>/dev/null
 }
 
 emit() {
-  local now lanes id brain state started finished elapsed art commits last_c tools activity tokens etail rc
+  local now lanes id model state started finished elapsed art commits last_c tools activity tokens etail rc
   local T enc f m last_act idle stalled live
   # NOT local: --exit-stalled reads it after emit returns, and in --watch mode it
   # must reset every tick so a lane that resumes writing clears the verdict.
@@ -179,9 +181,9 @@ emit() {
   # paying ~17s just to re-read the same small file 138 times - enough that the
   # machine-wide aggregator timed out on its biggest runs.
   #
-  # TSV is safe here because every field is an id, a brain name, a phase name, a
+  # TSV is safe here because every field is an id, a model name, a phase name, a
   # record type, an integer rc, or a filesystem path - none of which contain tabs.
-  while IFS="$(printf '\t')" read -r id brain phase last_type rc art jmodel; do
+  while IFS="$(printf '\t')" read -r id model phase last_type rc art jmodel; do
     [ -n "$id" ] || continue
     if [ "$last_type" = "started" ]; then state="running"; finished=0
     elif [ -z "$rc" ]; then state="running"; finished=0
@@ -207,21 +209,21 @@ emit() {
 
     # --- token accounting ------------------------------------------------------
     # `tokens` is LEGACY and deliberately unchanged: codex lanes report a grand
-    # total, claude-brain lanes report output only. ff-monitor.html renders that
+    # total, claude-model lanes report output only. ff-monitor.html renders that
     # field, so its meaning is frozen. The tokens_* quartet added beside it is
-    # brain-CONSISTENT (in = fresh input, cached = cache reads, out, total) and is
+    # model-CONSISTENT (in = fresh input, cached = cache reads, out, total) and is
     # what any cross-lane or cross-run comparison must use - comparing a codex
     # lane's legacy 5.4M against a glm lane's legacy 42.6k compares a total
     # against an output count. cost_usd is null wherever it cannot be sourced:
-    # claude brains report `total_cost_usd` themselves, codex reports none, and a
+    # claude models report `total_cost_usd` themselves, codex reports none, and a
     # fabricated dollar figure is worse than an absent one.
     tools=0; activity=""; tokens=0; T=""
     tin=0; tcache=0; tout=0; ttotal=0; cost=null; dens="[]"; dbasis=null
-    # Journalled launch model is the FLOOR; a worker that reports what it
+    # Journalled launch model_id is the FLOOR; a worker that reports what it
     # actually ran (modelUsage, transcript) overrides it below, because an
     # alias like "glm" is less true than the resolved "GLM-5.2".
-    model="${jmodel:-}"
-    if [ "$brain" = "codex" ] && [ -f "$RUNDIR/$id.events.jsonl" ]; then
+    model_id="${jmodel:-}"
+    if [ "$model" = "codex" ] && [ -f "$RUNDIR/$id.events.jsonl" ]; then
       # ONE jq over the event stream, not four. Same numbers, a quarter of the
       # processes - and the density strip rides along for free because the pass is
       # already walking every item.
@@ -248,11 +250,11 @@ emit() {
               | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))) // "" | @sh)"
         ' "$RUNDIR/$id.events.jsonl" 2>/dev/null)"
     elif [ "$state" != "running" ] && [ -f "$RUNDIR/$id.result.json" ]; then
-      # ONE jq over the result envelope. `model` comes from modelUsage, which is
-      # the only place the EXACT id a claude-brain worker actually ran on survives
+      # ONE jq over the result envelope. `model_id` comes from modelUsage, which is
+      # the only place the EXACT id a claude-model worker actually ran on survives
       # (e.g. "GLM-5.2", not the "glm" alias it was launched with). Picked by
-      # output tokens so a run that briefly touched a small model still reports the
-      # model that did the work.
+      # output tokens so a run that briefly touched a small model_id still reports the
+      # model_id that did the work.
       eval "$(jq -r '.usage as $u
         | "tokens=\($u.output_tokens // 0) tools=\(.num_turns // 0) " +
           "tin=\($u.input_tokens // 0) " +
@@ -262,13 +264,13 @@ emit() {
           # claude -p prices its own turn; for GLM this is the CLI Anthropic-rate
           # estimate, not the z.ai invoice - a magnitude, not an amount owed.
           "cost=\(.total_cost_usd // "null") " +
-          "model=\((.modelUsage // {} | to_entries | sort_by(-.value.outputTokens) | .[0].key) // "" | @sh)"
+          "model_id=\((.modelUsage // {} | to_entries | sort_by(-.value.outputTokens) | .[0].key) // "" | @sh)"
         ' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
       [ -n "${cost:-}" ] || cost=null
     elif [ "$state" = "running" ]; then
       # claude -p persists its session transcript as it runs - the only live
-      # signal a claude-brain lane emits. GLM workers get an isolated config dir
-      # (fleet-worker), so theirs is easy to find; Anthropic-brain workers use
+      # signal a claude-model lane emits. GLM workers get an isolated config dir
+      # (fleet-worker), so theirs is easy to find; Anthropic-model workers use
       # host auth, so theirs lands under ~/.claude/projects/<encoded-workdir>/.
       T="$(ls -t "${FLEETFLOW_CFG_BASE:-$HOME/.fleet-worker}/cfg-ff-$id/projects"/*/*.jsonl 2>/dev/null | head -1)"
       if [ -z "$T" ] && [ -d "$RUNDIR/wt-$id" ]; then
@@ -288,10 +290,10 @@ emit() {
         [ -z "${dbasis:-}" ] && dbasis=null || dbasis="\"$dbasis\""
         tokens="${tout:-0}"
         [ -z "${lasttool:-}" ] || activity="live: $lasttool"
-        [ -z "${smodel:-}" ] || model="$smodel"
+        [ -z "${smodel:-}" ] || model_id="$smodel"
       fi
     fi
-    # A finished claude-brain lane keeps its archived transcript, so its density
+    # A finished claude-model lane keeps its archived transcript, so its density
     # strip is recoverable too. Deliberately NOT fed into the stall block below:
     # an archived transcript is a record, not a live stream, and treating it as
     # one would let a long-dead lane look like it was still writing.
@@ -323,7 +325,7 @@ emit() {
     # that way for 2.7h. The ONE signal that separates them from outside the
     # process is whether the lane is still WRITING.
     #
-    # Two tiers, and the split is load-bearing. A LIVE STREAM is a file the brain
+    # Two tiers, and the split is load-bearing. A LIVE STREAM is a file the model
     # appends to WHILE it works: codex's --json event stream, or a claude/glm
     # session transcript. Only those can substantiate a stall. The artifact and
     # stderr are created by the shell's redirect at LAUNCH and then sit untouched
@@ -362,7 +364,7 @@ emit() {
     fi
 
     lanes="$(jq -nc --argjson L "$lanes" \
-      --arg id "$id" --arg brain "$brain" --arg state "$state" --arg activity "$activity" \
+      --arg id "$id" --arg model "$model" --arg state "$state" --arg activity "$activity" \
       --arg last_c "$last_c" --arg etail "$etail" --arg art "${art:-}" --arg phase "${phase:-build}" \
       --argjson started "$started" --argjson elapsed "$elapsed" \
       --argjson idle "$idle" --argjson stalled "$stalled" --argjson live "$live" \
@@ -370,14 +372,14 @@ emit() {
       --argjson tin "${tin:-0}" --argjson tcache "${tcache:-0}" --argjson tout "${tout:-0}" \
       --argjson ttotal "${ttotal:-0}" --argjson cost "${cost:-null}" \
       --argjson dens "${dens:-[]}" --argjson dbasis "${dbasis:-null}" \
-      --arg model "${model:-}" --arg wt "${wt:-}" --arg branch "${branch:-}" \
+      --arg model_id "${model_id:-}" --arg wt "${wt:-}" --arg branch "${branch:-}" \
       --arg wtstate "${wtstate:-none}" \
-      '$L + [{id:$id,brain:$brain,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
+      '$L + [{id:$id,model:$model,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
               last_activity_s:$idle,stalled:$stalled,live_signal:$live,
               commits:$commits,tools:$tools,tokens:$tokens,
               tokens_in:$tin,tokens_cached:$tcache,tokens_out:$tout,tokens_total:$ttotal,
               cost_usd:$cost,density:$dens,density_basis:$dbasis,
-              model:(if $model=="" then null else $model end),
+              model_id:(if $model_id=="" then null else $model_id end),
               worktree:(if $wt=="" then null else $wt end),
               worktree_state:$wtstate,
               branch:(if $branch=="" then null else $branch end),
@@ -399,13 +401,18 @@ emit() {
       | ($recs | map(select(.type=="started" or .type=="result"))) as $sr
       | ($recs | map(select(.type=="result"))) as $res
       | [ $id,
-          (($recs[0].brain) // "null" | tostring),
+          # alias: legacy journals wrote `brain` (with `model` as the LAUNCH id,
+          # so brain must win the fallback); post-rename journals write `model`
+          ((($recs[0].brain) // ($recs[0].model)) // "null" | tostring),
           (($recs | map(select(.type=="started")) | .[0].phase // "build") | tostring),
           (($sr | last | .type) // ""),
           (if ($res | length) == 0 then "" else (($res | last | .rc) // "null" | tostring) end),
           (if ($res | length) == 0 then "" else (($res | last | .artifact) // "null" | tostring) end),
-          # journalled launch model - the only record of it for codex/grok
-          (($recs | map(select(.type=="started" and .model != null)) | last | .model) // "")
+          # journalled launch model id - the only record of it for codex/grok.
+          # Post-rename it is `model_id`; in legacy journals it lived under
+          # `model` (alongside `brain`), so only read `model` when `brain` exists.
+          (($recs | map(select(.type=="started")) | last) as $s
+           | (($s.model_id) // (if ($s.brain != null) then $s.model else null end)) // "")
         ] | @tsv' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r')
 # tr -d '\r' is load-bearing, not tidiness: journals are written with CRLF line
 # endings on Windows and jq's stdout carries the CR through. The per-lane

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ff-collect.sh - gate one fleetflow lane's result, or run the escape guard.
 #
-# Per-brain success semantics: Claude-harness brains (glm/sonnet/opus/haiku/
+# Per-model success semantics: Claude-harness models (glm/sonnet/opus/haiku/
 # fable) gate on the JSON envelope's is_error; codex gates on a non-empty
 # last-message (plus JSON validity when a schema was used); grok gates on a
 # parseable envelope with non-empty .text (its envelope has no is_error - a
@@ -119,7 +119,7 @@ json_ok() {
 }
 
 # do_repair <bad_text> <jq_error>: save bad output, respawn a <id>-repair lane
-# (same brain, --max-turns 3, no worktree), gate it, print its text on success.
+# (same model, --max-turns 3, no worktree), gate it, print its text on success.
 # One attempt only. Exits 0 (repaired) or 10 (repair also failed). FLEETFLOW_REPAIR_DRYRUN
 # forces the respawn to --dry-run (test/offline seam).
 do_repair() {
@@ -130,10 +130,10 @@ do_repair() {
   printf 'Your previous FINAL REPLY failed JSON validation. Error: %s. Previous output: %s. Reply with ONLY the corrected JSON object, nothing else.' \
     "$jqerr" "$bad" > "$pf"
   if [ -n "${FLEETFLOW_REPAIR_DRYRUN:-}" ]; then
-    bash "$SPAWN" --run "$RUN" --id "$rid" --brain "$BRAIN" --max-turns 3 \
+    bash "$SPAWN" --run "$RUN" --id "$rid" --model "$MODEL" --max-turns 3 \
       --repo "$REPO" --prompt-file "$pf" --dry-run >/dev/null 2>"$RUNDIR/$rid.spawn.err" || spawn_rc=$?
   else
-    bash "$SPAWN" --run "$RUN" --id "$rid" --brain "$BRAIN" --max-turns 3 \
+    bash "$SPAWN" --run "$RUN" --id "$rid" --model "$MODEL" --max-turns 3 \
       --repo "$REPO" --prompt-file "$pf" >/dev/null 2>"$RUNDIR/$rid.spawn.err" || spawn_rc=$?
   fi
   case "$spawn_rc" in 0|3) ;; *) err "repair spawn failed (rc=$spawn_rc; see $RUNDIR/$rid.spawn.err)"; exit 10 ;; esac
@@ -170,11 +170,11 @@ fi
 RUNDIR="$REPO/.fleetflow/$RUN"
 JOURNAL="$RUNDIR/journal.jsonl"
 
-BRAIN=""
+MODEL=""
 [ -f "$JOURNAL" ] && \
-  BRAIN="$(jq -r --arg id "$ID" 'select(.type=="result" and .id==$id) | .brain' "$JOURNAL" 2>/dev/null | tail -1)"
+  MODEL="$(jq -r --arg id "$ID" 'select(.type=="result" and .id==$id) | .model' "$JOURNAL" 2>/dev/null | tail -1)"
 
-if [ "$BRAIN" = "grok" ]; then
+if [ "$MODEL" = "grok" ]; then
   # grok's headless envelope is {text, stopReason, sessionId, ...} with NO
   # is_error field. rc was already gated by ff-spawn (a failed run exits nonzero
   # and writes stderr), so the content gate here is: envelope parses AND produced
@@ -203,7 +203,7 @@ if [ "$BRAIN" = "grok" ]; then
   exit 0
 fi
 
-if [ "$BRAIN" = "codex" ] || { [ -z "$BRAIN" ] && [ -f "$RUNDIR/$ID.last.txt" ]; }; then
+if [ "$MODEL" = "codex" ] || { [ -z "$MODEL" ] && [ -f "$RUNDIR/$ID.last.txt" ]; }; then
   ART="$RUNDIR/$ID.last.txt"
   [ -s "$ART" ] || { err "codex last-message missing/empty: $ART"; exit 3; }
   if [ "$SCHEMA" = 1 ]; then
