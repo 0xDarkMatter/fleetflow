@@ -500,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · roost-widget";
+const PAGE_BUILD = "2026-08-05 · auth-refresh";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -555,16 +555,16 @@ const ico = (n, cls) => `<svg class="i ${cls||""}" viewBox="0 0 24 24" aria-hidd
 const chip = (icon, val, lbl, cls) =>
   `<span class="chip ${cls||""}">${ico(icon)}${val}${lbl?`<span style="color:var(--text-muted)">${lbl}</span>`:""}</span>`;
 
-/* Per-brain identity (letter + light colour + dark colour) and per-repo accent,
+/* Per-model identity (letter + light colour + dark colour) and per-repo accent,
    both matching the summon picker's palette so the same project reads the same
    colour on both.
-   A brain's HUE is its identity and never changes between themes - codex is
+   A model's HUE is its identity and never changes between themes - codex is
    always the green one - but the light-theme values were picked against #fafaf8
    and several of them (codex #0f6e56, grok #534ab7) sit at roughly 2:1 against
    the dark #1c1c1a background, i.e. illegible exactly where the sparklines and
    chart bars need to be read. The third entry is the same hue lifted for dark.
-   Consumers keep calling brainOf(b)[1] and get whichever the OS asked for. */
-const BRAIN = {
+   Consumers keep calling modelOf(b)[1] and get whichever the OS asked for. */
+const MODEL_HUES = {
   glm:   ["G","#7f77dd","#9d95f0"], codex: ["C","#0f6e56","#2fb894"],
   sonnet:["S","#d85a30","#ef7f52"], opus:  ["O","#ba7517","#dfa03c"],
   haiku: ["H","#d4537e","#ec7ba0"], fable: ["F","#378add","#6bb0ef"],
@@ -577,7 +577,7 @@ const BRAIN = {
 const DARK = window.matchMedia("(prefers-color-scheme: dark)");
 /* Provider marks, fetched from theSVG (thesvg.org, cdn.jsdelivr.net/gh/glincker/thesvg).
    Brand fills are stripped so each mark inherits `color` from its card - that makes the
-   icon the SAME colour as that brain's bar in the column chart and its pip in the run
+   icon the SAME colour as that model's bar in the column chart and its pip in the run
    strip, so one glance ties the three together. The four Claude tiers share the
    Anthropic mark and are told apart by that colour, since the provider is the thing the
    icon should say and the tier is the thing the palette already says. */
@@ -588,10 +588,10 @@ const BRAND = {
   grok: ["0 0 1024 1024", '<path d="M395.479 633.828L735.91 381.105C752.599 368.715 776.454 373.548 784.406 392.792C826.26 494.285 807.561 616.253 724.288 699.996C641.016 783.739 525.151 802.104 419.247 760.277L303.556 814.143C469.49 928.202 670.987 899.995 796.901 773.282C896.776 672.843 927.708 535.937 898.785 412.476L899.047 412.739C857.105 231.37 909.358 158.874 1016.4 10.6326C1018.93 7.11771 1021.47 3.60279 1024 0L883.144 141.651V141.212L395.392 633.916"/> <path d="M325.226 695.251C206.128 580.84 226.662 403.776 328.285 301.668C403.431 226.097 526.549 195.254 634.026 240.596L749.454 186.994C728.657 171.88 702.007 155.623 671.424 144.2C533.19 86.9942 367.693 115.465 255.323 228.382C147.234 337.081 113.244 504.215 171.613 646.833C215.216 753.423 143.739 828.818 71.7385 904.916C46.2237 931.893 20.6216 958.87 0 987.429L325.139 695.339"/>'],
 };
 const BRAND_OF = { codex:"openai", sonnet:"claude", opus:"claude", haiku:"claude", fable:"claude", native:"claude", glm:"chatglm", grok:"grok" };
-const brandMark = (brain, col) => {
-  const g = BRAND[BRAND_OF[brain]];
+const brandMark = (model, col) => {
+  const g = BRAND[BRAND_OF[model]];
   return g ? `<svg class="mark" viewBox="${g[0]}" style="color:${col}" aria-hidden="true">${g[1]}</svg>`
-           : `<span class="mark letter" style="background:${col}">${(brain||"?")[0].toUpperCase()}</span>`;
+           : `<span class="mark letter" style="background:${col}">${(model||"?")[0].toUpperCase()}</span>`;
 };
 
 const PAL = ["#7F77DD","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#534AB7","#0F6E56","#993C1D"];
@@ -600,7 +600,7 @@ const PAL_DARK = ["#9D95F0","#35B98D","#EF7F52","#6BB0EF","#DFA03C","#EC7BA0","#
    themes - only the shade changes, never which slot it landed in. */
 const repoColor = n => { let h = 0; n = n || ""; for (let i=0;i<n.length;i++) h = (h*31 + n.charCodeAt(i))>>>0;
   return (DARK.matches ? PAL_DARK : PAL)[h % PAL.length]; };
-const brainOf = b => { const e = BRAIN[b] || ["?", "#888780", "#a3a199"];
+const modelOf = b => { const e = MODEL_HUES[b] || ["?", "#888780", "#a3a199"];
   return [e[0], DARK.matches ? e[2] : e[1]]; };
 const STATE_COLOR = { running:"var(--run)", stalled:"var(--warn)", done:"var(--ok)",
   failed:"var(--bad)", unknown:"var(--idle)" };
@@ -668,7 +668,7 @@ const save = () => { localStorage.setItem(LS("sort"), sortMode);
    plan. A GLM lane's figure is the Claude CLI pricing z.ai traffic at
    ANTHROPIC rates - 2-5x what z.ai actually charges. Codex and grok print
    nothing at all. Summing those as one "cost" column was the bug this
-   registry fixes: every brain now gets an explicit pricing BASIS the operator
+   registry fixes: every model now gets an explicit pricing BASIS the operator
    picks in the settings cog, and every figure on the page says which kind it
    is - reported ($x), estimated (≈$x), or plan-covered (plan).
 
@@ -684,7 +684,7 @@ const save = () => { localStorage.setItem(LS("sort"), sortMode);
                 OpenAI 90% cache discount (assumed, not published per-model)
      xai        grok-4.5 2.00 / 0.50 cached / 6.00 out (<=200K tier; the >200K
                 surcharge tier is not modelled)
-   The shape is a stub for a future provider/plan registry: add a brain key
+   The shape is a stub for a future provider/plan registry: add a model key
    with {in,cached,out} and a plans entry, and the whole page picks it up. */
 const PRICING = {
   verified: "2026-08-05",
@@ -697,13 +697,13 @@ const PRICING = {
     codex:  { in: 1.75, cached: 0.175, out: 14,   provider: "OpenAI" },
     grok:   { in: 2.00, cached: 0.50,  out: 6.00, provider: "xAI" },
     /* pi is the wildcard harness - 15+ providers behind one alias, so there is
-       no rate that would be honest. native is a provenance label, not a brain. */
+       no rate that would be honest. native is a provenance label, not a model. */
     pi: null, native: null,
   },
 };
-/* Subscription plans, by billing group. A plan covers a PROVIDER's brains
+/* Subscription plans, by billing group. A plan covers a PROVIDER's models
    together (one Claude Max subscription serves fable/opus/sonnet/haiku), so
-   tier choice lives per group, not per brain. Fees verified 2026-08-05:
+   tier choice lives per group, not per model. Fees verified 2026-08-05:
    Claude Max 5x $100 / 20x $200, GLM Coding Lite $18 / Pro $72 / Max $160,
    ChatGPT Plus $20 / Pro $200 (Codex CLI bills to the ChatGPT plan). */
 const PLAN_GROUP = { fable: "claude", opus: "claude", sonnet: "claude",
@@ -727,20 +727,20 @@ const BASES = [
   ["plan",   "plan (blended)","flat subscription, shown as a BLENDED cost: the monthly fee allocated across that month's plan-basis lanes by API-notional share — a month's blended costs sum to the fee"],
   ["report", "CLI figure",   "the cost number the worker CLI itself printed (claude -p's total_cost_usd). GLM's CLI prices z.ai traffic at Anthropic rates — wrong; codex and grok print nothing"],
 ];
-/* Which bases make sense per brain: api needs a rate card, plan needs a plan. */
-function basesFor(brain) {
+/* Which bases make sense per model: api needs a rate card, plan needs a plan. */
+function basesFor(model) {
   const out = [];
-  if (PRICING.rates[brain]) out.push("api");
-  if (PLANS[PLAN_GROUP[brain]]) out.push("plan");
+  if (PRICING.rates[model]) out.push("api");
+  if (PLANS[PLAN_GROUP[model]]) out.push("plan");
   out.push("report");
   return out;
 }
 let pricingBasis = {}, planChoice = {};
 try { pricingBasis = JSON.parse(localStorage.getItem("ffd.pricing") || "{}"); } catch (e) {}
 try { planChoice = JSON.parse(localStorage.getItem("ffd.planChoice") || "{}"); } catch (e) {}
-const basisOf = brain => {
-  const legal = basesFor(brain);
-  const v = pricingBasis[brain];
+const basisOf = model => {
+  const legal = basesFor(model);
+  const v = pricingBasis[model];
   return legal.includes(v) ? v : legal[0];   // default: api where a rate exists
 };
 /* Selected tier for a plan group; defaults to the TOP tier — under-stating a
@@ -760,7 +760,7 @@ const savePricing = () => {
 /* API-notional value of one lane — what it WOULD have cost at API rates.
    The unit of account for blending; needs the live lane's token split. */
 const apiEst = l => {
-  const r = PRICING.rates[l.brain];
+  const r = PRICING.rates[l.model];
   if (!r || l.tokens_in == null || l.tokens_out == null) return null;
   return ((l.tokens_in || 0) * r.in + (l.tokens_cached || 0) * r.cached
         + (l.tokens_out || 0) * r.out) / 1e6;
@@ -779,8 +779,8 @@ const monthOf = sec => sec ? new Date(sec * 1000).toISOString().slice(0, 7) : nu
 function computePlanPools() {
   PLAN_POOLS = new Map();
   const add = (l, fallbackSec) => {
-    const g = PLAN_GROUP[l.brain];
-    if (!g || basisOf(l.brain) !== "plan") return;
+    const g = PLAN_GROUP[l.model];
+    if (!g || basisOf(l.model) !== "plan") return;
     const m = monthOf(l.started || fallbackSec);
     const est = apiEst(l);
     if (!m || est == null || est <= 0) return;
@@ -801,9 +801,9 @@ function computePlanPools() {
    History lanes keep only tokens_total/tokens_out, so estimates need the live
    lane's tokens_in/tokens_cached and archived lanes fall back to none. */
 function laneCost(l) {
-  const brain = l.brain, basis = basisOf(brain), r = PRICING.rates[brain];
+  const model = l.model, basis = basisOf(model), r = PRICING.rates[model];
   if (basis === "plan") {
-    const g = PLAN_GROUP[brain], plan = planOf(g);
+    const g = PLAN_GROUP[model], plan = planOf(g);
     const est = apiEst(l);
     const pool = l._planMonth ? PLAN_POOLS.get(g + "|" + l._planMonth) : null;
     if (!plan || est == null || !pool) return { usd: null, kind: "plan" };
@@ -865,15 +865,15 @@ const SPAWNABLE = ["fable", "opus", "sonnet", "haiku", "glm", "codex", "grok", "
    question, and billing happens per provider account (one Claude Max covers
    fable/opus/sonnet/haiku), so four identical Claude rows were noise. */
 const MODEL_GROUPS = [
-  { key: "claude", label: "Claude", brains: ["fable", "opus", "sonnet", "haiku"] },
-  { key: "glm",    label: "GLM",    brains: ["glm"] },
-  { key: "openai", label: "Codex",  brains: ["codex"] },
-  { key: "xai",    label: "Grok",   brains: ["grok"] },
-  { key: "pi",     label: "Pi",     brains: ["pi"] },
+  { key: "claude", label: "Claude", models: ["fable", "opus", "sonnet", "haiku"] },
+  { key: "glm",    label: "GLM",    models: ["glm"] },
+  { key: "openai", label: "Codex",  models: ["codex"] },
+  { key: "xai",    label: "Grok",   models: ["grok"] },
+  { key: "pi",     label: "Pi",     models: ["pi"] },
 ];
 function renderPricingModal() {
   const rows = MODEL_GROUPS.map(g => {
-    const first = g.brains[0], col = brainOf(first)[1], cur = basisOf(first);
+    const first = g.models[0], col = modelOf(first)[1], cur = basisOf(first);
     const radios = basesFor(first).map(id => {
       const meta = BASES.find(x => x[0] === id);
       const label = id === "plan"
@@ -881,8 +881,8 @@ function renderPricingModal() {
       return `<label title="${esc(meta[2])}"><input type="radio" name="pb-${g.key}" value="${id}"
         ${cur === id ? "checked" : ""}>${esc(label)}</label>`;
     }).join("");
-    const rate = g.brains.length > 1
-      ? `${PRICING.rates[first].provider} $/MTok in·cached·out — ` + g.brains.map(b => {
+    const rate = g.models.length > 1
+      ? `${PRICING.rates[first].provider} $/MTok in·cached·out — ` + g.models.map(b => {
           const r = PRICING.rates[b];
           return `${b} ${r.in}·${r.cached}·${r.out}`;
         }).join("  ")
@@ -925,7 +925,7 @@ function renderPricingModal() {
     <div class="note"><b>Markers:</b> <b>≈</b> estimate or blended share · <b>*</b> some
       lanes have no figure (true spend is higher) · <b>plan</b> on a subscription but
       unblendable. None of this is an invoice — token counts
-      (<span class="mono">tokens_total</span>) are the only brain-consistent comparison.
+      (<span class="mono">tokens_total</span>) are the only model-consistent comparison.
       GLM's CLI figure prices z.ai traffic at Anthropic rates (wrong), which is why its
       default basis is API rates. Archived lanes keep no input/cache token split, so
       they can't be estimated or blended. Multiple subscriptions of one tier (several
@@ -942,7 +942,7 @@ function openPricingModal() {
   w.querySelectorAll("input[type=radio]").forEach(inp => inp.onchange = () => {
     if (inp.name.startsWith("pb-")) {
       const grp = MODEL_GROUPS.find(x => x.key === inp.name.slice(3));
-      (grp?.brains || []).forEach(b => pricingBasis[b] = inp.value);
+      (grp?.models || []).forEach(b => pricingBasis[b] = inp.value);
     }
     else if (inp.name.startsWith("plan-")) planChoice[inp.name.slice(5)] = inp.value;
     savePricing();
@@ -1194,9 +1194,9 @@ function renderNav() {
   }
   // Pinned above the tree and never filtered out: "what can this machine run"
   // is a property of the machine, not of whatever subset of runs is on screen.
-  const brainsSeen = new Set();
-  for (const r of doc.runs) (r.summary?.brains || []).forEach(b => brainsSeen.add(b));
-  for (const h of (doc.history || [])) (h.brains || []).forEach(b => brainsSeen.add(b));
+  const modelsSeen = new Set();
+  for (const r of doc.runs) (r.summary?.models || []).forEach(b => modelsSeen.add(b));
+  for (const h of (doc.history || [])) (h.models || []).forEach(b => modelsSeen.add(b));
   /* Accordion section: same fold contract as a repo group (data-toggle key in
      the shared `collapsed` set, `.repo.collapsed .runs` hides the body), so
      paint(), persistence, and the collapse-all buttons all keep working.
@@ -1213,7 +1213,7 @@ function renderNav() {
   let html = `<button class="runrow ${selected === "fleet" ? "on" : ""}" data-k="fleet"
       title="harnesses, models, and live capacity">
       <div class="rl">${ico("cpu")}<span class="nm">fleet · harnesses</span>
-        <span class="rs">${brainsSeen.size} in use</span></div></button>`;
+        <span class="rs">${modelsSeen.size} in use</span></div></button>`;
   // Conditional: only machines with the roost CLI installed get the section —
   // the server said available:false everywhere else, so no dead menu entry.
   if (roostDoc && roostDoc.available) {
@@ -1318,13 +1318,13 @@ function runRow(r) {
 
 /* ── column chart ────────────────────────────────────────────────────────── */
 /* One column per item, height proportional to value. This is the chart that makes
-   the cross-brain cost story visible at a glance: a codex lane at 5.4M next to a
+   the cross-model cost story visible at a glance: a codex lane at 5.4M next to a
    GLM lane at 42.6k is a 100x column, not two numbers you have to compare by eye. */
 function sparkline(d, basis, col) {
   if (!Array.isArray(d) || !d.length || !d.some(v => v > 0)) return "";
   const max = Math.max(...d, 1);
   const tip = basis === "time" ? "activity over elapsed time"
-            : basis === "sequence" ? "activity by step order — this brain's stream carries no timestamps"
+            : basis === "sequence" ? "activity by step order — this model's stream carries no timestamps"
             : "activity";
   return `<div><div class="spark" title="${tip}">${d.map(v =>
       `<i style="height:${v > 0 ? Math.max(2, Math.round(v/max*26)) : 1}px;background:${col};
@@ -1338,7 +1338,7 @@ function sparkline(d, basis, col) {
    an unsorted strip in that shape reads as activity-over-time - which is exactly
    the lie the sparkline's own comment warns about, because a harness card has no
    time series to show. Sorted, it is unambiguously a distribution: how wide the
-   spread between this brain's biggest and smallest lane is, which is the thing
+   spread between this model's biggest and smallest lane is, which is the thing
    that actually explains its share of the bill. */
 function distBars(values, col) {
   const v = (values || []).filter(x => x > 0).sort((a, b) => b - a).slice(0, 28);
@@ -1350,10 +1350,10 @@ function distBars(values, col) {
       <span>peak ${tok(max)} · ${v.length} lanes</span></div></div>`;
 }
 
-function brandLegend(brains) {
-  if (!brains || brains.length < 2) return "";
-  return `<div class="legend">${brains.map(b => {
-    const c = brainOf(b)[1];
+function brandLegend(models) {
+  if (!models || models.length < 2) return "";
+  return `<div class="legend">${models.map(b => {
+    const c = modelOf(b)[1];
     return `<span style="color:${c}">${brandMark(b, c)}<span style="color:var(--text-secondary)">${esc(b)}</span></span>`;
   }).join("")}</div>`;
 }
@@ -1392,7 +1392,7 @@ function columnChart(items, { label, sub, showX }) {
 
    The spec column is hand-maintained on purpose: it encodes contracts that live
    in prose (sandbox posture, commit ability, concurrency ceilings) and that no
-   run artifact reports. When a brain's contract changes in SKILL.md, change it
+   run artifact reports. When a model's contract changes in SKILL.md, change it
    here in the same commit. */
 const HARNESS = [
   { k:"fable", cls:"Anthropic", proc:"claude -p --model claude-fable-5",
@@ -1432,7 +1432,7 @@ const HARNESS = [
     auth:"provider API-key env var, isolated PI_CODING_AGENT_DIR",
     sandbox:"worktree lane only — no sandbox, no turn cap",
     stream:"--json event stream", conc:"4–6", commits:true,
-    role:"third opinion — a provider no fixed brain covers",
+    role:"third opinion — a provider no fixed model covers",
     checks:["bin-pi","pi-auth"] },
 ];
 /* `native` is not in the table on purpose: it is the marker ff-import stamps on
@@ -1528,6 +1528,11 @@ function roostView() {
       <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
         title="Re-run roost now (local CLI, no model calls)">
         ${ico("activity")}${d.building ? "probing…" : "re-probe"}</button>
+      <button class="tbtn" id="roostAuth" ${d.refreshing ? "disabled" : ""}
+        title="roost refresh --soon 30m — renew OAuth tokens for expired and soon-expiring profiles, then re-probe">
+        ${ico("key")}${d.refreshing ? "refreshing auth…" : "refresh auth"}</button>
+      ${d.refresh ? `<span class="tbtn" style="color:${d.refresh.ok ? "var(--ok)" : "var(--bad)"};cursor:default"
+        title="${esc(d.refresh.detail || "")}">${ico(d.refresh.ok ? "activity" : "alert")}auth ${d.refresh.ok ? "renewed" : "refresh failed"}</span>` : ""}
       ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div></div>`;
   if (d.widget) return header + `<div class="rw-host">${d.widget}</div>`;
@@ -1565,25 +1570,25 @@ function roostView() {
 }
 
 /* Roll every lane this machine has a record of - live runs AND archived history -
-   up by brain and by resolved model. History lanes carry a reduced digest with no
+   up by model and by resolved model. History lanes carry a reduced digest with no
    `model`, which is why the model table is explicitly labelled as covering runs
    still on disk: counting archived lanes there would undercount silently. */
 function fleetStats() {
-  const brains = new Map(), models = new Map();
+  const models = new Map(), modelIds = new Map();
   const blank = () => ({ lanes:0, done:0, failed:0, stalled:0, running:0,
-                         tokens:0, out:0, commits:0, runs:new Set(), models:new Set(),
+                         tokens:0, out:0, commits:0, runs:new Set(), model_ids:new Set(),
                          laneTokens:[], laneRefs:[] });
   const addLane = (l, runId, live) => {
-    if (!l || !l.brain) return;
-    const b = brains.get(l.brain) || brains.set(l.brain, blank()).get(l.brain);
+    if (!l || !l.model) return;
+    const b = models.get(l.model) || models.set(l.model, blank()).get(l.model);
     b.lanes++; b[l.state] = (b[l.state] || 0) + 1;
     b.tokens += l.tokens_total || 0; b.out += l.tokens_out || 0;
     b.commits += l.commits || 0; b.runs.add(runId);
     b.laneTokens.push(l.tokens_total || 0);
     b.laneRefs.push(l);   // costRollup at render time — cost follows the chosen basis
-    if (l.model) {
-      b.models.add(l.model);
-      const m = models.get(l.model) || models.set(l.model, { ...blank(), brain:l.brain }).get(l.model);
+    if (l.model_id) {
+      b.model_ids.add(l.model_id);
+      const m = modelIds.get(l.model_id) || modelIds.set(l.model_id, { ...blank(), model:l.model }).get(l.model_id);
       m.lanes++; m.tokens += l.tokens_total || 0; m.out += l.tokens_out || 0;
       m.laneRefs.push(l); m.runs.add(runId);
       if (l.state === "failed") m.failed++;
@@ -1591,7 +1596,7 @@ function fleetStats() {
   };
   for (const r of doc.runs) for (const l of (r.lanes || [])) addLane(l, runKey(r), true);
   for (const h of (doc.history || [])) for (const l of (h.lanes || [])) addLane(l, histKey(h), false);
-  return { brains, models };
+  return { models, model_ids: modelIds };
 }
 
 /* Worst status wins: one failed check is what you need to see, and averaging it
@@ -1605,8 +1610,8 @@ function harnessHealth(h) {
 }
 
 function harnessCard(h, stats) {
-  const [, col] = brainOf(h.k);
-  const s = stats.brains.get(h.k);
+  const [, col] = modelOf(h.k);
+  const s = stats.models.get(h.k);
   const worst = harnessHealth(h);
   const dot = worst ? worst.status : "";
   const cap = worst
@@ -1649,7 +1654,7 @@ function harnessCard(h, stats) {
         <dt>isolation</dt><dd>${esc(h.sandbox)}</dd>
         <dt>live stream</dt><dd>${esc(h.stream)}</dd>
         <dt>concurrency</dt><dd>${esc(h.conc)} concurrent</dd>
-        ${s && s.models.size ? `<dt>models seen</dt><dd>${esc([...s.models].join(", "))}</dd>` : ""}
+        ${s && s.model_ids.size ? `<dt>model ids seen</dt><dd>${esc([...s.model_ids].join(", "))}</dd>` : ""}
       </dl>
     </div>
     <div class="hcap">${cap}</div>
@@ -1658,10 +1663,10 @@ function harnessCard(h, stats) {
 
 function fleetView() {
   const stats = fleetStats();
-  const inUse = [...stats.brains.keys()];
-  const totalLanes = [...stats.brains.values()].reduce((a, b) => a + b.lanes, 0);
-  const totalTok = [...stats.brains.values()].reduce((a, b) => a + b.tokens, 0);
-  const totalCost = costRollup([...stats.brains.values()].flatMap(b => b.laneRefs));
+  const inUse = [...stats.models.keys()];
+  const totalLanes = [...stats.models.values()].reduce((a, b) => a + b.lanes, 0);
+  const totalTok = [...stats.models.values()].reduce((a, b) => a + b.tokens, 0);
+  const totalCost = costRollup([...stats.models.values()].flatMap(b => b.laneRefs));
   const avail = HARNESS.filter(h => { const w = harnessHealth(h);
     return w && w.status === "ok"; }).length;
   const d = doctorDoc;
@@ -1670,20 +1675,20 @@ function fleetView() {
 
   const cards = HARNESS.map(h => harnessCard(h, stats)).join("");
 
-  const byTok = [...stats.brains.entries()].sort((a,b) => b[1].tokens - a[1].tokens);
+  const byTok = [...stats.models.entries()].sort((a,b) => b[1].tokens - a[1].tokens);
   const chart = columnChart(byTok.map(([k, v]) => ({
-    name:k, value:v.tokens, color:brainOf(k)[1] })),
+    name:k, value:v.tokens, color:modelOf(k)[1] })),
     { label:"tokens per harness · all runs + history", showX:true });
 
-  const models = [...stats.models.entries()].sort((a,b) => b[1].tokens - a[1].tokens);
-  const modelTable = models.length ? `
-    <div class="phase"><div class="phase-h mono"><span>models observed</span>
-      <span class="n">${models.length}</span></div>
+  const modelIds = [...stats.model_ids.entries()].sort((a,b) => b[1].tokens - a[1].tokens);
+  const modelTable = modelIds.length ? `
+    <div class="phase"><div class="phase-h mono"><span>model ids observed</span>
+      <span class="n">${modelIds.length}</span></div>
     <div class="tablewrap"><table class="hist mono"><thead><tr><th>model</th><th>family</th>
       <th class="num">lanes</th><th class="num">runs</th><th class="num">tokens</th>
       <th class="num">output</th><th class="num">cost</th></tr></thead><tbody>
-      ${models.map(([m, v]) => `<tr><td>${esc(m)}</td>
-        <td style="color:${brainOf(v.brain)[1]}">${esc(v.brain)}</td>
+      ${modelIds.map(([m, v]) => `<tr><td>${esc(m)}</td>
+        <td style="color:${modelOf(v.model)[1]}">${esc(v.model)}</td>
         <td class="num">${nf(v.lanes)}</td><td class="num">${nf(v.runs.size)}</td>
         <td class="num">${tok(v.tokens)}</td><td class="num">${tok(v.out)}</td>
         <td class="num">${costFmt(costRollup(v.laneRefs))}</td></tr>`).join("")}
@@ -1713,7 +1718,7 @@ function fleetView() {
     <div class="stats mono">
       <div class="stat ${avail ? "ok" : ""}"><b>${d ? avail : "—"}</b><span>available</span></div>
       <div class="stat"><b>${inUse.length}</b><span>in use</span></div>
-      <div class="stat"><b>${stats.models.size}</b><span>models</span></div>
+      <div class="stat"><b>${stats.model_ids.size}</b><span>model ids</span></div>
       <div class="stat"><b>${nf(totalLanes)}</b><span>lanes ever</span></div>
       <div class="stat"><b>${tok(totalTok)}</b><span>tokens</span></div>
       <div class="stat" title="${esc(costTitle(totalCost))}"><b>${costFmt(totalCost)}</b><span>cost</span></div>
@@ -1810,6 +1815,18 @@ function bindCardControls(r) {
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
   const rr = document.getElementById("roostRefresh");
   if (rr) rr.onclick = () => { fetchRoost(true); };
+  // Auth refresh mutates the token store, so it is strictly click-gated; the
+  // settle-poll below just watches the flag until the background CLI returns.
+  const ra = document.getElementById("roostAuth");
+  if (ra) ra.onclick = async () => {
+    try { await fetch("api/roost/refresh", { cache: "no-store" }); } catch (e) {}
+    const watch = async () => {
+      await fetchRoost(false);
+      if (roostDoc && roostDoc.refreshing) setTimeout(watch, 2000);
+      else fetchRoost(true);   // tokens changed — force a fresh status probe
+    };
+    watch();
+  };
   const ex2 = document.getElementById("exportRun");
   if (ex2 && r) ex2.onclick = () => {
     // Client-side blob download — nothing leaves the machine, no new endpoint.
@@ -1838,16 +1855,16 @@ function aggStats(runs, hist) {
   const sum = f => runs.reduce((a, r) => a + (f(S(r)) || 0), 0)
                  + hist.reduce((a, h) => a + (f(h) || 0), 0);
   const failed = lanes.filter(l => l.state === "failed").length;
-  const brains = new Set();
-  runs.forEach(r => (S(r).brains || []).forEach(b => brains.add(b)));
-  hist.forEach(h => (h.brains || []).forEach(b => brains.add(b)));
+  const models = new Set();
+  runs.forEach(r => (S(r).models || []).forEach(b => models.add(b)));
+  hist.forEach(h => (h.models || []).forEach(b => models.add(b)));
   return {
     lanes, laneN: lanes.length, failed,
     failPct: lanes.length ? Math.round(failed / lanes.length * 100) : 0,
     tokens: sum(x => x.tokens_total), tokIn: sum(x => x.tokens_in),
     tokCached: sum(x => x.tokens_cached), tokOut: sum(x => x.tokens_out),
     runtime: sum(x => x.elapsed_s),
-    cost: costRollup(lanes), brains: [...brains].sort(),
+    cost: costRollup(lanes), models: [...models].sort(),
   };
 }
 function aggStatRow(a, live) {
@@ -1880,7 +1897,7 @@ function overview() {
     <div class="rhead-r"><h2>${live.length ? live.length + " run" + (live.length>1?"s":"") + " in flight" : "fleet idle"}</h2>
       <span class="tag">fleet · everything on this machine</span>
       <span class="tag">${doc.totals.runs} runs · ${doc.totals.repos} repos · ${doc.totals.history_runs||0} archived</span></div>
-    ${chart}${brandLegend(a.brains)}
+    ${chart}${brandLegend(a.models)}
     ${aggStatRow(a, live.length)}
     <div class="stats mono" style="margin-top:6px">
       ${doc.cache ? `<div class="stat ${doc.cache.hit_rate >= 0.9 ? "ok" : ""}"
@@ -1916,7 +1933,7 @@ function projectView(label) {
       <span class="tag">project</span>
       <span class="tag">${runs.length} run${runs.length===1?"":"s"} on disk · ${hist.length} archived</span></div>
     <div class="path mono">${ico("folder")}${esc(repoPath)}</div>
-    ${chart}${brandLegend(a.brains)}
+    ${chart}${brandLegend(a.models)}
     ${aggStatRow(a, live)}
   </div>
   ${runs.length ? `<div class="phase"><div class="phase-h mono"><span>runs</span>
@@ -1947,20 +1964,20 @@ function runCard(r) {
       ${chip("clock", fmt((s.elapsed_s||0) + (inflight(s.state)?age:0)))}
       ${chip("activity", tok(s.tokens_total), "tok")}
       ${chip("coin", costFmt(costRollup(r.lanes)))}
-      ${(s.brains||[]).map(b => brandMark(b, brainOf(b)[1])).join("")}
+      ${(s.models||[]).map(b => brandMark(b, modelOf(b)[1])).join("")}
     </div>
     <div class="dir" title="${esc(r.repo)}">${ico("folder")}${esc(r.repo)}</div>
   </div>`;
 }
 
-/* The orchestrator is a brain like any other, so it gets the same provider mark.
+/* The orchestrator is a model like any other, so it gets the same provider mark.
    When it is unrecorded, say so in a dashed badge rather than guessing a model -
    a Claude Code session does not expose its own model to child processes, so a
    confident-looking wrong answer here would be pure invention. */
 function orchBadge(name) {
   if (!name) return `<div class="orch unknown" title="Nothing in a Claude Code session's environment exposes its own model, so this has to be supplied at spawn time: set FLEETFLOW_ORCHESTRATOR, or pass ff-spawn --orchestrator. Runs predating that stay unrecorded rather than guessed.">
       ${ico("cpu")}<b>orchestrator unrecorded</b><span>who drove this fleet</span></div>`;
-  const col = brainOf(name)[1];
+  const col = modelOf(name)[1];
   return `<div class="orch" style="border-color:${col}">${brandMark(name, col)}
     <b style="color:${col}">${esc(name)}</b><span>orchestrating</span></div>`;
 }
@@ -1988,8 +2005,8 @@ function runDetail(r) {
   const uncovered = lanes.filter(l => inflight(l.state) && !l.live_signal).length;
 
   const chart = columnChart(lanes.map(l => ({
-    name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
-    { label:"tokens per lane", showX:true }) + brandLegend(s.brains);
+    name: l.id, value: l.tokens_total || 0, color: modelOf(l.model)[1], state: l.state })),
+    { label:"tokens per lane", showX:true }) + brandLegend(s.models);
 
   const head = `<div class="treectl" style="justify-content:flex-end;margin-bottom:10px">
       <button class="tbtn" id="exportRun" title="Download this run's full status document (lanes, tokens, states) as JSON — what ff-status reported, plus the roll-up">${ico("file")}export json</button>
@@ -2002,11 +2019,11 @@ function runDetail(r) {
     ${orchBadge(s.orchestrator)}
     <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2><span class="tag">wave</span>
       ${stateTag(s.state, (s.idle_s||0)+age)}
-      ${(s.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
-        color:${brainOf(b)[1]};display:inline-flex;align-items:center;gap:4px;padding:1px 6px">
-        ${brandMark(b, brainOf(b)[1])}${esc(b)}</span>`).join("")}</div>
+      ${(s.models||[]).map(b => `<span class="tag" style="border-color:${modelOf(b)[1]};
+        color:${modelOf(b)[1]};display:inline-flex;align-items:center;gap:4px;padding:1px 6px">
+        ${brandMark(b, modelOf(b)[1])}${esc(b)}</span>`).join("")}</div>
     <div class="path mono">${ico("folder")}${esc(r.repo)}</div>
-    ${(s.models||[]).length ? `<div class="path mono">${ico("cpu")}lanes ran ${esc((s.models||[]).join(", "))}</div>` : ""}
+    ${(s.model_ids||[]).length ? `<div class="path mono">${ico("cpu")}lanes ran ${esc((s.model_ids||[]).join(", "))}</div>` : ""}
     <div class="sq-row" style="margin-top:9px">${lanes.map(l =>
       `<div class="sq ${l.state}" title="${esc(l.id)} — ${esc(l.state)}"></div>`).join("")}</div>
     ${chart}
@@ -2072,23 +2089,23 @@ function worktreeLine(l) {
 }
 
 function laneCard(l, age) {
-  const [, col] = brainOf(l.brain);
+  const [, col] = modelOf(l.model);
   const live = inflight(l.state) ? age : 0;
   const tot = Math.max(1, l.tokens_total || 0);
   const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
   const lc = laneCost(l);
-  const lcPlan = PLANS[PLAN_GROUP[l.brain]];
+  const lcPlan = PLANS[PLAN_GROUP[l.model]];
   const lcTitle = lc.kind === "estimated" ? "estimated from tokens at API rates"
-    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee`
+    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.model])?.label || ""} monthly fee`
     : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan — no token split to blend`
     : lc.kind === "reported" ? "the worker CLI's own cost figure" : "no cost figure for this lane";
   return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${isCollapsed(l.id)?" collapsed":""}">
     <div class="hd">
-      ${brandMark(l.brain, col)}
+      ${brandMark(l.model, col)}
       <span class="dot ${l.state}" style="background:${STATE_COLOR[l.state]||col}"></span>
       <span class="proj" style="color:${col};font-weight:600"
-        title="${l.model ? "resolved model: " + esc(l.model) : "exact model id not recorded for this lane"}"
-        >${esc(l.model || l.brain)}</span>
+        title="${l.model_id ? "resolved model: " + esc(l.model_id) : "exact model id not recorded for this lane"}"
+        >${esc(l.model_id || l.model)}</span>
       <span class="tag">${esc(l.phase || "build")}</span>
       ${inflight(l.state) && !l.live_signal ? `<span class="tag" title="no live stream — for this
         lane the stall detector reports &quot;cannot tell&quot;, never &quot;healthy&quot;">no stream</span>` : ""}
@@ -2132,15 +2149,15 @@ function historyCard(h) {
     : `this run's directory has been cleaned up. Lane prompts, diffs, and transcripts
        are gone; this is the surviving index.`;
   const chart = columnChart((h.lanes || []).map(l => ({
-    name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
-    { label:"tokens per lane", showX:true }) + brandLegend(h.brains);
+    name: l.id, value: l.tokens_total || 0, color: modelOf(l.model)[1], state: l.state })),
+    { label:"tokens per lane", showX:true }) + brandLegend(h.models);
   return `<div class="rhead">
     <button class="crumb" data-k="">${ico("chev")}fleet</button>
     <button class="crumb" data-k="${esc("repo:" + (h.repo_label || h.repo))}">${esc(h.repo_label || h.repo)}</button>
     <div class="rhead-r"><h2 class="mono">${esc(h.run)}</h2>
       <span class="tag">archived</span>${stateTag(h.state, 0)}
-      ${(h.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
-        color:${brainOf(b)[1]}">${esc(b)}</span>`).join("")}</div>
+      ${(h.models||[]).map(b => `<span class="tag" style="border-color:${modelOf(b)[1]};
+        color:${modelOf(b)[1]}">${esc(b)}</span>`).join("")}</div>
     <div class="path mono">${ico("folder")}${esc(h.repo)}</div>
     ${chart}
     <div class="stats mono">
@@ -2156,7 +2173,7 @@ function historyCard(h) {
     <th class="num">elapsed</th><th class="num">tokens</th><th class="num">out</th>
     <th class="num">commits</th><th class="num">cost</th></tr></thead><tbody>
     ${(h.lanes||[]).map(l => `<tr><td>${esc(l.id)}</td>
-      <td style="color:${brainOf(l.brain)[1]}">${esc(l.brain)}</td>
+      <td style="color:${modelOf(l.model)[1]}">${esc(l.model)}</td>
       <td>${esc(l.phase||"build")}</td>
       <td><span class="sq ${l.state}" style="display:inline-block"></span> ${esc(l.state)}</td>
       <td class="num">${fmt(l.elapsed_s)}</td><td class="num">${tok(l.tokens_total)}</td>

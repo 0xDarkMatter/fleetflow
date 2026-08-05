@@ -37,9 +37,9 @@ done
 
 # --- usage validation -----------------------------------------------------------
 check "spawn: no args" 2 bash "$S/ff-spawn.sh"
-check "spawn: bad brain" 2 bash "$S/ff-spawn.sh" --run r1 --id a --brain gpt9 --prompt-file "$PKT" --repo "$REPO"
-check "spawn: bad run name" 2 bash "$S/ff-spawn.sh" --run "R 1" --id a --brain glm --prompt-file "$PKT" --repo "$REPO"
-check "spawn: missing prompt file" 2 bash "$S/ff-spawn.sh" --run r1 --id a --brain glm --prompt-file "$TMP/nope" --repo "$REPO"
+check "spawn: bad model" 2 bash "$S/ff-spawn.sh" --run r1 --id a --model gpt9 --prompt-file "$PKT" --repo "$REPO"
+check "spawn: bad run name" 2 bash "$S/ff-spawn.sh" --run "R 1" --id a --model glm --prompt-file "$PKT" --repo "$REPO"
+check "spawn: missing prompt file" 2 bash "$S/ff-spawn.sh" --run r1 --id a --model glm --prompt-file "$TMP/nope" --repo "$REPO"
 check "collect: no args" 2 bash "$S/ff-collect.sh" --repo "$REPO"
 check "doctor: bad flag" 2 bash "$S/ff-doctor.sh" --frobnicate
 
@@ -48,10 +48,10 @@ check "doctor: bad flag" 2 bash "$S/ff-doctor.sh" --frobnicate
 # things that CAN rot: the value validation, and the wiring into `codex exec`.
 FLEETFLOW_CODEX_WINDOWS_SANDBOX=bogus \
   check "spawn: rejects bad windows-sandbox value" 2 \
-  bash "$S/ff-spawn.sh" --run r0 --id ws --brain codex --prompt-file "$PKT" --repo "$REPO" --dry-run
+  bash "$S/ff-spawn.sh" --run r0 --id ws --model codex --prompt-file "$PKT" --repo "$REPO" --dry-run
 FLEETFLOW_CODEX_WINDOWS_SANDBOX=bogus \
-  check "spawn: windows-sandbox value ignored for non-codex brains" 0 \
-  bash "$S/ff-spawn.sh" --run r0 --id ws --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
+  check "spawn: windows-sandbox value ignored for non-codex models" 0 \
+  bash "$S/ff-spawn.sh" --run r0 --id ws --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
 grep -q 'windows\.sandbox="\$CODEX_WINSANDBOX"' "$S/ff-spawn.sh" \
   && ok "spawn: windows.sandbox override wired into codex exec" \
   || bad "spawn: windows.sandbox override missing from codex exec"
@@ -60,7 +60,7 @@ grep -q 'FLEETFLOW_CODEX_WINDOWS_SANDBOX-unelevated' "$S/ff-spawn.sh" \
   || bad "spawn: windows.sandbox default is not unelevated"
 
 # --- dry-run lifecycle -----------------------------------------------------------
-check "spawn: dry-run ok" 0 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
+check "spawn: dry-run ok" 0 bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
 [ -f "$REPO/.fleetflow/r1/a.result.json" ] && ok "artifact written" || bad "artifact missing"
 [ -f "$REPO/.fleetflow/r1/journal.jsonl" ] && ok "journal exists" || bad "journal missing"
 N_STARTED="$(jq -r 'select(.type=="started")|.key' "$REPO/.fleetflow/r1/journal.jsonl" | wc -l)"
@@ -81,13 +81,13 @@ AL_RD="$REPO/.fleetflow/ralias"; mkdir -p "$AL_RD"
 ALP="$AL_RD/al.prompt.txt"
 echo "PRECIOUS PACKET. FINAL REPLY: one line." > "$ALP"
 check "spawn: --prompt-file aliasing the effective-prompt path -> 2" 2 \
-  bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet --prompt-file "$ALP" --repo "$REPO" --dry-run
+  bash "$S/ff-spawn.sh" --run ralias --id al --model sonnet --prompt-file "$ALP" --repo "$REPO" --dry-run
 grep -q "PRECIOUS PACKET" "$ALP" \
   && ok "spawn: aliased packet left INTACT (not truncated)" || bad "spawn: aliased packet was DESTROYED"
 # a different SPELLING of the same file must be caught too - the check is a
 # canonical-path compare, not a string compare
 ALRC=0
-( cd "$AL_RD" && bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet \
+( cd "$AL_RD" && bash "$S/ff-spawn.sh" --run ralias --id al --model sonnet \
     --prompt-file "./al.prompt.txt" --repo "$REPO" --dry-run ) >/dev/null 2>&1 || ALRC=$?
 [ "$ALRC" = "2" ] && ok "spawn: relative spelling of the aliased path also rejected" \
   || bad "spawn: relative aliased path slipped through (rc=$ALRC)"
@@ -98,24 +98,24 @@ grep -q "PRECIOUS PACKET" "$ALP" \
 # the packet is part of the journal's content-hash cache key)
 mkdir -p "$AL_RD/packets"; printf 'real task. FINAL REPLY: x\n' > "$AL_RD/packets/al.task.md"
 check "spawn: packets/<id>.task.md convention still works" 0 \
-  bash "$S/ff-spawn.sh" --run ralias --id al --brain sonnet --prompt-file "$AL_RD/packets/al.task.md" --repo "$REPO" --dry-run
+  bash "$S/ff-spawn.sh" --run ralias --id al --model sonnet --prompt-file "$AL_RD/packets/al.task.md" --repo "$REPO" --dry-run
 grep -q "real task" "$ALP" && ok "spawn: non-colliding packet body reaches the effective prompt" \
   || bad "spawn: packet body missing from effective prompt"
 tail -c 26 "$ALP" | cmp -s - "$AL_RD/packets/al.task.md" \
   && ok "spawn: packet appended byte-for-byte" || bad "spawn: packet bytes altered on append"
 
 # resume: identical packet -> cache hit (exit 3); --force -> re-run (exit 0)
-check "spawn: cache hit on identical packet" 3 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
-check "spawn: --force re-runs" 0 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --force
+check "spawn: cache hit on identical packet" 3 bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
+check "spawn: --force re-runs" 0 bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --force
 echo "changed" >> "$PKT"
-check "spawn: changed packet re-runs" 0 bash "$S/ff-spawn.sh" --run r1 --id a --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
+check "spawn: changed packet re-runs" 0 bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
 
 # worktree lane creation
-check "spawn: worktree lane" 0 bash "$S/ff-spawn.sh" --run r1 --id lane --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --worktree
+check "spawn: worktree lane" 0 bash "$S/ff-spawn.sh" --run r1 --id lane --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --worktree
 git -C "$REPO" show-ref --verify --quiet refs/heads/fleetflow/r1/lane && ok "lane branch created" || bad "lane branch missing"
 [ -d "$REPO/.fleetflow/r1/wt-lane" ] && ok "lane worktree created" || bad "lane worktree missing"
 
-# --- worker heartbeat (stall signal for brains with no native stream) ------------
+# --- worker heartbeat (stall signal for models with no native stream) ------------
 grep -q 'HEARTBEAT' "$REPO/.fleetflow/r1/lane.prompt.txt" \
   && ok "spawn: worktree lane prompt carries HEARTBEAT clause" || bad "spawn: heartbeat clause missing (worktree lane)"
 grep -q 'HEARTBEAT' "$REPO/.fleetflow/r1/a.prompt.txt" \
@@ -132,7 +132,7 @@ check "collect: dry-run result passes" 0 bash "$S/ff-collect.sh" --run r1 --id a
 OUT="$(bash "$S/ff-collect.sh" --run r1 --id a --repo "$REPO" 2>/dev/null)"
 [ "$OUT" = "DRYRUN" ] && ok "collect prints final text" || bad "collect text wrong: '$OUT'"
 jq -nc '{is_error:true,result:"boom"}' > "$REPO/.fleetflow/r1/bad.result.json"
-jq -nc '{type:"result",key:"v2:x",id:"bad",brain:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
+jq -nc '{type:"result",key:"v2:x",id:"bad",model:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
 check "collect: is_error=true fails gate" 10 bash "$S/ff-collect.sh" --run r1 --id bad --repo "$REPO"
 check "collect: missing artifact" 3 bash "$S/ff-collect.sh" --run r1 --id ghost --repo "$REPO"
 # --- auto-commit on gate pass (opt-in; rookery's auto-commit-on-PASS) ------------
@@ -143,11 +143,11 @@ check "collect: --auto-commit still passes gate" 0 bash "$S/ff-collect.sh" --run
 git -C "$REPO/.fleetflow/r1/wt-lane" log -1 --format=%s 2>/dev/null | grep -q 'auto-commit gated worker output' \
   && ok "collect: auto-commit message shape" || bad "collect: auto-commit message wrong"
 # a FAILED gate must never commit (the verdict rule)
-# NB: distinct packet - the journal cache keys on (brain,prompt,opts), not id,
+# NB: distinct packet - the journal cache keys on (model,prompt,opts), not id,
 # so reusing $PKT+--worktree here would cache-hit the "lane" spawn and skip
 # worktree creation entirely.
 ACP="$TMP/acfail-packet.txt"; echo "acfail task. FINAL REPLY: x" > "$ACP"
-bash "$S/ff-spawn.sh" --run r1 --id acfail --brain sonnet --prompt-file "$ACP" --repo "$REPO" --dry-run --worktree >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run r1 --id acfail --model sonnet --prompt-file "$ACP" --repo "$REPO" --dry-run --worktree >/dev/null 2>&1
 jq -nc '{is_error:true,result:"boom"}' > "$REPO/.fleetflow/r1/acfail.result.json"
 echo "doomed" > "$REPO/.fleetflow/r1/wt-acfail/doomed.txt"
 check "collect: --auto-commit failed gate still exits 10" 10 bash "$S/ff-collect.sh" --run r1 --id acfail --repo "$REPO" --auto-commit
@@ -161,38 +161,38 @@ check "collect: codex schema-valid JSON" 0 bash "$S/ff-collect.sh" --run r1 --id
 printf 'not json' > "$REPO/.fleetflow/r1/cx.last.txt"
 check "collect: codex schema-invalid fails" 10 bash "$S/ff-collect.sh" --run r1 --id cx --repo "$REPO" --schema
 
-# --- grok brain (non-Anthropic worker: grok -p envelope, no is_error) ----------
+# --- grok model (non-Anthropic worker: grok -p envelope, no is_error) ----------
 GKP="$TMP/grok-packet.txt"; echo "grok task. FINAL REPLY: one line." > "$GKP"
-check "spawn: grok brain accepted (dry-run)" 0 bash "$S/ff-spawn.sh" --run rg --id g --brain grok --prompt-file "$GKP" --repo "$REPO" --dry-run
+check "spawn: grok model accepted (dry-run)" 0 bash "$S/ff-spawn.sh" --run rg --id g --model grok --prompt-file "$GKP" --repo "$REPO" --dry-run
 jq -e '.text=="DRYRUN" and .stopReason=="EndTurn" and (has("is_error")|not)' "$REPO/.fleetflow/rg/g.result.json" >/dev/null \
   && ok "spawn: grok dry-run stub is a grok envelope (text+stopReason, no is_error)" || bad "spawn: grok stub shape wrong"
-jq -e '.packets[]|select(.id=="g")|.brain=="grok"' "$REPO/.fleetflow/rg/manifest.json" >/dev/null \
-  && ok "manifest records brain=grok" || bad "manifest grok brain wrong"
+jq -e '.packets[]|select(.id=="g")|.model=="grok"' "$REPO/.fleetflow/rg/manifest.json" >/dev/null \
+  && ok "manifest records model=grok" || bad "manifest grok model wrong"
 check "collect: grok envelope passes gate" 0 bash "$S/ff-collect.sh" --run rg --id g --repo "$REPO"
 GOUT="$(bash "$S/ff-collect.sh" --run rg --id g --repo "$REPO" 2>/dev/null)"
 [ "$GOUT" = "DRYRUN" ] && ok "collect: grok prints .text" || bad "collect: grok text wrong: '$GOUT'"
 # grok --schema lane prefers the already-parsed .structuredOutput
 jq -nc '{text:"ignored prose",stopReason:"EndTurn",structuredOutput:{verdict:"ok"}}' > "$REPO/.fleetflow/rg/gs.result.json"
-jq -nc '{type:"result",key:"v2:gs",id:"gs",brain:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
+jq -nc '{type:"result",key:"v2:gs",id:"gs",model:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
 GSOUT="$(bash "$S/ff-collect.sh" --run rg --id gs --repo "$REPO" --schema 2>/dev/null)"; GSRC=$?
 { [ "$GSRC" = "0" ] && printf '%s' "$GSOUT" | jq -e '.verdict=="ok"' >/dev/null; } \
   && ok "collect: grok --schema returns structuredOutput" || bad "collect: grok structuredOutput wrong (rc=$GSRC out=$GSOUT)"
 # grok schema fallback: no structuredOutput, .text carries fenced JSON
 jq -nc '{text:"```json\n{\"verdict\":\"fb\"}\n```",stopReason:"EndTurn"}' > "$REPO/.fleetflow/rg/gf.result.json"
-jq -nc '{type:"result",key:"v2:gf",id:"gf",brain:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
+jq -nc '{type:"result",key:"v2:gf",id:"gf",model:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
 GFOUT="$(bash "$S/ff-collect.sh" --run rg --id gf --repo "$REPO" --schema 2>/dev/null)"; GFRC=$?
 { [ "$GFRC" = "0" ] && printf '%s' "$GFOUT" | jq -e '.verdict=="fb"' >/dev/null; } \
   && ok "collect: grok --schema falls back to fenced .text" || bad "collect: grok fallback wrong (rc=$GFRC)"
 # grok empty-text envelope fails the gate
 jq -nc '{text:"",stopReason:"EndTurn"}' > "$REPO/.fleetflow/rg/ge.result.json"
-jq -nc '{type:"result",key:"v2:ge",id:"ge",brain:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
+jq -nc '{type:"result",key:"v2:ge",id:"ge",model:"grok",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/rg/journal.jsonl"
 check "collect: grok empty text fails gate" 10 bash "$S/ff-collect.sh" --run rg --id ge --repo "$REPO"
 # ff-doctor surfaces a bin-grok structural check
 bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^bin-grok	(ok|advisory)" \
   && ok "doctor: reports bin-grok check" || bad "doctor: bin-grok check missing"
 
 # --- phases --------------------------------------------------------------------------
-check "spawn: --phase accepted" 0 bash "$S/ff-spawn.sh" --run r1 --id ver --brain opus --phase verify --prompt-file "$PKT" --repo "$REPO" --dry-run
+check "spawn: --phase accepted" 0 bash "$S/ff-spawn.sh" --run r1 --id ver --model opus --phase verify --prompt-file "$PKT" --repo "$REPO" --dry-run
 bash "$S/ff-status.sh" --run r1 --repo "$REPO" 2>/dev/null | jq -e '.lanes[] | select(.id=="ver") | .phase=="verify"' >/dev/null \
   && ok "status: phase propagates" || bad "status: phase missing"
 bash "$S/ff-status.sh" --run r1 --repo "$REPO" 2>/dev/null | jq -e '.lanes[] | select(.id=="a") | .phase=="build"' >/dev/null \
@@ -248,8 +248,8 @@ check "ff-run: resume no manifest -> 2" 2 bash "$S/ff-run.sh" resume --run r1 --
 # fresh run, two DISTINCT packets so replay order is unambiguous
 PA="$TMP/r2-a.txt"; echo "do A. FINAL REPLY: a" > "$PA"
 PB="$TMP/r2-b.txt"; echo "do B. FINAL REPLY: b" > "$PB"
-bash "$S/ff-spawn.sh" --run r2 --id a --brain sonnet --prompt-file "$PA" --repo "$REPO" --dry-run >/dev/null 2>&1
-bash "$S/ff-spawn.sh" --run r2 --id b --brain sonnet --prompt-file "$PB" --repo "$REPO" --dry-run >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run r2 --id a --model sonnet --prompt-file "$PA" --repo "$REPO" --dry-run >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run r2 --id b --model sonnet --prompt-file "$PB" --repo "$REPO" --dry-run >/dev/null 2>&1
 # resume re-spawns both -> both cache-hit -> exit 0; ids return in manifest order
 RR="$(bash "$S/ff-run.sh" resume --run r2 --repo "$REPO" 2>/dev/null)"; RC=$?
 [ "$RC" = "0" ] && ok "ff-run: all-cached resume exits 0" || bad "ff-run: resume rc=$RC"
@@ -263,7 +263,7 @@ SB="$(bash "$S/ff-status.sh" --run r2 --repo "$REPO" 2>/dev/null | jq -c '{run,l
 # --- schema fence-strip (feature 3) --------------------------------------------
 # a result whose text is fenced JSON must still validate (--schema strips fences)
 jq -nc '{is_error:false,result:"```json\n{\"verdict\":\"ok\"}\n```"}' > "$REPO/.fleetflow/r1/fence.result.json"
-jq -nc '{type:"result",key:"v2:fence",id:"fence",brain:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
+jq -nc '{type:"result",key:"v2:fence",id:"fence",model:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
 FOUT="$(bash "$S/ff-collect.sh" --run r1 --id fence --repo "$REPO" --schema 2>/dev/null)"; FRC=$?
 [ "$FRC" = "0" ] && ok "collect: fence-strip lets fenced JSON validate" || bad "collect: fence-strip failed rc=$FRC"
 printf '%s' "$FOUT" | jq -e '.verdict=="ok"' >/dev/null && ok "collect: fence-strip returns inner JSON" || bad "collect: fence-strip output wrong"
@@ -273,7 +273,7 @@ printf '%s' "$FOUT" | jq -e '.verdict=="ok"' >/dev/null && ok "collect: fence-st
 # respawns a <id>-repair lane. The dry-run lane replies "DRYRUN" (not JSON), so
 # the repair gate fails -> exit 10; we assert the SEAM fired, not a happy path.
 jq -nc '{is_error:false,result:"this is not json"}' > "$REPO/.fleetflow/r1/rp.result.json"
-jq -nc '{type:"result",key:"v2:rp",id:"rp",brain:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
+jq -nc '{type:"result",key:"v2:rp",id:"rp",model:"sonnet",rc:0,artifact:"x"}' >> "$REPO/.fleetflow/r1/journal.jsonl"
 FLEETFLOW_REPAIR_DRYRUN=1 bash "$S/ff-collect.sh" --run r1 --id rp --repo "$REPO" --schema --repair >/dev/null 2>&1; RPRC=$?
 [ "$RPRC" = "10" ] && ok "collect: --repair exits 10 when corrected output invalid" || bad "collect: --repair rc=$RPRC (want 10)"
 [ -f "$REPO/.fleetflow/r1/rp.invalid.txt" ] && ok "collect: --repair saved <id>.invalid.txt" || bad "collect: invalid.txt missing"
@@ -281,6 +281,23 @@ NREP="$(jq -r 'select(.type=="result" and .id=="rp-repair")|.id' "$REPO/.fleetfl
 [ "$NREP" -ge 1 ] && ok "collect: --repair respawned rp-repair lane" || bad "collect: no repair lane spawned"
 grep -q 'corrected JSON' "$REPO/.fleetflow/r1/rp-repair.prompt-src.txt" 2>/dev/null \
   && ok "collect: --repair lane got the corrective prompt" || bad "collect: repair prompt missing"
+
+# --- brain->model rename: compatibility spine -----------------------------------
+# The wire contract renamed brain->model (alias) and model->model_id (resolved).
+# Two things must hold forever: the deprecated --brain flag still spawns, and
+# PRE-rename journals/archives still read back correctly.
+check "spawn: deprecated --brain alias still accepted" 0 \
+  bash "$S/ff-spawn.sh" --run rcompat --id al --brain sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run
+jq -e '.packets[]|select(.id=="al")|.model=="sonnet"' "$REPO/.fleetflow/rcompat/manifest.json" >/dev/null \
+  && ok "spawn: --brain alias writes the new model key" || bad "spawn: alias wrote wrong key"
+RDL="$REPO/.fleetflow/rlegacy"; mkdir -p "$RDL"; : > "$RDL/z.prompt.txt"
+printf '%s\n' \
+  '{"type":"started","key":"v2:z","id":"z","brain":"codex","model":"gpt-5.2-codex","phase":"build","v":"1.2.0"}' \
+  '{"type":"result","key":"v2:z","id":"z","brain":"codex","rc":0,"artifact":"x"}' > "$RDL/journal.jsonl"
+bash "$S/ff-status.sh" --run rlegacy --repo "$REPO" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="z")|.model=="codex" and .model_id=="gpt-5.2-codex" and .state=="done"' >/dev/null \
+  && ok "status: pre-rename journal reads back (brain->model, model->model_id)" \
+  || bad "status: legacy journal fallback broken"
 
 # --- FF_VERSION in journal (feature 4) -----------------------------------------
 grep -q '"v":"1.2.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.2.0" || bad "journal missing FF_VERSION"
@@ -296,16 +313,16 @@ grep -q 'retrying in 1s' "$S/ff-clean.sh" \
 
 # --- effort lever (feature 5): effort is part of the cache key ------------------
 EP="$TMP/effort.txt"; echo "effort test. FINAL REPLY: e" > "$EP"
-check "spawn: effort lane first run -> 0" 0 bash "$S/ff-spawn.sh" --run r3 --id e --brain sonnet --prompt-file "$EP" --repo "$REPO" --dry-run
-check "spawn: effort lane identical -> cached" 3 bash "$S/ff-spawn.sh" --run r3 --id e --brain sonnet --prompt-file "$EP" --repo "$REPO" --dry-run
+check "spawn: effort lane first run -> 0" 0 bash "$S/ff-spawn.sh" --run r3 --id e --model sonnet --prompt-file "$EP" --repo "$REPO" --dry-run
+check "spawn: effort lane identical -> cached" 3 bash "$S/ff-spawn.sh" --run r3 --id e --model sonnet --prompt-file "$EP" --repo "$REPO" --dry-run
 # changing ONLY the effort must bust the cache (effort is baked into the OPTS key)
-check "spawn: effort change -> cache miss" 0 bash "$S/ff-spawn.sh" --run r3 --id e --brain sonnet --prompt-file "$EP" --repo "$REPO" --dry-run --effort high
+check "spawn: effort change -> cache miss" 0 bash "$S/ff-spawn.sh" --run r3 --id e --model sonnet --prompt-file "$EP" --repo "$REPO" --dry-run --effort high
 jq -e '.packets[]|select(.id=="e")|.effort=="high"' "$REPO/.fleetflow/r3/manifest.json" >/dev/null \
   && ok "manifest records effort=high" || bad "manifest effort field wrong"
 
 # --- cache/tmp redirect (feature 7) --------------------------------------------
 CRT="$TMP/ffcache"; CDP="$TMP/cdp.txt"; echo "cache test. FINAL REPLY: c" > "$CDP"
-FLEETFLOW_CACHE_ROOT="$CRT" bash "$S/ff-spawn.sh" --run r4 --id c --brain sonnet --prompt-file "$CDP" --repo "$REPO" --dry-run >/dev/null 2>&1
+FLEETFLOW_CACHE_ROOT="$CRT" bash "$S/ff-spawn.sh" --run r4 --id c --model sonnet --prompt-file "$CDP" --repo "$REPO" --dry-run >/dev/null 2>&1
 [ -d "$CRT/r4-c" ] && ok "spawn: cache dir created under FLEETFLOW_CACHE_ROOT" || bad "spawn: cache dir not redirected to FLEETFLOW_CACHE_ROOT"
 
 # --- ff-clean.sh (feature 8): autoclean lanes + cache --------------------------
@@ -316,7 +333,7 @@ check "ff-clean: no such run -> 2" 2 bash "$S/ff-clean.sh" --run ghost --repo "$
 CLEANROOT="$TMP/cleancache"
 for lid in cleanlane keeplane dirtlane; do
   echo "clean-$lid task. FINAL REPLY: $lid" > "$TMP/clean-$lid.txt"
-  FLEETFLOW_CACHE_ROOT="$CLEANROOT" bash "$S/ff-spawn.sh" --run rc --id "$lid" --brain sonnet \
+  FLEETFLOW_CACHE_ROOT="$CLEANROOT" bash "$S/ff-spawn.sh" --run rc --id "$lid" --model sonnet \
     --prompt-file "$TMP/clean-$lid.txt" --repo "$REPO" --dry-run --worktree >/dev/null 2>&1
 done
 # keeplane gets a real commit (must survive every clean); dirtlane gets untracked junk
@@ -344,17 +361,17 @@ printf '%s' "$CL2" | awk -F'\t' '$1=="keeplane"&&$2=="kept"{f=1} END{exit !f}' &
 RD5="$REPO/.fleetflow/r5"; mkdir -p "$RD5"
 : > "$RD5/z.prompt.txt"   # mtime source for elapsed
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
-  '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
+  '{"type":"started","key":"v2:z","id":"z","model":"sonnet","phase":"build","v":"1.2.0"}' \
+  '{"type":"result","key":"v2:z","id":"z","model":"sonnet","rc":0,"artifact":"x"}' \
+  '{"type":"started","key":"v2:z","id":"z","model":"sonnet","phase":"build","v":"1.2.0"}' \
   > "$RD5/journal.jsonl"
 bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null \
   | jq -e '.lanes[]|select(.id=="z")|.state=="running"' >/dev/null \
   && ok "status: respawned lane (started,result,started) is running" || bad "status: respawned lane state wrong"
 # regression guard: same lane with result-last is still done (common path unchanged)
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
-  '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
+  '{"type":"started","key":"v2:z","id":"z","model":"sonnet","phase":"build","v":"1.2.0"}' \
+  '{"type":"result","key":"v2:z","id":"z","model":"sonnet","rc":0,"artifact":"x"}' \
   > "$RD5/journal.jsonl"
 bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null \
   | jq -e '.lanes[]|select(.id=="z")|.state=="done"' >/dev/null \
@@ -375,8 +392,8 @@ NOWS="$(date +%s)"
 if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
   RD6="$REPO/.fleetflow/r6"; mkdir -p "$RD6"
   printf '%s\n' \
-    '{"type":"started","key":"v2:w","id":"wedged","brain":"codex","phase":"build","v":"1.2.0"}' \
-    '{"type":"started","key":"v2:v","id":"livewire","brain":"codex","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:w","id":"wedged","model":"codex","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:v","id":"livewire","model":"codex","phase":"build","v":"1.2.0"}' \
     > "$RD6/journal.jsonl"
   : > "$RD6/wedged.prompt.txt"; : > "$RD6/livewire.prompt.txt"
   EV='{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}'
@@ -405,14 +422,14 @@ if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
     && ok "status: done lane never stalls" || bad "status: done lane wrongly stalled"
 
   # --- no live stream => no verdict (the false-positive guard) -------------------
-  # A brain whose artifact/stderr are created at launch and untouched until exit
+  # A model whose artifact/stderr are created at launch and untouched until exit
   # (grok --output-format json; any claude lane whose transcript we can't locate)
   # looks silent from birth. Flagging that stalled would condemn every healthy
   # long lane, so those report live_signal=false and are never stalled.
   RD7="$REPO/.fleetflow/r7"; mkdir -p "$RD7/wt-son"
   printf '%s\n' \
-    '{"type":"started","key":"v2:s","id":"son","brain":"sonnet","phase":"build","v":"1.2.0"}' \
-    '{"type":"started","key":"v2:g","id":"grk","brain":"grok","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:s","id":"son","model":"sonnet","phase":"build","v":"1.2.0"}' \
+    '{"type":"started","key":"v2:g","id":"grk","model":"grok","phase":"build","v":"1.2.0"}' \
     > "$RD7/journal.jsonl"
   for lid in son grk; do : > "$RD7/$lid.prompt.txt"; : > "$RD7/$lid.err"; : > "$RD7/$lid.result.json"; done
   touch -d "@$((NOWS-1200))" "$RD7"/son.* "$RD7"/grk.*
@@ -460,10 +477,10 @@ jq -e 'select(.type=="proc" and .id=="a") | has("pid") and has("winpid") and has
 # the proc record must not hijack state derivation (it is not state-bearing)
 RD8="$REPO/.fleetflow/r8"; mkdir -p "$RD8"; : > "$RD8/z.prompt.txt"
 printf '%s\n' \
-  '{"type":"started","key":"v2:z","id":"z","brain":"sonnet","phase":"build","v":"1.2.0"}' \
-  '{"type":"proc","id":"z","brain":"sonnet","pid":1,"winpid":2,"at":1}' \
-  '{"type":"result","key":"v2:z","id":"z","brain":"sonnet","rc":0,"artifact":"x"}' \
-  '{"type":"proc","id":"z","brain":"sonnet","pid":3,"winpid":4,"at":2}' > "$RD8/journal.jsonl"
+  '{"type":"started","key":"v2:z","id":"z","model":"sonnet","phase":"build","v":"1.2.0"}' \
+  '{"type":"proc","id":"z","model":"sonnet","pid":1,"winpid":2,"at":1}' \
+  '{"type":"result","key":"v2:z","id":"z","model":"sonnet","rc":0,"artifact":"x"}' \
+  '{"type":"proc","id":"z","model":"sonnet","pid":3,"winpid":4,"at":2}' > "$RD8/journal.jsonl"
 bash "$S/ff-status.sh" --run r8 --repo "$REPO" 2>/dev/null \
   | jq -e '.lanes[]|select(.id=="z")|.state=="done"' >/dev/null \
   && ok "status: trailing proc record does not hijack lane state" \
@@ -562,7 +579,7 @@ PY
 grep -q -- '--run-rgb' "$DASH" \
   && ok "dashboard: halo keyframe follows the theme" || bad "dashboard: hard-coded halo colour"
 grep -q 'PAL_DARK' "$DASH" && grep -q 'DARK.matches' "$DASH" \
-  && ok "dashboard: brain/repo palettes have dark variants" \
+  && ok "dashboard: model/repo palettes have dark variants" \
   || bad "dashboard: palettes are light-only"
 grep -q '\.mix {' "$DASH" \
   && bad "dashboard: dead .mix CSS is back" || ok "dashboard: no dead .mix CSS"
@@ -599,16 +616,16 @@ grep -q 'function worktreeLine' "$DASH" \
 grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
   && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
   || bad "dashboard: no build marker"
-# Every brain ff-spawn accepts must appear in the capability matrix, or the view
+# Every model ff-spawn accepts must appear in the capability matrix, or the view
 # claims a capacity inventory it does not actually cover.
 FLEETMISS=""
 for b in glm codex grok pi sonnet opus haiku fable; do
   grep -q "k:\"$b\"" "$DASH" || FLEETMISS="$FLEETMISS $b"
 done
-[ -z "$FLEETMISS" ] && ok "fleet view covers every spawnable brain" \
-  || bad "fleet view missing brain(s):$FLEETMISS"
+[ -z "$FLEETMISS" ] && ok "fleet view covers every spawnable model" \
+  || bad "fleet view missing model(s):$FLEETMISS"
 grep -q 'pi:.*#1f8a9c' "$DASH" \
-  && ok "dashboard: pi brain has a palette entry" || bad "dashboard: pi missing from BRAIN"
+  && ok "dashboard: pi model has a palette entry" || bad "dashboard: pi missing from BRAIN"
 # A --live probe spends real model calls; it must never be on the poll path.
 grep -q 'probeDoctor(false, false)' "$DASH" && grep -q 'probeDoctor(true, true)' "$DASH" \
   && grep -q 'id="ffProbe"' "$DASH" \
@@ -624,19 +641,19 @@ grep -q 'setInterval.*probeDoctor' "$DASH" \
   || ok "fleet view: no timer-driven capacity probe"
 
 # --- dashboard: pricing registry + cost honesty ---------------------------------
-# The self-reported cost column was brain-inconsistent (GLM prints an
+# The self-reported cost column was model-inconsistent (GLM prints an
 # Anthropic-rate figure for z.ai traffic; codex/grok print nothing). The
-# PRICING registry + per-brain basis is the fix; guard its invariants.
+# PRICING registry + per-model basis is the fix; guard its invariants.
 grep -q 'const PRICING' "$DASH" && grep -q 'function laneCost' "$DASH" \
   && ok "dashboard: pricing registry + laneCost present" \
   || bad "dashboard: pricing machinery missing"
-# every rated brain must appear in the registry (rates or explicit null)
+# every rated model must appear in the registry (rates or explicit null)
 PMISS=""
 for b in fable opus sonnet haiku glm codex grok pi; do
   grep -qE "^\s+$b:" "$DASH" || PMISS="$PMISS $b"
 done
-[ -z "$PMISS" ] && ok "pricing: every spawnable brain has a registry entry" \
-  || bad "pricing: registry missing brain(s):$PMISS"
+[ -z "$PMISS" ] && ok "pricing: every spawnable model has a registry entry" \
+  || bad "pricing: registry missing model(s):$PMISS"
 grep -q '"z.ai"' "$DASH" && grep -q '1.40' "$DASH" \
   && ok "pricing: GLM priced at z.ai rates, not Anthropic's" \
   || bad "pricing: z.ai rate card missing (GLM cost stays wrong)"
@@ -715,6 +732,14 @@ grep -q 'setInterval.*fetchRoost' "$DASH" \
 grep -q '\[self.bin, "widget"\]' "$SRV" && grep -q 'rw-host' "$DASH" \
   && ok "roost: ships its own widget, embedded verbatim (no redesign)" \
   || bad "roost: widget fragment not passed through"
+# auth refresh mutates the token store: click-gated endpoint, never a timer
+grep -q '/api/roost/refresh' "$SRV" && grep -q '"refresh", "--soon"' "$SRV" \
+  && grep -q 'id="roostAuth"' "$DASH" \
+  && ok "roost: auth refresh is a click-gated endpoint" \
+  || bad "roost: auth refresh missing"
+grep -q 'setInterval.*roost/refresh\|setInterval.*roostAuth' "$DASH" \
+  && bad "roost: auth refresh on a timer (mutates token store)" \
+  || ok "roost: no timer-driven auth refresh"
 
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by
@@ -746,15 +771,15 @@ grep -q "Find any bugs" "$IRD/a02deadbeef00000.prompt.txt" && ok "ff-import: pro
 jq -e '.is_error==false and (.result|fromjson|.verdict=="ok" and .score==7)' "$IRD/a01cb5f01fadf5610.result.json" >/dev/null \
   && ok "ff-import: result.json wraps native result (tojson)" || bad "ff-import: result.json shape wrong"
 NJ="$IRD/journal.jsonl"
-[ "$(jq -r 'select(.type=="result" and .id=="a01cb5f01fadf5610")|.brain' "$NJ")" = "native" ] \
-  && ok "ff-import: journal result brain=native" || bad "ff-import: journal brain wrong"
+[ "$(jq -r 'select(.type=="result" and .id=="a01cb5f01fadf5610")|.model' "$NJ")" = "native" ] \
+  && ok "ff-import: journal result model=native" || bad "ff-import: journal model wrong"
 # phase lives on the started record (same convention as ff-spawn), not the result
 [ "$(jq -r 'select(.type=="started" and .id=="a01cb5f01fadf5610")|.phase' "$NJ")" = "imported" ] \
   && ok "ff-import: journal phase=imported" || bad "ff-import: journal phase wrong"
 [ -z "$(jq -r 'select(.type=="result" and .id=="a02deadbeef00000")' "$NJ")" ] \
   && ok "ff-import: incomplete agent has no result record" || bad "ff-import: incomplete got a result record"
-jq -e --arg wf "$WFD" '.packets[]|select(.id=="a01cb5f01fadf5610")|.brain=="native" and .imported_from==$wf' "$IRD/manifest.json" >/dev/null \
-  && ok "ff-import: manifest packet brain=native + imported_from" || bad "ff-import: manifest packet wrong"
+jq -e --arg wf "$WFD" '.packets[]|select(.id=="a01cb5f01fadf5610")|.model=="native" and .imported_from==$wf' "$IRD/manifest.json" >/dev/null \
+  && ok "ff-import: manifest packet model=native + imported_from" || bad "ff-import: manifest packet wrong"
 # nothing to import -> exit 3
 WFE="$TMP/wf_empty"; mkdir -p "$WFE"; : > "$WFE/journal.jsonl"
 check "ff-import: empty wf journal -> 3" 3 bash "$S/ff-import.sh" --wf "$WFE" --run imp2 --repo "$REPO"

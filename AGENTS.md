@@ -23,7 +23,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
 | `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-import` (bash, Skill Resource Protocol) + `ff-serve.py` (dashboard server) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
-| `references/` | worker contracts (per-brain launch/collect/auth), native Workflow extraction notes, model routing |
+| `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `tests/` | `run.sh` — the one gate; run it before landing anything |
 
 ## Landmines
@@ -72,18 +72,26 @@ operational playbook — read it first; this file only carries repo mechanics.
   a test asserts there is no `setInterval` driving it.
 - **The dashboard's Fleet view carries a hand-maintained capability matrix**
   (`const HARNESS`). It encodes contracts that live in prose — sandbox posture,
-  whether a brain may self-commit, concurrency ceilings — and that no run
-  artifact reports. When a brain's contract changes in SKILL.md, change it there
-  in the SAME commit; a test asserts every spawnable brain appears in it.
+  whether a model may self-commit, concurrency ceilings — and that no run
+  artifact reports. When a model's contract changes in SKILL.md, change it there
+  in the SAME commit; a test asserts every spawnable model appears in it.
 - **The dashboard's `const PRICING` registry is hand-maintained** (like
-  `HARNESS`): per-brain $/MTok rates verified against provider pricing pages,
+  `HARNESS`): per-model $/MTok rates verified against provider pricing pages,
   with the verification date stamped in the file. When a provider ships new
-  rates or fleetflow gains a brain, update the registry (and the `PLANS` tier
+  rates or fleetflow gains a model, update the registry (and the `PLANS` tier
   table — plan lanes show a BLENDED share of the monthly fee, never $0)
   in the same commit — a stale rate silently mis-prices every ≈ estimate.
-  Tests assert every spawnable brain has an entry, GLM is priced at z.ai
+  Tests assert every spawnable model has an entry, GLM is priced at z.ai
   rates, estimates carry the `≈` marker, and no native `alert`/`confirm`/
   `prompt` dialog exists anywhere in the page.
+- **The `brain`→`model` rename (2026-08-05) left a load-bearing fallback
+  order.** Legacy journal `started` records carry BOTH `brain` (alias) and
+  `model` (launch id), so alias readers must prefer `brain` when present
+  (`.brain // .model`); reversing that reads a launch id as an alias.
+  Post-rename records write `model` (alias) + `model_id` (launch id). The
+  external formats ff-status scans (claude session transcripts, codex event
+  streams) still key on `"model"` — their regexes were deliberately NOT
+  renamed. A legacy-journal test pins the round trip.
 - **Dashboard `localStorage` keys are `ffd.*`, the monitor's are `ff.*`.** They
   are served from one origin and `ff.sort` means different things to each; the
   split is load-bearing, not cosmetic.

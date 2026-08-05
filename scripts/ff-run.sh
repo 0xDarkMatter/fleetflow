@@ -90,18 +90,20 @@ N="$(printf '%s' "$PACKETS" | jq -r 'length' 2>/dev/null)"
 [ "${N:-0}" -gt 0 ] 2>/dev/null || { err "manifest has no packets to replay"; exit 2; }
 
 err "resume: replaying $N packet(s) from $MANIFEST (sequential)"
-err "  #   id                       brain     status"
+err "  #   id                       model     status"
 err "  --  -----------------------  --------  --------"
 RESULTS="[]"
 ANY_FAIL=0
 i=0
 while [ "$i" -lt "$N" ]; do
   pid="$(printf '%s' "$PACKETS" | jq -r ".[$i].id")"
-  pbrain="$(printf '%s' "$PACKETS" | jq -r ".[$i].brain")"
+  # legacy manifests wrote `brain`; packets never carried a launch-model key,
+  # so the plain fallback is unambiguous here
+  pmodel="$(printf '%s' "$PACKETS" | jq -r ".[$i] | (.model // .brain)")"
   # imported native packets are terminal facts, not replayable ("native" is not a
-  # spawnable brain - ff-spawn rejects it). ff-run resume SKIPS them; to continue
-  # from an imported result, spawn a fresh lane with a real brain. See ff-import.
-  if [ "$pbrain" = "native" ]; then
+  # spawnable model - ff-spawn rejects it). ff-run resume SKIPS them; to continue
+  # from an imported result, spawn a fresh lane with a real model. See ff-import.
+  if [ "$pmodel" = "native" ]; then
     err "  $((i+1))   $(printf '%-23s' "$pid")  native     imported (skipped)"
     RESULTS="$(jq -nc --argjson R "$RESULTS" --arg id "$pid" --arg s "imported" --argjson rc 0 \
       '$R + [{id:$id,status:$s,rc:$rc}]')"
@@ -117,7 +119,7 @@ while [ "$i" -lt "$N" ]; do
   # the literal value rather than ${pwt:+...} (which would always fire).
   WT_FLAG=""; [ "$pwt" = "true" ] && WT_FLAG="1"
 
-  bash "$SPAWN" --run "$RUN" --id "$pid" --brain "$pbrain" --phase "$pphase" \
+  bash "$SPAWN" --run "$RUN" --id "$pid" --model "$pmodel" --phase "$pphase" \
     --prompt-file "$ppf" --max-turns "$pmt" --repo "$REPO" \
     ${WT_FLAG:+--worktree} ${peff:+--effort "$peff"} ${psch:+--schema "$psch"} \
     >/dev/null 2>>"$RUNDIR/$pid.resume.err"
@@ -127,7 +129,7 @@ while [ "$i" -lt "$N" ]; do
     3) status="cached" ;;
     *) status="failed"; ANY_FAIL=1 ;;
   esac
-  err "  $((i+1))   $(printf '%-23s' "$pid")  $(printf '%-8s' "$pbrain")  $status${rc:+ (rc=$rc)}"
+  err "  $((i+1))   $(printf '%-23s' "$pid")  $(printf '%-8s' "$pmodel")  $status${rc:+ (rc=$rc)}"
   RESULTS="$(jq -nc --argjson R "$RESULTS" --arg id "$pid" --arg s "$status" --argjson rc "$rc" \
     '$R + [{id:$id,status:$s,rc:$rc}]')"
   i=$((i+1))

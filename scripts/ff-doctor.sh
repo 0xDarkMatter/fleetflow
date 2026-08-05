@@ -48,15 +48,15 @@ for bin in git jq sha256sum; do
   if command -v "$bin" >/dev/null; then say "bin-$bin" ok "found"; else say "bin-$bin" fail "missing"; FAIL=1; fi
 done
 if command -v claude >/dev/null; then say "bin-claude" ok "found"; else say "bin-claude" fail "missing"; FAIL=1; fi
-if command -v codex >/dev/null; then say "bin-codex" ok "$(codex --version 2>/dev/null | head -1)"; else say "bin-codex" advisory "missing - codex brain unavailable"; fi
+if command -v codex >/dev/null; then say "bin-codex" ok "$(codex --version 2>/dev/null | head -1)"; else say "bin-codex" advisory "missing - codex model unavailable"; fi
 GROK="${FLEETFLOW_GROK_BIN:-grok}"
-if command -v "$GROK" >/dev/null; then say "bin-grok" ok "$("$GROK" --version 2>/dev/null | head -1)"; else say "bin-grok" advisory "missing - grok brain unavailable"; fi
+if command -v "$GROK" >/dev/null; then say "bin-grok" ok "$("$GROK" --version 2>/dev/null | head -1)"; else say "bin-grok" advisory "missing - grok model unavailable"; fi
 PIBIN="${FLEETFLOW_PI_BIN:-pi}"
 # -f fallback matches ff-spawn: bash runs a .cmd shim but command -v rejects it
-if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then say "bin-pi" ok "pi $("$PIBIN" --version 2>/dev/null | head -1)"; else say "bin-pi" advisory "missing - pi brain unavailable (set FLEETFLOW_PI_BIN)"; fi
+if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then say "bin-pi" ok "pi $("$PIBIN" --version 2>/dev/null | head -1)"; else say "bin-pi" advisory "missing - pi model unavailable (set FLEETFLOW_PI_BIN)"; fi
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
-if [ -f "$FW" ]; then say "fleet-worker" ok "$FW"; else say "fleet-worker" advisory "not installed - glm brain unavailable"; fi
+if [ -f "$FW" ]; then say "fleet-worker" ok "$FW"; else say "fleet-worker" advisory "not installed - glm model unavailable"; fi
 
 # --- which windows.sandbox mode will codex lanes actually get? -----------------
 # Config read only (no execution) - the behavioural tripwire is in --live below.

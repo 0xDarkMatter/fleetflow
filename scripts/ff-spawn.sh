@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ff-spawn.sh - spawn one fleetflow worker lane (GLM / Codex / Anthropic brain).
+# ff-spawn.sh - spawn one fleetflow worker lane (GLM / Codex / Anthropic model).
 #
 # Creates the run dir + optional worktree lane, injects the guard preamble,
 # journals a hash-keyed started/result pair (native-Workflow-style replay
-# cache), launches the brain-appropriate process, and writes its artifacts.
+# cache), launches the model-appropriate process, and writes its artifacts.
 # stdout: the artifact path (data). stderr: progress chatter.
 #
 # Exit codes: 0 ok | 2 usage | 3 cache hit (cached artifact path on stdout)
@@ -15,17 +15,17 @@ FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
-Usage: ff-spawn.sh --run NAME --id ID --brain BRAIN --prompt-file FILE
+Usage: ff-spawn.sh --run NAME --id ID --model MODEL --prompt-file FILE
                    [--worktree] [--base BRANCH] [--repo PATH] [--max-turns N]
                    [--effort low|medium|high|max] [--schema FILE] [--no-guard]
                    [--force] [--dry-run]
 
   --run NAME       run name (groups lanes; [a-z0-9-]+)
   --id ID          lane id within the run ([a-z0-9-]+)
-  --brain BRAIN    glm | codex | grok | pi | sonnet | opus | haiku | fable
+  --model MODEL    glm | codex | grok | pi | sonnet | opus | haiku | fable
   --prompt-file F  packet file (guard preamble is prepended unless --no-guard)
   --phase NAME     progress-group label (default: build) - display only
-  --orchestrator M which brain is DRIVING this fleet (e.g. fable, opus). Nothing
+  --orchestrator M which model is DRIVING this fleet (e.g. fable, opus). Nothing
                    in the environment exposes it - a Claude Code session gives its
                    children CLAUDE_EFFORT and a session id but NOT its model - so
                    it must be passed, or set once via $FLEETFLOW_ORCHESTRATOR, or
@@ -35,16 +35,16 @@ Usage: ff-spawn.sh --run NAME --id ID --brain BRAIN --prompt-file FILE
   --repo PATH      repo root (default: git toplevel of cwd)
   --max-turns N    worker turn cap (default: 100)
   --effort LEVEL   reasoning effort lever: low|medium|high|max (default: unset =
-                   inherit the brain's own default). GLM -> FLEET_WORKER_EFFORT;
-                   claude brains -> --settings effortLevel; codex -> model_reasoning_effort.
+                   inherit the model's own default). GLM -> FLEET_WORKER_EFFORT;
+                   claude models -> --settings effortLevel; codex -> model_reasoning_effort.
                    Effort IS part of the cache key (different effort = different run).
   --schema FILE    JSON Schema for the final answer (codex: native
-                   --output-schema; other brains: appended to the prompt)
+                   --output-schema; other models: appended to the prompt)
   --no-guard       skip the guard preamble injection
   --force          ignore a journal cache hit and re-run
   --dry-run        do not launch a worker; write a stub result (for tests/planning)
 
-ENV (pi brain)
+ENV (pi model)
   FLEETFLOW_PI_BIN                 pi launcher (default: pi on PATH; point at a
                                    local install's pi.cmd, e.g. X:/Agents/Pi/pi.cmd)
   FLEETFLOW_PI_PROVIDER            provider passed to `pi --provider` (pi's
@@ -57,7 +57,7 @@ ENV (pi brain)
 ENV
   FLEETFLOW_ORCHESTRATOR           default for --orchestrator (set once per session)
 
-ENV (codex brain)
+ENV (codex model)
   FLEETFLOW_CODEX_MODEL            model passed to `codex exec -m`
   FLEETFLOW_CODEX_WINDOWS_SANDBOX  windows.sandbox override, Windows hosts only
                                    (default: unelevated - `elevated` needs a UAC
@@ -65,11 +65,11 @@ ENV (codex brain)
                                    to pass nothing and defer to ~/.codex/config.toml.
 
 EXAMPLES
-  ff-spawn.sh --run audit --id ts-refresh --brain glm --worktree \
+  ff-spawn.sh --run audit --id ts-refresh --model glm --worktree \
               --prompt-file packets/ts.txt
-  ff-spawn.sh --run audit --id dissent-1 --brain codex --effort high \
+  ff-spawn.sh --run audit --id dissent-1 --model codex --effort high \
               --prompt-file packets/refute.txt --schema verdict.schema.json
-  ff-spawn.sh --run audit --id judge --brain opus --effort max --prompt-file packets/judge.txt
+  ff-spawn.sh --run audit --id judge --model opus --effort max --prompt-file packets/judge.txt
 EOF
 }
 
@@ -98,7 +98,7 @@ abspath() {
 # DO NOT unwrap this as a "simplification".
 main() {
 
-RUN="" ID="" BRAIN="" PROMPT_FILE="" WORKTREE=0 BASE="main" REPO=""
+RUN="" ID="" MODEL="" PROMPT_FILE="" WORKTREE=0 BASE="main" REPO=""
 MAX_TURNS=100 SCHEMA="" GUARD=1 FORCE=0 DRYRUN=0 PHASE="build" EFFORT=""
 ORCHESTRATOR=""
 while [ $# -gt 0 ]; do
@@ -107,7 +107,10 @@ while [ $# -gt 0 ]; do
     --phase) PHASE="${2:-}"; shift 2 ;;
     --orchestrator) ORCHESTRATOR="${2:-}"; shift 2 ;;
     --id) ID="${2:-}"; shift 2 ;;
-    --brain) BRAIN="${2:-}"; shift 2 ;;
+    --model) MODEL="${2:-}"; shift 2 ;;
+    # deprecated alias from the brain->model rename; kept so pre-rename
+    # orchestrator prompts keep working
+    --brain) MODEL="${2:-}"; err "NOTE: --brain is deprecated, use --model"; shift 2 ;;
     --prompt-file) PROMPT_FILE="${2:-}"; shift 2 ;;
     --worktree) WORKTREE=1; shift ;;
     --base) BASE="${2:-}"; shift 2 ;;
@@ -123,7 +126,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-case "$BRAIN" in glm|codex|grok|pi|sonnet|opus|haiku|fable) ;; *) err "invalid --brain '$BRAIN'"; exit 2 ;; esac
+case "$MODEL" in glm|codex|grok|pi|sonnet|opus|haiku|fable) ;; *) err "invalid --model '$MODEL'"; exit 2 ;; esac
 case "$EFFORT" in ""|low|medium|high|max) ;; *) err "invalid --effort '$EFFORT' (low|medium|high|max)"; exit 2 ;; esac
 
 # --- Windows/Codex elevation trap (incident 2026-07-27, run bkv2p2) ------------
@@ -141,7 +144,7 @@ case "$EFFORT" in ""|low|medium|high|max) ;; *) err "invalid --effort '$EFFORT' 
 # or ="" (empty) to pass nothing and defer to the global config.
 # DO NOT remove this flag as "redundant" - it is the whole fix.
 CODEX_WINSANDBOX=""
-if [ "$BRAIN" = "codex" ]; then
+if [ "$MODEL" = "codex" ]; then
   case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*) CODEX_WINSANDBOX="${FLEETFLOW_CODEX_WINDOWS_SANDBOX-unelevated}" ;;
   esac
@@ -208,7 +211,7 @@ if [ "$GUARD" = 1 ]; then
   # Heartbeat clause (worktree lanes only) - rookery's `parcel progress`
   # pattern, filed down to one file: the worker appends a line per major step,
   # ff-status reads the mtime as a live stall signal. This is the ONLY liveness
-  # coverage for brains with no native stream (grok buffers --output-format
+  # coverage for models with no native stream (grok buffers --output-format
   # json to exit). Worktree-only because a non-worktree lane's cwd is the MAIN
   # checkout, shared with sibling lanes and the orchestrator - a heartbeat
   # there could not be attributed to a lane (same reasoning as ff-status's
@@ -226,8 +229,8 @@ fi
 printf '%s' "$PACKET" >> "$SENT"
 # codex and grok take a native structured-output flag (--output-schema /
 # --json-schema), so their schema is passed out-of-band, not appended to the
-# prompt. Every other brain gets the schema embedded and validated at collect.
-if [ -n "$SCHEMA" ] && [ "$BRAIN" != "codex" ] && [ "$BRAIN" != "grok" ]; then
+# prompt. Every other model gets the schema embedded and validated at collect.
+if [ -n "$SCHEMA" ] && [ "$MODEL" != "codex" ] && [ "$MODEL" != "grok" ]; then
   { echo; echo "FINAL REPLY MUST be a single JSON object valid against this schema:";
     cat "$SCHEMA"; } >> "$SENT"
 fi
@@ -237,18 +240,18 @@ fi
 # The env-selected model is part of the key too (added 2026-08-01): for codex/
 # grok/pi the model comes from FLEETFLOW_* env, not the prompt, so without it
 # two pi lanes on DIFFERENT providers running the same packet collided into one
-# cache entry (found benching pi across google/openai/zai). Anthropic brains
-# don't need it - their model IS the brain name, already hashed. NB: this
+# cache entry (found benching pi across google/openai/zai). Anthropic models
+# don't need it - their model IS the model name, already hashed. NB: this
 # invalidates pre-2026-08 journal keys for codex/grok lanes (they gain the
 # "|model=" suffix) - old runs replay live once, then re-cache.
 KEY_MODEL=""
-case "$BRAIN" in
+case "$MODEL" in
   codex) KEY_MODEL="${FLEETFLOW_CODEX_MODEL:-}" ;;
   grok)  KEY_MODEL="${FLEETFLOW_GROK_MODEL:-}" ;;
   pi)    KEY_MODEL="${FLEETFLOW_PI_PROVIDER:-}/${FLEETFLOW_PI_MODEL:-}" ;;
 esac
 OPTS="turns=$MAX_TURNS|wt=$WORKTREE|schema=$( [ -n "$SCHEMA" ] && basename "$SCHEMA" )|effort=$EFFORT|model=$KEY_MODEL"
-KEY="v2:$( { printf '%s\n' "$BRAIN"; cat "$SENT"; printf '%s' "$OPTS"; } | sha256sum | cut -d' ' -f1)"
+KEY="v2:$( { printf '%s\n' "$MODEL"; cat "$SENT"; printf '%s' "$OPTS"; } | sha256sum | cut -d' ' -f1)"
 JOURNAL="$RUNDIR/journal.jsonl"
 
 # --- run manifest (orchestrator-side packet metadata; ff-run replays it) ----
@@ -257,9 +260,9 @@ MANIFEST="$RUNDIR/manifest.json"
 # one canonicalizer for the whole script (also the aliasing check's comparator)
 prompt_abs() { abspath "$PROMPT_FILE"; }
 WT_JSON="false"; [ "$WORKTREE" = 1 ] && WT_JSON="true"
-MENTRY="$(jq -nc --arg id "$ID" --arg b "$BRAIN" --arg p "$PHASE" --arg pf "$(prompt_abs)" \
+MENTRY="$(jq -nc --arg id "$ID" --arg b "$MODEL" --arg p "$PHASE" --arg pf "$(prompt_abs)" \
   --argjson wt "$WT_JSON" --argjson mt "$MAX_TURNS" --arg e "$EFFORT" --arg s "${SCHEMA:-}" --arg k "$KEY" \
-  '{id:$id,brain:$b,phase:$p,prompt_file:$pf,worktree:$wt,max_turns:$mt,effort:$e,schema:$s,key:$k}')"
+  '{id:$id,model:$b,phase:$p,prompt_file:$pf,worktree:$wt,max_turns:$mt,effort:$e,schema:$s,key:$k}')"
 if [ ! -s "$MANIFEST" ]; then
   jq -nc --arg run "$RUN" --arg base "$BASE" --arg by "ff-spawn/$FF_VERSION" \
     --argjson entry "$MENTRY" --arg phase "$PHASE" --arg o "$ORCHESTRATOR" \
@@ -298,11 +301,11 @@ fi
 #
 # The exact model is journalled because for codex and grok it is otherwise
 # UNRECOVERABLE after the fact: their event streams carry no model field, so the
-# id exists only in this process's environment and dies with it. Claude-brain
+# id exists only in this process's environment and dies with it. Claude-model
 # workers self-report theirs in result.json's modelUsage, but recording it here
 # too means every lane can answer "what actually ran" the same way. Also display
 # metadata, also deliberately out of the cache key.
-# WHICH BRAIN RAN THE ORCHESTRATOR. Nothing in the environment exposes it - a
+# WHICH MODEL RAN THE ORCHESTRATOR. Nothing in the environment exposes it - a
 # Claude Code session publishes CLAUDE_EFFORT and a session id to its children but
 # NOT its model - so fleetflow has to be told, in this order:
 #   --orchestrator M  >  $FLEETFLOW_ORCHESTRATOR  >  what ff-doctor last probed
@@ -314,17 +317,17 @@ fi
 [ -n "$ORCHESTRATOR" ] || ORCHESTRATOR="$(cat "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null | tr -d '\r\n')"
 
 SPAWN_MODEL=""
-case "$BRAIN" in
+case "$MODEL" in
   codex) SPAWN_MODEL="${FLEETFLOW_CODEX_MODEL:-}" ;;
   grok)  SPAWN_MODEL="${FLEETFLOW_GROK_MODEL:-}" ;;
   pi)    SPAWN_MODEL="${FLEETFLOW_PI_PROVIDER:+$FLEETFLOW_PI_PROVIDER/}${FLEETFLOW_PI_MODEL:-}" ;;
   fable) SPAWN_MODEL="claude-fable-5" ;;
-  *)     SPAWN_MODEL="$BRAIN" ;;
+  *)     SPAWN_MODEL="$MODEL" ;;
 esac
-jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$BRAIN" --arg p "$PHASE" --arg v "$FF_VERSION" \
+jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$MODEL" --arg p "$PHASE" --arg v "$FF_VERSION" \
   --arg m "$SPAWN_MODEL" --arg o "$ORCHESTRATOR" \
-  '{type:"started",key:$k,id:$id,brain:$b,phase:$p,v:$v,
-    model:(if $m=="" then null else $m end),
+  '{type:"started",key:$k,id:$id,model:$b,phase:$p,v:$v,
+    model_id:(if $m=="" then null else $m end),
     orchestrator:(if $o=="" then null else $o end)}' >> "$JOURNAL"
 
 # --- reap anchor (2026-07-27: TaskStop left 5 orphaned codex.exe alive) --------
@@ -343,9 +346,9 @@ REAP_WINPID=""
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) REAP_WINPID="$(ps -W 2>/dev/null | awk -v p=$$ '$1==p {print $4; exit}')" ;;
 esac
-jq -nc --arg id "$ID" --arg b "$BRAIN" --argjson pid "$$" --arg w "${REAP_WINPID:-}" \
+jq -nc --arg id "$ID" --arg b "$MODEL" --argjson pid "$$" --arg w "${REAP_WINPID:-}" \
   --argjson at "$(date +%s)" \
-  '{type:"proc",id:$id,brain:$b,pid:$pid,
+  '{type:"proc",id:$id,model:$b,pid:$pid,
     winpid:(if $w=="" then null else ($w|tonumber) end),at:$at}' >> "$JOURNAL"
 
 # --- launch -------------------------------------------------------------------
@@ -366,7 +369,7 @@ EFF_JSON=""
 # archive the session transcript next to the artifact (best-effort, never fatal)
 archive_transcript() {
   local dest="$RUNDIR/$ID.transcript.jsonl" src="" sid enc
-  case "$BRAIN" in
+  case "$MODEL" in
     glm)
       src="$(ls -t "$CFGD"/projects/*/*.jsonl 2>/dev/null | head -1)"
       ;;
@@ -395,15 +398,15 @@ archive_transcript() {
 }
 
 if [ "$DRYRUN" = 1 ]; then
-  # the stub must match the brain's real envelope so collect can gate it:
-  # grok emits {text,stopReason,...} (no is_error); every other brain here
+  # the stub must match the model's real envelope so collect can gate it:
+  # grok emits {text,stopReason,...} (no is_error); every other model here
   # collects via the claude-style {is_error,result} envelope.
-  case "$BRAIN" in
+  case "$MODEL" in
     grok) jq -nc '{text:"DRYRUN",stopReason:"EndTurn"}' > "$ART" ;;
     *)    jq -nc '{is_error:false,result:"DRYRUN"}' > "$ART" ;;
   esac
 else
-  case "$BRAIN" in
+  case "$MODEL" in
     glm)
       FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
       [ -f "$FW" ] || { err "fleet-worker launcher not found ($FW)"; exit 5; }
@@ -454,8 +457,8 @@ else
       ;;
     pi)
       # earendil-works Pi (@earendil-works/pi-coding-agent) - one harness
-      # fronting 15+ providers, which makes this brain the fleet's WILDCARD
-      # slot: gemini/deepseek/zai/groq/... are env changes, not new brain code.
+      # fronting 15+ providers, which makes this model the fleet's WILDCARD
+      # slot: gemini/deepseek/zai/groq/... are env changes, not new model code.
       # Posture is GLM-class: NO sandbox, so the cage is the worktree lane +
       # guard preamble; and pi has NO --max-turns equivalent, so bounds are the
       # stall detector + orchestrator wall-clock patience. Headless pi never
@@ -517,10 +520,12 @@ else
       ;;
     sonnet|opus|haiku|fable)
       command -v claude >/dev/null || { err "claude CLI not found"; exit 5; }
-      MODEL="$BRAIN"; [ "$BRAIN" = "fable" ] && MODEL="claude-fable-5"
+      # CLAUDE_MODEL is the string handed to `claude -p --model` — the alias in
+      # $MODEL must survive untouched for the result journal record below.
+      CLAUDE_MODEL="$MODEL"; [ "$MODEL" = "fable" ] && CLAUDE_MODEL="claude-fable-5"
       ( cd "$WORKDIR" && \
         UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
-        claude -p --model "$MODEL" --output-format json --max-turns "$MAX_TURNS" \
+        claude -p --model "$CLAUDE_MODEL" --output-format json --max-turns "$MAX_TURNS" \
           --permission-mode "${FLEETFLOW_PERMISSION_MODE:-bypassPermissions}" \
           ${EFFORT:+--settings "$EFF_JSON"} \
         < "$SENT" \
@@ -530,8 +535,8 @@ else
   archive_transcript
 fi
 
-jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$BRAIN" --arg a "$ART" --argjson rc "$RC" \
-  '{type:"result",key:$k,id:$id,brain:$b,rc:$rc,artifact:$a}' >> "$JOURNAL"
+jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$MODEL" --arg a "$ART" --argjson rc "$RC" \
+  '{type:"result",key:$k,id:$id,model:$b,rc:$rc,artifact:$a}' >> "$JOURNAL"
 
 echo "$ART"
 if [ "$RC" -ne 0 ]; then err "worker exited rc=$RC (see $ERRF)"; exit 10; fi

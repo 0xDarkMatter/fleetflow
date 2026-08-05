@@ -23,7 +23,7 @@ A 7-day session-log audit (2026-06-28..07-05, all projects on this machine):
 Root cause is a default, not a decision: a Workflow `agent()` call **inherits
 the main-loop model and effort unless overridden**, and nobody sets overrides.
 On a Fable/Opus session, every "grep the logs and return JSON" stage runs on the
-most expensive brain available. The fix is one line per collect-stage.
+most expensive model available. The fix is one line per collect-stage.
 
 ## 2. The mechanism
 

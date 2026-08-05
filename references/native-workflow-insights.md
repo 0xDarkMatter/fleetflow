@@ -54,7 +54,7 @@ Key facts:
   Timestamps go in via `args`; randomness via index-varied prompts.
 
 **fleetflow port:** `ff-spawn` journals the same two record shapes into
-`.fleetflow/<run>/journal.jsonl`, keyed `v2:sha256(brain + "\n" + prompt + "\n" + opts)`.
+`.fleetflow/<run>/journal.jsonl`, keyed `v2:sha256(model + "\n" + prompt + "\n" + opts)`.
 Same corollary: keep timestamps/randomness out of packet prompts.
 
 ## 3. Control-flow doctrine [spec]
@@ -122,7 +122,7 @@ Verbatim-portable; the native spec's catalog:
 | Pattern | Mechanics | fleetflow note |
 |---|---|---|
 | **Adversarial verify** | N independent skeptics per finding, each prompted to REFUTE, default-refute on uncertainty, majority kills | make ≥1 skeptic a different provider — model diversity catches failure modes redundancy can't |
-| **Perspective-diverse verify** | distinct lenses (correctness/security/perf/repro) instead of N identical refuters | lens × brain grid is even stronger |
+| **Perspective-diverse verify** | distinct lenses (correctness/security/perf/repro) instead of N identical refuters | lens × model grid is even stronger |
 | **Judge panel** | N independent attempts from different angles, parallel judges score, synthesize from winner + graft runners-up | natural fit: Sonnet attempt vs Codex attempt, Opus judges |
 | **Loop-until-dry** | keep spawning finders until K consecutive rounds return nothing new; dedup vs *seen*, not vs *confirmed* (else judge-rejected findings reappear forever) | identical |
 | **Multi-modal sweep** | parallel agents each searching a *different way*; each blind to the others | identical |

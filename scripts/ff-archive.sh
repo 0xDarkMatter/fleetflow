@@ -33,8 +33,8 @@ Usage: ff-archive.sh --run NAME [--repo PATH] [--store FILE] [--dry-run]
   --dry-run     print the record to stdout WITHOUT appending it
 
 Writes one JSON line: run identity, wall-clock span, per-state lane counts,
-brain-consistent token totals, self-reported cost, and a per-lane digest
-(id, brain, phase, state, elapsed, tokens, commits, cost). Prompts, diffs, and
+model-consistent token totals, self-reported cost, and a per-lane digest
+(id, model, phase, state, elapsed, tokens, commits, cost). Prompts, diffs, and
 transcripts are NOT copied - this is an index of what happened, not a backup.
 
 ff-clean.sh archives automatically before it removes anything; call this
@@ -106,9 +106,9 @@ REC="$(printf '%s' "$STATUS" | jq -c \
       cost_usd: (if ($costed | length) > 0 then ([$costed[].cost_usd] | add) else null end),
       cost_lanes: ($costed | length),
       cost_partial: (($costed | length) < ($L | length)),
-      brains: ([$L[].brain] | unique),
+      models: ([$L[] | (.model // .brain)] | unique),
       phases: ([$L[].phase // "build"] | unique),
-      lanes: [$L[] | {id, brain, phase, state, elapsed_s, commits,
+      lanes: [$L[] | {id, model: (.model // .brain), phase, state, elapsed_s, commits,
                       tokens_total, tokens_out, cost_usd}]
     }')"
 

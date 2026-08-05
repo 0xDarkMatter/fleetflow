@@ -1,4 +1,4 @@
-# Worker Contracts — per-brain launch, gate, and auth
+# Worker Contracts — per-model launch, gate, and auth
 
 > Verified against installed binaries 2026-07-05: `codex-cli 0.125.0`,
 > Claude Code v2.1.x, fleet-worker (GLM-5.2 via z.ai). Re-verify flag maps on
@@ -166,9 +166,9 @@ binary and protocol, **not** a `claude -p` wrapper. Verified against
 earendil-works **Pi** (`@earendil-works/pi-coding-agent`; 0.83.0 verified
 2026-08-01, local install `X:\Agents\Pi` driven via `FLEETFLOW_PI_BIN=X:/Agents/Pi/pi.cmd`).
 A minimal agent harness fronting **15+ providers / hundreds of models** — which
-makes it the fleet's **wildcard brain**: gemini, deepseek, zai, groq, mistral,
+makes it the fleet's **wildcard model**: gemini, deepseek, zai, groq, mistral,
 openrouter… are `FLEETFLOW_PI_PROVIDER`/`FLEETFLOW_PI_MODEL` env changes, not
-new brain code. Also a genuinely third *harness* (its own read/bash/edit/write
+new model code. Also a genuinely third *harness* (its own read/bash/edit/write
 toolchain), so it doubles as cross-harness dissent alongside codex and grok.
 
 - **Launch**: `pi -p --mode json --no-extensions --no-skills
@@ -257,7 +257,7 @@ per-call override. Doctrine:
 --model claude-fable-5 --max-turns 1` call and prints
 `orchestrator	fable|opus` so a wrapper (or the user) can set the session model
 accordingly. Never route the orchestrator to GLM/Codex — synthesis and judging
-stay on the strongest available brain (the native tool's "never under-power a
+stay on the strongest available model (the native tool's "never under-power a
 judge", applied to yourself).
 
 ## 7. Uniform result layout
@@ -272,11 +272,11 @@ judge", applied to yourself).
 │                        #   ff-spawn truncates and rebuilds this file, so never
 │                        #   point --prompt-file at it — that aliased the input
 │                        #   to the output and destroyed the packet; exit 2 now.
-├── <id>.result.json     # claude JSON envelope (glm/anthropic brains) OR
-│                        #   grok envelope {text,stopReason,…} (grok brain)
-├── <id>.last.txt        # codex last-message (codex brain)
-├── <id>.events.jsonl    # codex --json event stream (codex brain)
-├── <id>.transcript.jsonl# archived session transcript (claude-brain lanes; best-effort)
+├── <id>.result.json     # claude JSON envelope (glm/anthropic models) OR
+│                        #   grok envelope {text,stopReason,…} (grok model)
+├── <id>.last.txt        # codex last-message (codex model)
+├── <id>.events.jsonl    # codex --json event stream (codex model)
+├── <id>.transcript.jsonl# archived session transcript (claude-model lanes; best-effort)
 ├── <id>.invalid.txt     # last failed schema output (only when --repair ran)
 ├── <id>.err             # stderr
 └── wt-<id>/             # the lane worktree (branch fleetflow/<run>/<id>)
@@ -289,10 +289,10 @@ gitignored; `ff-spawn` appends it to `.git/info/exclude` if absent.
 ## 8. Effort lever, cache redirect, transcript archiving (Wave 1)
 
 **Effort lever** (`ff-spawn --effort low|medium|high|max`). Default unset =
-inherit the brain's own. The mapping (effort IS part of the cache-key OPTS
+inherit the model's own. The mapping (effort IS part of the cache-key OPTS
 string, so changing only effort is a cache miss):
 
-| Brain | How effort is applied |
+| Model | How effort is applied |
 |---|---|
 | glm (fleet-worker) | `FLEET_WORKER_EFFORT=<v>` in the worker env |
 | codex (`codex exec`) | `-c model_reasoning_effort="<v>"` |
@@ -313,7 +313,7 @@ unelevated deletion and would otherwise block `git worktree remove` (the
 and pass the same value to `ff-clean` so it can reclaim the dirs.
 
 **Transcript archiving** (best-effort, never fails the lane). After a
-non-dry-run claude-brain lane, the session transcript is copied to
+non-dry-run claude-model lane, the session transcript is copied to
 `<rundir>/<id>.transcript.jsonl`:
 
 - **glm**: newest `projects/*/*.jsonl` under the worker's isolated config dir
