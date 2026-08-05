@@ -75,6 +75,14 @@ operational playbook — read it first; this file only carries repo mechanics.
   whether a brain may self-commit, concurrency ceilings — and that no run
   artifact reports. When a brain's contract changes in SKILL.md, change it there
   in the SAME commit; a test asserts every spawnable brain appears in it.
+- **The dashboard's `const PRICING` registry is hand-maintained** (like
+  `HARNESS`): per-brain $/MTok rates verified against provider pricing pages,
+  with the verification date stamped in the file. When a provider ships new
+  rates or fleetflow gains a brain, update the registry (and its `plans` map)
+  in the same commit — a stale rate silently mis-prices every ≈ estimate.
+  Tests assert every spawnable brain has an entry, GLM is priced at z.ai
+  rates, estimates carry the `≈` marker, and no native `alert`/`confirm`/
+  `prompt` dialog exists anywhere in the page.
 - **Dashboard `localStorage` keys are `ffd.*`, the monitor's are `ff.*`.** They
   are served from one origin and `ff.sort` means different things to each; the
   split is load-bearing, not cosmetic.

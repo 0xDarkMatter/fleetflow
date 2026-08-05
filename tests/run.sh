@@ -536,9 +536,16 @@ grep -q 'preventScroll' "$DASH" \
 grep -q 'const LS = k => "ffd\.' "$DASH" \
   && ok "dashboard: localStorage namespaced away from ff-monitor" \
   || bad "dashboard: localStorage key collision with monitor"
-grep -q 'data-toggle="__history__"' "$DASH" \
+# The history section's toggle key must be the literal the guards read
+# (`__history__`) — it now flows through the navSection helper, so assert the
+# call site rather than the rendered attribute.
+grep -q 'navSection("__history__"' "$DASH" \
   && ok "dashboard: history toggle key matches its guard" \
   || bad "dashboard: history toggle key mismatch (group will not fold)"
+# Accordion sections reuse the repo-group fold contract (shared collapsed set)
+grep -q 'const navSection' "$DASH" && grep -q 'navSection("__projects__"' "$DASH" \
+  && ok "dashboard: nav is sectioned (live/projects/history accordions)" \
+  || bad "dashboard: nav accordion sections missing"
 grep -q 'caret\[data-card\]' "$DASH" \
   && ok "dashboard: per-card caret is bound" || bad "dashboard: caret rendered but unbound"
 # The sparkline must render BEFORE <div class="body">, or collapsing a card
@@ -616,6 +623,56 @@ grep -q 'setInterval.*probeDoctor' "$DASH" \
   && bad "fleet view: live probe on a timer (spends model calls)" \
   || ok "fleet view: no timer-driven capacity probe"
 
+# --- dashboard: pricing registry + cost honesty ---------------------------------
+# The self-reported cost column was brain-inconsistent (GLM prints an
+# Anthropic-rate figure for z.ai traffic; codex/grok print nothing). The
+# PRICING registry + per-brain basis is the fix; guard its invariants.
+grep -q 'const PRICING' "$DASH" && grep -q 'function laneCost' "$DASH" \
+  && ok "dashboard: pricing registry + laneCost present" \
+  || bad "dashboard: pricing machinery missing"
+# every rated brain must appear in the registry (rates or explicit null)
+PMISS=""
+for b in fable opus sonnet haiku glm codex grok pi; do
+  grep -qE "^\s+$b:" "$DASH" || PMISS="$PMISS $b"
+done
+[ -z "$PMISS" ] && ok "pricing: every spawnable brain has a registry entry" \
+  || bad "pricing: registry missing brain(s):$PMISS"
+grep -q '"z.ai"' "$DASH" && grep -q '1.40' "$DASH" \
+  && ok "pricing: GLM priced at z.ai rates, not Anthropic's" \
+  || bad "pricing: z.ai rate card missing (GLM cost stays wrong)"
+# basis choice persists under the dashboard's ffd.* namespace, never ff.*
+grep -q '"ffd.pricing"' "$DASH" \
+  && ok "pricing: basis persisted under ffd.* namespace" \
+  || bad "pricing: basis key not namespaced (ffd.pricing)"
+# estimates must be visually distinct from invoices: the ≈ marker
+grep -q '"≈"' "$DASH" \
+  && ok "pricing: estimates carry the ≈ marker" \
+  || bad "pricing: estimates indistinguishable from reported cost"
+# the settings surface is a styled in-app modal — native dialogs are banned
+grep -qE 'window\.(alert|confirm|prompt)\(|[^.a-zA-Z](alert|confirm|prompt)\(' "$DASH" \
+  && bad "dashboard: native browser dialog present (alert/confirm/prompt)" \
+  || ok "dashboard: no native browser dialogs"
+grep -q 'id="cogbtn"' "$DASH" && grep -q 'modal-wrap' "$DASH" \
+  && ok "dashboard: cost settings cog + in-app modal present" \
+  || bad "dashboard: cost settings surface missing"
+
+# --- dashboard: FLEET / PROJECT / WAVE drill ------------------------------------
+grep -q 'function projectView' "$DASH" && grep -q 'function aggStats' "$DASH" \
+  && ok "dashboard: PROJECT drill level present" \
+  || bad "dashboard: project view missing"
+# repo header must be TWO controls: chevron folds, name drills into the project
+grep -q 'class="tgl" data-toggle' "$DASH" && grep -q '"repo:" + label' "$DASH" \
+  && ok "dashboard: repo name drills to project, chevron still folds" \
+  || bad "dashboard: repo header lost its drill or its fold control"
+# run cards on FLEET/PROJECT must click through to the wave
+grep -q 'card clickcard' "$DASH" \
+  && ok "dashboard: run cards click through to the wave" \
+  || bad "dashboard: run cards are dead ends"
+# breadcrumbs back up the hierarchy
+grep -q 'class="crumb" data-k=""' "$DASH" \
+  && ok "dashboard: breadcrumb back to the fleet level" \
+  || bad "dashboard: no breadcrumb up the drill hierarchy"
+
 # --- ff-serve: doctor endpoint ---------------------------------------------------
 SRV="$HERE/../scripts/ff-serve.py"
 grep -q '/api/doctor.json' "$SRV" \
@@ -629,6 +686,22 @@ grep -q 'threading.Thread(target=self._run' "$SRV" \
   || bad "ff-serve: live probe would block the request"
 python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$SRV" \
   && ok "ff-serve: parses" || bad "ff-serve: syntax error"
+
+# --- roost integration (optional capability, conditional section) ----------------
+grep -q '/api/roost.json' "$SRV" && grep -q 'class Roost' "$SRV" \
+  && ok "ff-serve: roost endpoint + cache present" || bad "ff-serve: roost endpoint missing"
+# absence of the binary is a capability gap, not an error — probed, never assumed
+grep -q 'shutil.which("roost")' "$SRV" \
+  && ok "ff-serve: roost availability probed, not assumed" \
+  || bad "ff-serve: roost binary not probed"
+grep -q 'threading.Thread(target=self._run, daemon=True)' "$SRV" \
+  && ok "ff-serve: roost probe is backgrounded" || bad "ff-serve: roost probe would block"
+grep -q 'function roostView' "$DASH" && grep -q 'roostDoc.available' "$DASH" \
+  && ok "dashboard: roost pane present and gated on availability" \
+  || bad "dashboard: roost pane missing or unconditional"
+grep -q 'setInterval.*fetchRoost' "$DASH" \
+  && bad "dashboard: roost on its own timer" \
+  || ok "dashboard: roost fetches are tick/click driven only"
 
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by

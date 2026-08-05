@@ -152,10 +152,28 @@
   .tbtn .cnt { margin-left:auto; }
 
   .repo { margin-bottom:3px; }
-  .repo-h { width:100%; text-align:left; background:none; border:0; cursor:pointer;
-    font-size:11px; color:var(--text-secondary); padding:4px 5px; border-radius:var(--r-md);
+  /* Accordion section headers (live now / projects / history / …): quieter than
+     repo rows, louder than nothing — they carve the sidebar into strata. */
+  .nsec { width:100%; display:flex; align-items:center; gap:5px; border:0;
+    background:none; cursor:pointer; font-size:10px; text-transform:uppercase;
+    letter-spacing:.07em; color:var(--text-muted); padding:7px 4px 4px;
+    border-top:1px solid var(--border); margin-top:7px; border-radius:0; }
+  .nsec:hover { color:var(--text-accent); }
+  .nsec svg.i { width:12px; height:12px; transition:transform .12s; }
+  .nsec .n { margin-left:auto; font-family:var(--font-mono); text-transform:none; }
+  /* The repo header is TWO controls, not one: the chevron folds the group, the
+     name drills into the PROJECT view. One button doing both meant the project
+     level had no entry point at all. */
+  .repo-h { width:100%; display:flex; gap:0; align-items:stretch; }
+  .repo-h .tgl { background:none; border:0; cursor:pointer; color:var(--text-muted);
+    padding:4px 3px 4px 5px; border-radius:var(--r-md); display:flex; align-items:center; }
+  .repo-h .tgl:hover { background:var(--surface-1); color:var(--text-accent); }
+  .repo-h .sel { flex:1; min-width:0; text-align:left; background:none; cursor:pointer;
+    font-size:11px; color:var(--text-secondary); padding:4px 5px;
+    border:1px solid transparent; border-radius:var(--r-md);
     display:flex; gap:6px; align-items:center; }
-  .repo-h:hover { background:var(--surface-1); }
+  .repo-h .sel:hover { background:var(--surface-1); }
+  .repo-h .sel.on { background:var(--surface-1); border-color:var(--border-accent); }
   .repo-h .nm { font-weight:600; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; letter-spacing:.01em; }
   .repo-h .dot { width:8px; height:8px; border-radius:50%; flex:none; }
@@ -256,6 +274,11 @@
   /* ── lane card - shape matched to the summon picker ──────────────────── */
   .card { background:var(--surface-2); border:1px solid var(--border);
     border-radius:var(--r-lg); padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+  .card.clickcard { cursor:pointer; }
+  .card.clickcard:hover { border-color:var(--border-strong); }
+  .crumb { display:inline-flex; align-items:center; gap:5px; border:0; background:none;
+    cursor:pointer; color:var(--text-accent); font-size:11px; padding:2px 6px 2px 0; }
+  .crumb:hover { text-decoration:underline; }
   .card.is-stalled { border-color:var(--warn); }
   .card.is-failed { border-color:var(--bad); }
   .hd { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; row-gap:5px; }
@@ -348,6 +371,45 @@
   .chk .dt { color:var(--text-muted); margin-left:auto; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
 
+  /* ── settings modal (pricing basis) ──────────────────────────────────── */
+  /* Styled in-app modal, NEVER window.confirm/prompt: native dialog chrome
+     ignores every token on this page and reads as a defect. */
+  .modal-wrap { position:fixed; inset:0; z-index:40; display:none;
+    align-items:flex-start; justify-content:center; padding:52px 14px 20px;
+    background:color-mix(in srgb, var(--bg) 55%, transparent); }
+  .modal-wrap.on { display:flex; }
+  .modal { background:var(--surface-2); border:1px solid var(--border-strong);
+    border-radius:var(--r-lg); max-width:560px; width:100%; max-height:calc(100vh - 80px);
+    overflow-y:auto; padding:16px 18px 18px; box-shadow:0 12px 40px rgba(0,0,0,.25); }
+  .modal h3 { font-size:15px; font-weight:600; display:flex; align-items:center; gap:7px; }
+  .modal .sub { color:var(--text-muted); font-size:11px; margin:4px 0 12px; line-height:1.5; }
+  .modal .x { margin-left:auto; border:0; background:transparent; cursor:pointer;
+    color:var(--text-muted); font-size:16px; padding:2px 6px; border-radius:var(--r-sm); }
+  .modal .x:hover { background:var(--surface-1); color:var(--text-accent); }
+  .prow { display:flex; align-items:center; gap:8px; padding:7px 2px;
+    border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .prow .nm { font-weight:600; font-size:12px; width:64px; flex:none; }
+  .prow .rate { font-family:var(--font-mono); font-size:10px; color:var(--text-muted);
+    width:100%; padding-left:87px; }
+  .prow label { font-size:11px; color:var(--text-secondary); display:inline-flex;
+    align-items:center; gap:4px; cursor:pointer; padding:2px 7px;
+    border:1px solid var(--border); border-radius:var(--r-pill); }
+  .prow label:has(input:checked) { border-color:var(--border-accent);
+    color:var(--text-accent); font-weight:600; background:var(--surface-1); }
+  .prow input { accent-color:var(--run); margin:0; }
+  .modal .note { color:var(--text-muted); font-size:11px; margin-top:10px; line-height:1.5; }
+
+  /* usage meter for the roost account pane */
+  .meter { flex:1; min-width:70px; height:6px; background:var(--surface-1);
+    border:1px solid var(--border); border-radius:var(--r-pill); overflow:hidden; }
+  .meter i { display:block; height:100%; border-radius:var(--r-pill); }
+  .mrow { display:flex; align-items:center; gap:8px; font-size:11px;
+    color:var(--text-secondary); }
+  .mrow .lbl { width:52px; flex:none; color:var(--text-muted); font-size:10px;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .mrow .pct { width:34px; flex:none; text-align:right; font-family:var(--font-mono); }
+  .mrow .rst { color:var(--text-muted); font-size:10px; white-space:nowrap; }
+
   .empty { color:var(--text-muted); padding:32px 4px; text-align:center; line-height:1.7; }
   /* A 7-column table cannot fit a 440px preview pane, and without this the whole
      PAGE scrolled sideways - every card and the top bar dragged along with it.
@@ -388,6 +450,9 @@
   <button class="topbtn" id="fleetbtn" aria-pressed="false"
     title="harnesses, models, and live capacity — what this machine can run">
     <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>fleet</button>
+  <button class="topbtn" id="cogbtn" aria-label="Cost settings"
+    title="cost settings — pick the pricing basis (API rates / subscription plan / self-reported) per brain">
+    <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>costs</button>
   <div class="totals" id="totals">connecting…</div>
   <span class="stamp mono" id="stamp"></span>
 </div>
@@ -423,6 +488,7 @@
   </aside>
   <main id="main"><div class="empty">loading…</div></main>
 </div>
+<div class="modal-wrap" id="modalwrap" role="dialog" aria-modal="true" aria-label="Cost settings"></div>
 
 <script>
 "use strict";
@@ -434,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-01 · quiet-footer";
+const PAGE_BUILD = "2026-08-05 · dash-polish";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -445,7 +511,10 @@ const tok = n => !n ? "—" : n >= 1e9 ? (n/1e9).toFixed(2)+"B" : n >= 1e6 ? (n/
   : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n);
 const usd = v => v == null ? "—" : v >= 100 ? "$"+v.toFixed(0) : "$"+v.toFixed(2);
 const nf  = n => (n||0).toLocaleString("en-US");
-const esc = t => (t||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* String() first: callers pass numbers and occasionally structured objects
+   (a roost profile's `error` is a dict) — `.replace` on those threw and took
+   the whole render down. Escaping must never be the thing that crashes. */
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* Inline SVG instead of an icon webfont - this page is served standalone under a
    strict no-external-assets rule. Same glyph vocabulary as the summon picker's
@@ -463,6 +532,7 @@ const ICO = {
   alert:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   db:'<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  key:'<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 19 4m-3 1 3 3m-6 0 2 2"/>',
 };
 const ico = (n, cls) => `<svg class="i ${cls||""}" viewBox="0 0 24 24" aria-hidden="true">${ICO[n]||""}</svg>`;
 const chip = (icon, val, lbl, cls) =>
@@ -574,6 +644,188 @@ const save = () => { localStorage.setItem(LS("sort"), sortMode);
   localStorage.setItem(LS("flipped"), JSON.stringify([...flipped]));
   localStorage.setItem(LS("seeded"), "1"); };
 
+/* ── pricing: what a lane actually cost ──────────────────────────────────── */
+/* WHY THIS EXISTS: the numbers the workers self-report are not comparable.
+   claude-family workers print total_cost_usd at Anthropic API rates - accurate
+   IF you pay per-token, meaningless if the account is on a flat Claude Max
+   plan. A GLM lane's figure is the Claude CLI pricing z.ai traffic at
+   ANTHROPIC rates - 2-5x what z.ai actually charges. Codex and grok print
+   nothing at all. Summing those as one "cost" column was the bug this
+   registry fixes: every brain now gets an explicit pricing BASIS the operator
+   picks in the settings cog, and every figure on the page says which kind it
+   is - reported ($x), estimated (≈$x), or plan-covered (plan).
+
+   RATE PROVENANCE (hand-verified 2026-08-05 - re-verify when a provider
+   ships new models; units are $ per MILLION tokens):
+     anthropic  platform.claude.com/docs/en/pricing - Fable 10/50, Opus 5/25,
+                Sonnet 3/15 (intro 2/10 through 2026-08-31 not applied here),
+                Haiku 1/5; cache READS 0.1x input. Cache WRITES bill 1.25x
+                input, which this estimate folds into `in` - so estimates run
+                a few % low on cache-heavy lanes. Self-reports include it.
+     z.ai       GLM-5.2 1.40 in / 0.26 cached / 4.40 out
+     openai     GPT-5.2-Codex 1.75 in / 14.00 out; cached at the standard
+                OpenAI 90% cache discount (assumed, not published per-model)
+     xai        grok-4.5 2.00 / 0.50 cached / 6.00 out (<=200K tier; the >200K
+                surcharge tier is not modelled)
+   The shape is a stub for a future provider/plan registry: add a brain key
+   with {in,cached,out} and a plans entry, and the whole page picks it up. */
+const PRICING = {
+  verified: "2026-08-05",
+  rates: {
+    fable:  { in: 10,   cached: 1.00,  out: 50,   provider: "Anthropic" },
+    opus:   { in: 5,    cached: 0.50,  out: 25,   provider: "Anthropic" },
+    sonnet: { in: 3,    cached: 0.30,  out: 15,   provider: "Anthropic" },
+    haiku:  { in: 1,    cached: 0.10,  out: 5,    provider: "Anthropic" },
+    glm:    { in: 1.40, cached: 0.26,  out: 4.40, provider: "z.ai" },
+    codex:  { in: 1.75, cached: 0.175, out: 14,   provider: "OpenAI" },
+    grok:   { in: 2.00, cached: 0.50,  out: 6.00, provider: "xAI" },
+    /* pi is the wildcard harness - 15+ providers behind one alias, so there is
+       no rate that would be honest. native is a provenance label, not a brain. */
+    pi: null, native: null,
+  },
+  plans: {
+    fable: "Claude Max", opus: "Claude Max", sonnet: "Claude Max",
+    haiku: "Claude Max", glm: "GLM Coding plan", codex: "ChatGPT plan",
+    grok: null, pi: null, native: null,
+  },
+};
+const BASES = [
+  ["api",    "API rates",    "computed from this lane's tokens at the provider's published per-MTok rates"],
+  ["plan",   "plan-covered", "the account pays a flat subscription; marginal lane cost is $0 and shows as 'plan'"],
+  ["report", "self-reported","whatever the worker CLI printed (GLM prints an Anthropic-rate figure - wrong for z.ai)"],
+];
+/* Which bases make sense per brain: api needs a rate card, plan needs a plan. */
+function basesFor(brain) {
+  const out = [];
+  if (PRICING.rates[brain]) out.push("api");
+  if (PRICING.plans[brain]) out.push("plan");
+  out.push("report");
+  return out;
+}
+let pricingBasis = {};
+try { pricingBasis = JSON.parse(localStorage.getItem("ffd.pricing") || "{}"); } catch (e) {}
+const basisOf = brain => {
+  const legal = basesFor(brain);
+  const v = pricingBasis[brain];
+  return legal.includes(v) ? v : legal[0];   // default: api where a rate exists
+};
+const savePricing = () => localStorage.setItem("ffd.pricing", JSON.stringify(pricingBasis));
+
+/* One lane's cost under the chosen basis.
+   Returns {usd, kind} - kind: reported | estimated | plan | none.
+   Claude-family self-reports ARE API pricing (and include the cache-write
+   premium the estimate approximates), so under basis=api they are preferred
+   over our own arithmetic. GLM's self-report is explicitly NOT trusted under
+   basis=api - it is the Anthropic-rate figure, the exact bug being fixed.
+   History lanes keep only tokens_total/tokens_out, so estimates need the live
+   lane's tokens_in/tokens_cached and archived lanes fall back to none. */
+function laneCost(l) {
+  const brain = l.brain, basis = basisOf(brain), r = PRICING.rates[brain];
+  if (basis === "plan") return { usd: 0, kind: "plan" };
+  if (basis === "report")
+    return l.cost_usd != null ? { usd: l.cost_usd, kind: "reported" } : { usd: null, kind: "none" };
+  // basis === "api"
+  const anthropic = r && r.provider === "Anthropic";
+  if (anthropic && l.cost_usd != null) return { usd: l.cost_usd, kind: "reported" };
+  if (r && l.tokens_in != null && l.tokens_out != null) {
+    const est = ((l.tokens_in || 0) * r.in + (l.tokens_cached || 0) * r.cached
+               + (l.tokens_out || 0) * r.out) / 1e6;
+    return { usd: est, kind: "estimated" };
+  }
+  return { usd: null, kind: "none" };
+}
+/* Roll a set of lanes up into one figure + coverage counts. `kind` is
+   'reported' only when every covered lane was reported; any estimate taints
+   the total into 'estimated' so the ≈ marker can never launder a guess. */
+function costRollup(lanes) {
+  let usd = 0, reported = 0, estimated = 0, plan = 0, none = 0;
+  for (const l of lanes || []) {
+    const c = laneCost(l);
+    if (c.kind === "reported") { usd += c.usd; reported++; }
+    else if (c.kind === "estimated") { usd += c.usd; estimated++; }
+    else if (c.kind === "plan") plan++;
+    else none++;
+  }
+  const covered = reported + estimated;
+  const total = (lanes || []).length;
+  return { usd: covered ? usd : null, reported, estimated, plan, none,
+           covered, total,
+           kind: covered === 0 ? (plan === total && total ? "plan" : "none")
+               : estimated ? "estimated" : "reported",
+           partial: none > 0 };
+}
+/* Format a cost with its honesty marker: ≈ = contains estimates, * = some
+   lanes carry no figure at all (so the true spend is higher), plan = covered
+   by a flat subscription. */
+function costFmt(c) {
+  if (!c || c.kind === "none") return "—";
+  if (c.kind === "plan") return "plan";
+  return (c.kind === "estimated" ? "≈" : "") + usd(c.usd) + (c.partial ? "*" : "");
+}
+function costTitle(c) {
+  if (!c) return "";
+  const bits = [];
+  if (c.reported) bits.push(`${c.reported} lane(s) self-reported`);
+  if (c.estimated) bits.push(`${c.estimated} estimated from tokens at ${PRICING.verified} rates`);
+  if (c.plan) bits.push(`${c.plan} plan-covered (flat subscription)`);
+  if (c.none) bits.push(`${c.none} with no figure — true spend is higher`);
+  return bits.join(" · ");
+}
+
+/* ── settings modal ──────────────────────────────────────────────────────── */
+const SPAWNABLE = ["fable", "opus", "sonnet", "haiku", "glm", "codex", "grok", "pi"];
+function renderPricingModal() {
+  const rows = SPAWNABLE.map(b => {
+    const r = PRICING.rates[b], col = brainOf(b)[1], cur = basisOf(b);
+    const radios = basesFor(b).map(id => {
+      const meta = BASES.find(x => x[0] === id);
+      const label = id === "plan" ? (PRICING.plans[b] || "plan") : meta[1];
+      return `<label title="${esc(meta[2])}"><input type="radio" name="pb-${b}" value="${id}"
+        ${cur === id ? "checked" : ""}>${esc(label)}</label>`;
+    }).join("");
+    const rate = r
+      ? `${r.provider} · $${r.in}/M in · $${r.cached}/M cached · $${r.out}/M out`
+      : "no published rate — wildcard/unpriceable brain";
+    return `<div class="prow">
+      <span class="nm" style="color:${col}">${esc(b)}</span>${radios}
+      <span class="rate">${esc(rate)}</span></div>`;
+  }).join("");
+  return `<div class="modal">
+    <h3>${ico("coin")}cost basis per brain
+      <button class="x" id="modalclose" aria-label="Close">✕</button></h3>
+    <div class="sub">How each brain's spend is priced everywhere on this page.
+      <b>API rates</b> computes from the lane's own token counts at the provider's
+      published prices (verified ${esc(PRICING.verified)}). <b>plan-covered</b> is for
+      accounts on a flat subscription — marginal cost is $0. <b>self-reported</b>
+      trusts whatever the worker CLI printed.</div>
+    ${rows}
+    <div class="note">Figures marked <b>≈</b> contain estimates, <b>*</b> means some
+      lanes carry no figure at all (true spend is higher), and none of this is an
+      invoice — token counts (<span class="mono">tokens_total</span>) remain the only
+      brain-consistent comparison. GLM's self-report is the Claude CLI pricing z.ai
+      traffic at Anthropic rates, which is why its default basis is API rates.
+      Archived lanes keep no input/cache split, so they can't be re-estimated.</div>
+  </div>`;
+}
+function openPricingModal() {
+  const w = document.getElementById("modalwrap");
+  w.innerHTML = renderPricingModal();
+  w.classList.add("on");
+  document.getElementById("modalclose").onclick = closePricingModal;
+  w.onclick = ev => { if (ev.target === w) closePricingModal(); };
+  w.querySelectorAll("input[type=radio]").forEach(inp => inp.onchange = () => {
+    pricingBasis[inp.name.slice(3)] = inp.value;
+    savePricing();
+    // repaint the page behind the modal so the new basis shows immediately
+    lastHTML.delete(document.getElementById("main"));
+    if (doc) render();
+  });
+}
+function closePricingModal() {
+  const w = document.getElementById("modalwrap");
+  w.classList.remove("on"); w.innerHTML = "";
+}
+
 /* ── paint: the fix for the 3s repaint ───────────────────────────────────── */
 /* The pane used to be innerHTML-replaced on every poll whether or not anything
    had changed. On a fleet that is mostly idle - the common case, and the reason
@@ -679,6 +931,13 @@ function render() {
     ((doc.errors || []).length ? ` · ${doc.errors.length} dir(s) skipped` : "");
   document.getElementById("stamp").title =
     (doc.errors || []).map(e => `${e.path}: ${e.error}`).join("\n") || "";
+  // Tab-title badge: the cheapest alerting surface there is. A stalled lane is
+  // the state most likely to be burning money while looking like progress, so
+  // it earns the ⚠ even when the tab is in the background.
+  const runningRuns = doc.runs.filter(x => x.summary?.state === "running").length;
+  const stalledRuns = doc.runs.filter(x => x.summary?.state === "stalled").length;
+  document.title = (runningRuns || stalledRuns
+    ? `(${runningRuns ? runningRuns + "▶" : ""}${runningRuns && stalledRuns ? " " : ""}${stalledRuns ? stalledRuns + "⚠" : ""}) ` : "") + "fleetflow";
   const fb = document.getElementById("fleetbtn");
   fb.classList.toggle("on", selected === "fleet");
   fb.setAttribute("aria-pressed", String(selected === "fleet"));
@@ -713,7 +972,17 @@ function applyDeepLink() {
   let hits = doc.runs.filter(r =>
     (!wantRepo || normRepo(r) === wantRepo || normRepo(r).endsWith("/" + wantRepo.split("/").pop())) &&
     (!wantRun || (r.run || "").toLowerCase() === wantRun));
-  if (!hits.length) return;
+  if (!hits.length) {
+    // No live run for this repo — every wave may have been cleaned. Fall back to
+    // the PROJECT level so the deep-link still lands somewhere useful.
+    if (wantRepo && !wantRun) {
+      const h = (doc.history || []).find(x => norm(x.repo) === wantRepo ||
+        norm(x.repo).endsWith("/" + wantRepo.split("/").pop()));
+      if (h) { selected = "repo:" + (h.repo_label || h.repo);
+               location.hash = encodeURIComponent(selected); }
+    }
+    return;
+  }
   // in-flight first, then newest - "what is happening in this repo right now"
   hits.sort((a, b) =>
     (inflight(b.summary?.state) ? 1 : 0) - (inflight(a.summary?.state) ? 1 : 0) ||
@@ -762,7 +1031,8 @@ function sortRuns(list) {
   const x = list.slice();
   const S = r => r.summary || {};
   if (sortMode === "tokens")  x.sort((a,b) => (S(b).tokens_total||0)-(S(a).tokens_total||0));
-  else if (sortMode === "cost")    x.sort((a,b) => (S(b).cost_usd||0)-(S(a).cost_usd||0));
+  else if (sortMode === "cost")    x.sort((a,b) =>
+    (costRollup(b.lanes).usd||0)-(costRollup(a.lanes).usd||0));
   else if (sortMode === "lanes")   x.sort((a,b) => (S(b).lane_count||0)-(S(a).lane_count||0));
   else if (sortMode === "elapsed") x.sort((a,b) => (S(b).elapsed_s||0)-(S(a).elapsed_s||0));
   else if (sortMode === "recent")  x.sort((a,b) => (S(b).started||0)-(S(a).started||0));
@@ -787,49 +1057,91 @@ function renderNav() {
   const brainsSeen = new Set();
   for (const r of doc.runs) (r.summary?.brains || []).forEach(b => brainsSeen.add(b));
   for (const h of (doc.history || [])) (h.brains || []).forEach(b => brainsSeen.add(b));
+  /* Accordion section: same fold contract as a repo group (data-toggle key in
+     the shared `collapsed` set, `.repo.collapsed .runs` hides the body), so
+     paint(), persistence, and the collapse-all buttons all keep working.
+     Section keys are `__name__` — reserved namespace that can never collide
+     with a repo label (labels come from paths and never start with _). */
+  const navSection = (key, icon, title, count, body) =>
+    `<div class="repo ${collapsed.has(key) ? "collapsed" : ""}">
+      <button class="nsec" data-toggle="${key}">${ico("chev","chev")}
+        ${ico(icon)}<span>${title}</span><span class="n">${count}</span></button>
+      <div class="runs">${body}</div></div>`;
+
+  // Pinned capability destinations — never filtered, never folded: they
+  // describe the machine, not any subset of runs.
   let html = `<button class="runrow ${selected === "fleet" ? "on" : ""}" data-k="fleet"
-      style="margin-bottom:7px" title="harnesses, models, and live capacity">
+      title="harnesses, models, and live capacity">
       <div class="rl">${ico("cpu")}<span class="nm">fleet · harnesses</span>
         <span class="rs">${brainsSeen.size} in use</span></div></button>`;
+  // Conditional: only machines with the roost CLI installed get the section —
+  // the server said available:false everywhere else, so no dead menu entry.
+  if (roostDoc && roostDoc.available) {
+    const rc = roostDoc.counts || {};
+    html += `<button class="runrow ${selected === "roost" ? "on" : ""}" data-k="roost"
+      title="Claude Code OAuth profile health via roost (claude-lb)">
+      <div class="rl">${ico("key")}<span class="nm">roost · accounts</span>
+        <span class="rs">${rc.ok ?? "…"}${rc.count != null ? "/" + rc.count + " ok" : ""}</span></div></button>`;
+  }
+
+  // LIVE NOW — every in-flight run across every repo, one click deep. The same
+  // runs also appear under their project; the duplication IS the feature.
+  const liveRuns = [...groups.values()].flat().filter(r => inflight(r.summary?.state));
+  if (liveRuns.length) {
+    html += navSection("__live__", "activity", "live now", liveRuns.length,
+      liveRuns.map(r => {
+        const s = r.summary || {};
+        return `<button class="runrow live ${selected === runKey(r) ? "on" : ""}"
+          data-k="${esc(runKey(r))}">
+          <div class="rl"><span class="sq ${s.state}"></span>
+            <span class="nm mono">${esc(r.run)}</span>
+            <span class="rs">${esc(r.repo_label || "")}</span></div></button>`;
+      }).join(""));
+  }
+
+  // PROJECTS — the grouped-by-repo tree.
+  let repoHtml = "";
   for (const [label, runs] of groups) {
     const live = runs.filter(r => inflight(r.summary?.state)).length;
     const isC = collapsed.has(label);
-    html += `<div class="repo ${isC ? "collapsed" : ""}" data-g="${esc(label)}">
-      <button class="repo-h" data-toggle="${esc(label)}">
-        ${ico("chev","chev")}
-        <span class="dot" style="background:${repoColor(label)}"></span>
-        <span class="nm">${esc(label)}</span>
-        <span class="n${live ? " live" : ""}">${live ? live + " live" : runs.length}</span>
-      </button>
+    const pk = "repo:" + label;
+    repoHtml += `<div class="repo ${isC ? "collapsed" : ""}" data-g="${esc(label)}">
+      <div class="repo-h">
+        <button class="tgl" data-toggle="${esc(label)}"
+          aria-label="${isC ? "Expand" : "Collapse"} ${esc(label)}">${ico("chev","chev")}</button>
+        <button class="sel${selected === pk ? " on" : ""}" data-k="${esc(pk)}"
+          title="project view — every ${esc(label)} run and its archived history, rolled up">
+          <span class="dot" style="background:${repoColor(label)}"></span>
+          <span class="nm">${esc(label)}</span>
+          <span class="n${live ? " live" : ""}">${live ? live + " live" : runs.length}</span>
+        </button>
+      </div>
       <div class="runs">${runs.map(runRow).join("")}</div></div>`;
   }
-  // History is a peer group in the same tree, not a separate screen: a run that was
-  // live an hour ago and cleaned since should be one click away. Runs still on disk
-  // are suppressed so nothing appears twice while it is both live and archived.
+  if (groups.size) html += navSection("__projects__", "folder", "projects", groups.size, repoHtml);
+
+  // HISTORY — a peer section in the same tree, not a separate screen: a run that
+  // was live an hour ago and cleaned since should be one click away. Runs still
+  // on disk are suppressed so nothing appears twice while both live and archived.
   const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
   const hist = (doc.history || []).filter(h =>
     !onDisk.has((h.repo + "|" + h.run).toLowerCase()) &&
     matches(h.run + " " + (h.repo_label || "") + " " + h.repo) &&
     (!stateFilter.size || stateFilter.has(h.state)));
   if (hist.length) {
-    const isC = collapsed.has("__history__");
-    // data-toggle MUST equal the key the handler stores. It was `&#0;history`
-    // here while the guards read `__history__`, so clicking this header wrote a
-    // key nothing ever matched and the group refused to fold - while the
-    // collapse-all button, which adds `__history__` directly, folded it fine.
-    html += `<div class="repo ${isC ? "collapsed" : ""}">
-      <button class="repo-h" data-toggle="__history__">${ico("chev","chev")}
-        ${ico("db")}<span class="nm">history · cleaned up</span>
-        <span class="n">${hist.length}</span></button>
-      <div class="runs">${hist.map(h => `
+    // data-toggle MUST equal the key the handler stores (`__history__`) — a
+    // mismatched key here once made the group refuse to fold while the
+    // collapse-all button folded it fine.
+    html += navSection("__history__", "db", "history · cleaned up", hist.length,
+      hist.map(h => `
         <button class="runrow archived ${selected === histKey(h) ? "on" : ""}"
           data-k="${esc(histKey(h))}">
           <div class="rl"><span class="sq ${h.state}"></span>
             <span class="nm mono">${esc(h.run)}</span>
             <span class="rs">${tok(h.tokens_total)}</span></div>
           <div class="rl" style="margin-top:2px"><span class="rs" style="margin-left:14px">
-            ${esc(h.repo_label||"")} · ${h.lane_count} lanes · ${usd(h.cost_usd)}</span></div>
-        </button>`).join("")}</div></div>`;
+            ${esc(h.repo_label||"")} · ${h.lane_count} lanes · ${costFmt(costRollup(h.lanes))}</span></div>
+        </button>`).join(""));
   }
   if (!groups.size && !hist.length)
     html += `<div class="empty" style="padding:18px 4px">no runs match</div>`;
@@ -843,9 +1155,11 @@ function renderNav() {
     collapsed.has(g) ? collapsed.delete(g) : collapsed.add(g);
     save(); renderNav();
   });
-  document.querySelectorAll(".runrow").forEach(b => b.onclick = () => {
+  // Generic: anything in the nav carrying data-k selects that key — run rows,
+  // repo names (project view), the pinned fleet entry.
+  document.querySelectorAll("#nav [data-k]").forEach(b => b.onclick = () => {
     selected = b.dataset.k; location.hash = encodeURIComponent(selected);
-    document.body.classList.remove("nav-open");   // picking a run closes the drawer
+    document.body.classList.remove("nav-open");   // picking closes the drawer
     render();
   });
 }
@@ -1015,6 +1329,97 @@ async function probeDoctor(live, force) {
   if (doctorDoc && doctorDoc.building) setTimeout(() => probeDoctor(live, false), 4000);
 }
 
+/* ── roost: Claude OAuth profile health (optional capability) ────────────── */
+/* roost (claude-lb) is a per-machine optional install. The server probes for
+   the binary and answers {"available": false} when absent — that answer is
+   what keeps the whole section out of the nav, so a machine without roost
+   never sees a dead menu entry. Fetches are tick- and click-driven, never on
+   their own timer; roost itself caches probes, the server caches 60s. */
+let roostDoc = null, roostPending = false;
+async function fetchRoost(force) {
+  if (roostPending) return;
+  roostPending = true;
+  try {
+    const res = await fetch("api/roost.json" + (force ? "?force=1" : ""), { cache: "no-store" });
+    if (res.ok) roostDoc = await res.json();
+  } catch (e) { /* keep the last good pane; the main banner covers a dead server */ }
+  roostPending = false;
+  if (doc) { renderNav(); if (selected === "roost") renderDetail(); }
+  // A forced probe runs in the server's background; settle-poll the cache
+  // until it lands (bounded: building clears once the CLI returns).
+  if (roostDoc && roostDoc.available && roostDoc.building)
+    setTimeout(() => fetchRoost(false), 3000);
+}
+const resetIn = iso => {
+  if (!iso) return "";
+  const s = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  return s > 0 ? `resets in ${fmt(s)}` : "reset due";
+};
+const HEALTH_TAG = h =>
+  h === "ok" ? `<span class="tag run">ok</span>`
+  : h === "rate_limited" || h === "session_limit" || h === "weekly_limit"
+    ? `<span class="tag stall">${esc(h.replace("_", " "))}</span>`
+  : h ? `<span class="tag fail">${esc(h.replace("_", " "))}</span>` : "";
+function meterRow(label, pct, resetAt) {
+  if (pct == null) return "";
+  const col = pct >= 90 ? "var(--bad)" : pct >= 70 ? "var(--warn)" : "var(--ok)";
+  return `<div class="mrow"><span class="lbl">${esc(label)}</span>
+    <span class="meter"><i style="width:${Math.min(100, pct)}%;background:${col}"></i></span>
+    <span class="pct">${pct}%</span><span class="rst">${esc(resetIn(resetAt))}</span></div>`;
+}
+function roostView() {
+  const d = roostDoc;
+  if (!d) return `<div class="empty">checking for roost…</div>`;
+  if (!d.available) return `<div class="empty">roost is not installed on this machine</div>`;
+  const c = d.counts || {}, p = d.platform;
+  const ind = p?.indicator || "none";
+  const indCol = ind === "none" ? "var(--ok)" : ind === "minor" ? "var(--warn)" : "var(--bad)";
+  const limited = (c.rate_limited || 0) + (c.session_limit || 0) + (c.weekly_limit || 0);
+  const authBad = (c.auth_expired || 0) + (c.auth_dead || 0);
+  const cards = (d.profiles || []).map(pr => `
+    <div class="card${pr.health === "ok" ? "" : " is-stalled"}">
+      <div class="hd">${ico("key")}
+        <span class="proj" style="font-weight:600">${esc(pr.name || "?")}</span>
+        ${HEALTH_TAG(pr.health)}
+        ${pr.subscription_type ? `<span class="tag">${esc(pr.subscription_type)}</span>` : ""}
+      </div>
+      ${meterRow("session", pr.session_pct, pr.session_reset_at)}
+      ${meterRow("weekly", pr.weekly_pct, pr.weekly_reset_at)}
+      ${pr.error ? (e => `<div class="errline" title="${esc(e)}">${esc(e)}</div>`)(
+        typeof pr.error === "string" ? pr.error : JSON.stringify(pr.error)) : ""}
+    </div>`).join("");
+  return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <div class="rhead-r"><h2>roost · accounts</h2>
+      <span class="tag">Claude Code OAuth profiles</span>
+      ${d.building ? `<span class="tag">probing…</span>`
+        : d.age_s != null ? `<span class="tag">probed ${fmt(d.age_s)} ago</span>` : ""}</div>
+    ${p ? `<div class="path" style="word-break:normal"><span class="dstat" style="background:${indCol}"></span>
+      ${esc(p.description || "platform status unknown")}${p.active_incidents
+        ? ` · ${p.active_incidents} active incident(s)` : ""}${(p.degraded || []).length
+        ? ` · degraded: ${esc(p.degraded.join(", "))}` : ""}</div>` : ""}
+    <div class="stats mono">
+      <div class="stat ${c.ok ? "ok" : ""}"><b>${c.ok ?? "—"}</b><span>ok</span></div>
+      <div class="stat"><b>${c.count ?? "—"}</b><span>profiles</span></div>
+      ${limited ? `<div class="stat warn"><b>${limited}</b><span>limited</span></div>` : ""}
+      ${authBad ? `<div class="stat bad"><b>${authBad}</b><span>auth</span></div>` : ""}
+      ${c.network_error ? `<div class="stat bad"><b>${c.network_error}</b><span>network</span></div>` : ""}
+    </div>
+    <div class="treectl" style="border:0;padding:9px 0 0;margin:0">
+      <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
+        title="Re-run roost status --json now (local CLI, no model calls)">
+        ${ico("activity")}${d.building ? "probing…" : "re-probe accounts"}</button>
+      ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
+    </div>
+    <div class="note">Per-profile session/weekly usage as roost last measured it
+      (roost caches probes ~5 min; the server another 60s). Platform status comes from
+      status.claude.com via roost.</div>
+  </div>
+  <div class="phase"><div class="phase-h mono"><span>profiles</span>
+    <span class="n">${(d.profiles || []).length}</span></div>
+  <div class="deck">${cards || `<div class="empty">no profiles discovered</div>`}</div></div>`;
+}
+
 /* Roll every lane this machine has a record of - live runs AND archived history -
    up by brain and by resolved model. History lanes carry a reduced digest with no
    `model`, which is why the model table is explicitly labelled as covering runs
@@ -1022,20 +1427,21 @@ async function probeDoctor(live, force) {
 function fleetStats() {
   const brains = new Map(), models = new Map();
   const blank = () => ({ lanes:0, done:0, failed:0, stalled:0, running:0,
-                         tokens:0, out:0, cost:0, runs:new Set(), models:new Set(),
-                         laneTokens:[] });
+                         tokens:0, out:0, commits:0, runs:new Set(), models:new Set(),
+                         laneTokens:[], laneRefs:[] });
   const addLane = (l, runId, live) => {
     if (!l || !l.brain) return;
     const b = brains.get(l.brain) || brains.set(l.brain, blank()).get(l.brain);
     b.lanes++; b[l.state] = (b[l.state] || 0) + 1;
     b.tokens += l.tokens_total || 0; b.out += l.tokens_out || 0;
-    b.cost += l.cost_usd || 0; b.runs.add(runId);
+    b.commits += l.commits || 0; b.runs.add(runId);
     b.laneTokens.push(l.tokens_total || 0);
+    b.laneRefs.push(l);   // costRollup at render time — cost follows the chosen basis
     if (l.model) {
       b.models.add(l.model);
       const m = models.get(l.model) || models.set(l.model, { ...blank(), brain:l.brain }).get(l.model);
       m.lanes++; m.tokens += l.tokens_total || 0; m.out += l.tokens_out || 0;
-      m.cost += l.cost_usd || 0; m.runs.add(runId);
+      m.laneRefs.push(l); m.runs.add(runId);
       if (l.state === "failed") m.failed++;
     }
   };
@@ -1063,9 +1469,14 @@ function harnessCard(h, stats) {
     ? `<span class="dstat ${dot}"></span>${esc(worst.status)}
        <span class="gap" title="${esc(worst.name)}: ${esc(worst.detail)}">${esc(worst.name)}</span>`
     : `<span class="dstat"></span>not probed<span class="gap">run a capacity probe</span>`;
+  const sCost = s ? costRollup(s.laneRefs) : null;
   const seen = s
     ? `${chip("layers", nf(s.lanes), "lanes")}${chip("activity", tok(s.tokens), "tok")}
-       ${chip("coin", usd(s.cost))}${s.failed ? chip("alert", nf(s.failed), "failed", "warn") : ""}`
+       <span class="chip" title="${esc(costTitle(sCost))}">${ico("coin")}${costFmt(sCost)}</span>
+       ${s.commits ? chip("git", nf(s.commits), "commits") : ""}
+       ${s.commits && sCost && sCost.usd != null
+         ? `<span class="chip" title="rough efficiency: covered cost divided by commits landed by this harness's lanes">${ico("coin")}${usd(sCost.usd / s.commits)}<span style="color:var(--text-muted)">/commit</span></span>` : ""}
+       ${s.failed ? chip("alert", nf(s.failed), "failed", "warn") : ""}`
     : `<span class="chip" title="no lane on this machine has ever run on this brain">never used</span>`;
   // Same collapse mechanism as a lane card, and the same rule about WHAT
   // collapse may hide: the chart, the numbers and the capacity dot stay, the
@@ -1106,7 +1517,7 @@ function fleetView() {
   const inUse = [...stats.brains.keys()];
   const totalLanes = [...stats.brains.values()].reduce((a, b) => a + b.lanes, 0);
   const totalTok = [...stats.brains.values()].reduce((a, b) => a + b.tokens, 0);
-  const totalCost = [...stats.brains.values()].reduce((a, b) => a + b.cost, 0);
+  const totalCost = costRollup([...stats.brains.values()].flatMap(b => b.laneRefs));
   const avail = HARNESS.filter(h => { const w = harnessHealth(h);
     return w && w.status === "ok"; }).length;
   const d = doctorDoc;
@@ -1131,7 +1542,7 @@ function fleetView() {
         <td style="color:${brainOf(v.brain)[1]}">${esc(v.brain)}</td>
         <td class="num">${nf(v.lanes)}</td><td class="num">${nf(v.runs.size)}</td>
         <td class="num">${tok(v.tokens)}</td><td class="num">${tok(v.out)}</td>
-        <td class="num">${usd(v.cost)}</td></tr>`).join("")}
+        <td class="num">${costFmt(costRollup(v.laneRefs))}</td></tr>`).join("")}
     </tbody></table></div>
     <div class="note">Resolved model ids, as reported by the lanes themselves. Covers runs
       still on disk — archived history keeps a reduced lane digest that carries no model id,
@@ -1161,7 +1572,7 @@ function fleetView() {
       <div class="stat"><b>${stats.models.size}</b><span>models</span></div>
       <div class="stat"><b>${nf(totalLanes)}</b><span>lanes ever</span></div>
       <div class="stat"><b>${tok(totalTok)}</b><span>tokens</span></div>
-      <div class="stat"><b>${usd(totalCost)}</b><span>cost*</span></div>
+      <div class="stat" title="${esc(costTitle(totalCost))}"><b>${costFmt(totalCost)}</b><span>cost</span></div>
     </div>
     <div class="treectl" style="border:0;padding:9px 0 0;margin:0">
       <button class="tbtn" id="cExpand" title="Show every harness contract">
@@ -1173,9 +1584,10 @@ function fleetView() {
         ${ico("activity")}${probeLabel}</button>
       ${d?.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div>
-    <div class="note">* self-reported spend only — codex and grok lanes price nothing, so
-      the true figure is higher. Counts cover every run under the configured roots plus the
-      archived history. “available” reflects the last capacity probe, not the spec.</div>
+    <div class="note">${esc(costTitle(totalCost) || "no cost data yet")}. ≈ marks token-based
+      estimates at ${esc(PRICING.verified)} rates, * means uncosted lanes remain — never an
+      invoice. Basis per brain: ⚙ costs. Counts cover every run under the configured roots
+      plus the archived history. “available” reflects the last capacity probe, not the spec.</div>
   </div>
   <div class="phase"><div class="phase-h mono"><span>harnesses</span>
     <span class="n">${HARNESS.length}</span></div>
@@ -1214,6 +1626,14 @@ function renderDetail() {
       : `<div class="empty">no fleetflow runs found under:<br><span class="mono">
          ${esc((doc.roots||[]).join("  ·  ") || "(no roots)")}</span><br>
          roots come from <span class="mono">${esc(doc.roots_source || "?")}</span></div>`;
+  } else if (selected === "roost") {
+    // tick-driven staleness refresh — no timer of its own
+    if (roostDoc && roostDoc.available && !roostDoc.building
+        && roostDoc.age_s != null && roostDoc.age_s > 45 && !roostPending)
+      fetchRoost(false);
+    html = roostView();
+  } else if (selected.startsWith("repo:")) {
+    html = projectView(selected.slice(5));
   } else {
     const h = selected.startsWith("hist:")
       ? (doc.history || []).find(x => histKey(x) === selected) : null;
@@ -1247,42 +1667,141 @@ function bindCardControls(r) {
   });
   const probe = document.getElementById("ffProbe");
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
+  const rr = document.getElementById("roostRefresh");
+  if (rr) rr.onclick = () => { fetchRoost(true); };
+  const ex2 = document.getElementById("exportRun");
+  if (ex2 && r) ex2.onclick = () => {
+    // Client-side blob download — nothing leaves the machine, no new endpoint.
+    const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `fleetflow-${(r.run || "run").replace(/[^\w.-]/g, "_")}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  // Drill navigation inside the pane: run cards on the FLEET/PROJECT levels and
+  // breadcrumbs carry data-k, same contract as the sidebar rows.
+  document.querySelectorAll("#main [data-k]").forEach(b => b.onclick = ev => {
+    if (ev.target.closest(".caret")) return;   // the collapse caret is not navigation
+    selected = b.dataset.k; location.hash = encodeURIComponent(selected);
+    render();
+  });
 }
 
+/* Shared roll-up across a mixed set of live runs + archived history records.
+   Both carry the same token/elapsed field names (runs under .summary, history
+   at top level), which is what makes one aggregator serve FLEET and PROJECT. */
+function aggStats(runs, hist) {
+  const S = r => r.summary || {};
+  const lanes = runs.flatMap(r => r.lanes || []).concat(hist.flatMap(h => h.lanes || []));
+  const sum = f => runs.reduce((a, r) => a + (f(S(r)) || 0), 0)
+                 + hist.reduce((a, h) => a + (f(h) || 0), 0);
+  const failed = lanes.filter(l => l.state === "failed").length;
+  const brains = new Set();
+  runs.forEach(r => (S(r).brains || []).forEach(b => brains.add(b)));
+  hist.forEach(h => (h.brains || []).forEach(b => brains.add(b)));
+  return {
+    lanes, laneN: lanes.length, failed,
+    failPct: lanes.length ? Math.round(failed / lanes.length * 100) : 0,
+    tokens: sum(x => x.tokens_total), tokIn: sum(x => x.tokens_in),
+    tokCached: sum(x => x.tokens_cached), tokOut: sum(x => x.tokens_out),
+    runtime: sum(x => x.elapsed_s),
+    cost: costRollup(lanes), brains: [...brains].sort(),
+  };
+}
+function aggStatRow(a, live) {
+  return `<div class="stats mono">
+      ${live != null ? `<div class="stat ${live ? "ok" : ""}"><b>${live}</b><span>live</span></div>` : ""}
+      <div class="stat"><b>${nf(a.laneN)}</b><span>lanes</span></div>
+      <div class="stat"><b>${tok(a.tokens)}</b><span>tokens</span></div>
+      <div class="stat"><b>${tok(a.tokOut)}</b><span>output</span></div>
+      <div class="stat"><b>${tok(a.tokCached)}</b><span>cached</span></div>
+      <div class="stat" title="${esc(costTitle(a.cost))}"><b>${costFmt(a.cost)}</b><span>cost</span></div>
+      <div class="stat ${a.failed ? "bad" : ""}"
+        title="${a.failed} of ${a.laneN} lanes ended failed"><b>${a.failPct}%</b><span>failed</span></div>
+      <div class="stat" title="lane-hours summed across every run — wall-clock of the longest lane per run"><b>${fmt(a.runtime)}</b><span>runtime</span></div>
+    </div>`;
+}
+
+/* FLEET — the default level: everything on the machine, all repos, live +
+   archived. Click a project name for PROJECT, a run for WAVE. */
 function overview() {
+  const hist = doc.history || [];
   const live = doc.runs.filter(r => inflight(r.summary?.state));
-  const byTok = doc.runs.slice().sort((a,b) =>
-    (b.summary?.tokens_total||0) - (a.summary?.tokens_total||0)).slice(0, 30);
-  const cost = doc.runs.reduce((a,r) => a + (r.summary?.cost_usd || 0), 0);
+  const a = aggStats(doc.runs, hist);
+  const byTok = doc.runs.slice().sort((x,y) =>
+    (y.summary?.tokens_total||0) - (x.summary?.tokens_total||0)).slice(0, 30);
   const chart = columnChart(byTok.map(r => ({
     name: r.run, value: r.summary?.tokens_total || 0,
     color: repoColor(r.repo_label || r.repo), state: r.summary?.state })),
-    { label:"tokens per run · top 30", showX:false });
+    { label:"tokens per run · top 30 on disk", showX:false });
   return `<div class="rhead">
     <div class="rhead-r"><h2>${live.length ? live.length + " run" + (live.length>1?"s":"") + " in flight" : "fleet idle"}</h2>
-      <span class="tag">${doc.totals.runs} runs · ${doc.totals.repos} repos</span></div>
-    ${chart}
-    <div class="stats mono">
-      <div class="stat ${live.length?"ok":""}"><b>${live.length}</b><span>live</span></div>
-      <div class="stat"><b>${doc.totals.lanes||0}</b><span>lanes</span></div>
-      <div class="stat"><b>${tok(doc.totals.tokens_total)}</b><span>tokens</span></div>
-      <div class="stat"><b>${usd(cost)}</b><span>cost*</span></div>
-      <div class="stat"><b>${doc.totals.history_runs||0}</b><span>archived</span></div>
+      <span class="tag">fleet · everything on this machine</span>
+      <span class="tag">${doc.totals.runs} runs · ${doc.totals.repos} repos · ${doc.totals.history_runs||0} archived</span></div>
+    ${chart}${brandLegend(a.brains)}
+    ${aggStatRow(a, live.length)}
+    <div class="stats mono" style="margin-top:6px">
       ${doc.cache ? `<div class="stat ${doc.cache.hit_rate >= 0.9 ? "ok" : ""}"
         title="${doc.cache.hits} of ${doc.cache.hits + doc.cache.misses} runs served from cache this build — ${doc.cache.entries} entries on disk. A finished run whose directory has not changed is never re-read; this is the difference between a 29s build and a 15ms one."
         ><b>${Math.round((doc.cache.hit_rate ?? 0) * 100)}%</b><span>cache hit</span></div>` : ""}
     </div>
-    <div class="note">* summed from lanes that price their own turn — codex and grok
-      report none, so real spend is higher. Pick a run on the left for its lane grid.</div>
+    <div class="note">${esc(costTitle(a.cost))}. ≈ marks estimates, * means uncosted
+      lanes remain — basis per brain in ⚙ costs. Counts cover live runs AND archived
+      history. Click a project name on the left for its roll-up, a run for its lanes.</div>
   </div>` + (live.length ? `<div class="phase"><div class="phase-h mono"><span>in flight</span>
       <span class="n">${live.length}</span></div>
     <div class="deck">${live.map(runCard).join("")}</div></div>` : "");
 }
 
+/* PROJECT — one repo's runs + its archived history, rolled up. */
+function projectView(label) {
+  const runs = sortRuns(doc.runs.filter(r => (r.repo_label || r.repo) === label));
+  const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
+  const hist = (doc.history || []).filter(h =>
+    (h.repo_label || h.repo) === label &&
+    !onDisk.has((h.repo + "|" + h.run).toLowerCase()));
+  if (!runs.length && !hist.length)
+    return `<div class="empty">no runs recorded for <span class="mono">${esc(label)}</span>
+      — it may have been filtered out, renamed, or cleaned without archiving</div>`;
+  const repoPath = runs[0]?.repo || hist[0]?.repo || "";
+  const live = runs.filter(r => inflight(r.summary?.state)).length;
+  const a = aggStats(runs, hist);
+  const bars = runs.map(r => ({ name: r.run, value: r.summary?.tokens_total || 0,
+      color: repoColor(label), state: r.summary?.state }))
+    .concat(hist.map(h => ({ name: h.run, value: h.tokens_total || 0,
+      color: repoColor(label), state: h.state })));
+  const chart = columnChart(bars, { label: "tokens per run · on disk + archived", showX: bars.length <= 26 });
+  return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <div class="rhead-r"><h2><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${repoColor(label)}"></span> ${esc(label)}</h2>
+      <span class="tag">project</span>
+      <span class="tag">${runs.length} run${runs.length===1?"":"s"} on disk · ${hist.length} archived</span></div>
+    <div class="path mono">${ico("folder")}${esc(repoPath)}</div>
+    ${chart}${brandLegend(a.brains)}
+    ${aggStatRow(a, live)}
+    <div class="note">${esc(costTitle(a.cost) || "no cost data")}. Roll-up covers this
+      repo's runs still on disk plus its archived history. Click a run card for the
+      wave's lane grid.</div>
+  </div>
+  ${runs.length ? `<div class="phase"><div class="phase-h mono"><span>runs</span>
+      <span class="n">${runs.length}</span></div>
+    <div class="deck">${runs.map(runCard).join("")}</div></div>` : ""}
+  ${hist.length ? `<div class="phase"><div class="phase-h mono"><span>archived</span>
+      <span class="n">${hist.length}</span></div>
+    <div class="runs" style="padding:0">${hist.map(h => `
+      <button class="runrow archived" data-k="${esc(histKey(h))}">
+        <div class="rl"><span class="sq ${h.state}"></span>
+          <span class="nm mono">${esc(h.run)}</span>
+          <span class="rs">${h.lane_count} lanes · ${tok(h.tokens_total)} · ${costFmt(costRollup(h.lanes))}</span></div>
+      </button>`).join("")}</div></div>` : ""}`;
+}
+
 /* Run-level card, same shape as a lane card so the two nest visually. */
 function runCard(r) {
   const s = r.summary || {}, age = ageOf(r), col = repoColor(r.repo_label || r.repo);
-  return `<div class="card ${s.state==="running"?"is-running":s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}">
+  return `<div class="card clickcard ${s.state==="running"?"is-running":s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}"
+    data-k="${esc(runKey(r))}" role="link" title="open this wave's lane grid">
     <div class="hd"><span class="dot ${s.state}" style="background:${STATE_COLOR[s.state]||col}"></span>
       <span class="proj">${esc(r.repo_label || "")}</span>${stateTag(s.state, (s.idle_s||0)+age)}</div>
     <div class="ttl mono">${esc(r.run)}</div>
@@ -1292,7 +1811,7 @@ function runCard(r) {
       ${chip("layers", s.lane_count||0, "lanes")}
       ${chip("clock", fmt((s.elapsed_s||0) + (inflight(s.state)?age:0)))}
       ${chip("activity", tok(s.tokens_total), "tok")}
-      ${chip("coin", usd(s.cost_usd) + (s.cost_partial ? "*" : ""))}
+      ${chip("coin", costFmt(costRollup(r.lanes)))}
       ${(s.brains||[]).map(b => brandMark(b, brainOf(b)[1])).join("")}
     </div>
     <div class="dir" title="${esc(r.repo)}">${ico("folder")}${esc(r.repo)}</div>
@@ -1328,6 +1847,7 @@ function runDetail(r) {
         write. It will reappear on its own if it comes back.</div></div>`;
   }
   const s = r.summary || {}, age = ageOf(r), lanes = r.lanes || [];
+  const cr = costRollup(lanes);
   const stalledN = s.counts?.stalled || 0, failedN = s.counts?.failed || 0;
   const runningN = s.counts?.running || 0;
   const uncovered = lanes.filter(l => inflight(l.state) && !l.live_signal).length;
@@ -1337,12 +1857,15 @@ function runDetail(r) {
     { label:"tokens per lane", showX:true }) + brandLegend(s.brains);
 
   const head = `<div class="treectl" style="justify-content:flex-end;margin-bottom:10px">
+      <button class="tbtn" id="exportRun" title="Download this run's full status document (lanes, tokens, states) as JSON — what ff-status reported, plus the roll-up">${ico("file")}export json</button>
       <button class="tbtn" id="cExpand">${ico("chev")}expand all lanes</button>
       <button class="tbtn" id="cCollapse">${ico("chev")}collapse all lanes</button>
     </div>
     <div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <button class="crumb" data-k="${esc("repo:" + (r.repo_label || r.repo))}">${esc(r.repo_label || r.repo)}</button>
     ${orchBadge(s.orchestrator)}
-    <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2>
+    <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2><span class="tag">wave</span>
       ${stateTag(s.state, (s.idle_s||0)+age)}
       ${(s.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
         color:${brainOf(b)[1]};display:inline-flex;align-items:center;gap:4px;padding:1px 6px">
@@ -1357,14 +1880,14 @@ function runDetail(r) {
       <div class="stat"><b>${fmt((s.elapsed_s||0)+(inflight(s.state)?age:0))}</b><span>elapsed</span></div>
       <div class="stat"><b>${tok(s.tokens_total)}</b><span>tokens</span></div>
       <div class="stat"><b>${tok(s.tokens_out)}</b><span>output</span></div>
-      <div class="stat"><b>${usd(s.cost_usd)}</b><span>cost${s.cost_partial?"*":""}</span></div>
+      <div class="stat" title="${esc(costTitle(cr))}"><b>${costFmt(cr)}</b><span>cost</span></div>
       ${runningN ? `<div class="stat ok"><b>${runningN}</b><span>running</span></div>` : ""}
       ${stalledN ? `<div class="stat warn"><b>${stalledN}</b><span>stalled</span></div>` : ""}
       ${failedN  ? `<div class="stat bad"><b>${failedN}</b><span>failed</span></div>` : ""}
     </div>
-    ${s.cost_partial ? `<div class="note">* self-reported cost covers ${s.cost_lanes}/${s.lane_count}
-      lanes — codex and grok workers do not price their own turn, so the true spend is higher.
-      Token counts cover every lane and are the comparable figure.</div>` : ""}
+    ${cr.kind !== "reported" || cr.partial ? `<div class="note">${esc(costTitle(cr))}.
+      Cost basis per brain is set in the ⚙ costs dialog; token counts cover every lane
+      and are the comparable figure.</div>` : ""}
     ${uncovered ? `<div class="note">${ico("alert")} ${uncovered} in-flight lane(s) emit no live
       stream (grok, or claude lanes spawned without --worktree). For those the stall detector
       reports “cannot tell”, never “healthy”.</div>` : ""}
@@ -1421,6 +1944,10 @@ function laneCard(l, age) {
   const live = inflight(l.state) ? age : 0;
   const tot = Math.max(1, l.tokens_total || 0);
   const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
+  const lc = laneCost(l);
+  const lcTitle = lc.kind === "estimated" ? `estimated from tokens at ${PRICING.verified} API rates — not an invoice`
+    : lc.kind === "plan" ? `covered by ${PRICING.plans[l.brain] || "a flat plan"} — no marginal cost`
+    : lc.kind === "reported" ? "self-reported by the worker CLI" : "no cost figure for this lane";
   return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${isCollapsed(l.id)?" collapsed":""}">
     <div class="hd">
       ${brandMark(l.brain, col)}
@@ -1448,7 +1975,7 @@ function laneCard(l, age) {
       ${chip("git", nf(l.commits), "commits")}
       <span class="chip" title="${tok(l.tokens_in)} fresh input · ${tok(l.tokens_cached)} cache reads · ${tok(l.tokens_out)} output">
         ${ico("activity")}${tok(l.tokens_total)}<span style="color:var(--text-muted)">tok</span></span>
-      ${chip("coin", usd(l.cost_usd))}
+      <span class="chip" title="${esc(lcTitle)}">${ico("coin")}${costFmt(lc)}</span>
       ${freshPct >= 30 ? chip("alert", freshPct + "%", "fresh", "warn") : ""}
     </div>
     ${l.last_commit ? `<div class="dir" title="${esc(l.last_commit)}">${ico("git")}${esc(l.last_commit)}</div>` : ""}
@@ -1461,6 +1988,7 @@ function laneCard(l, age) {
 
 function historyCard(h) {
   const when = h.archived_at ? new Date(h.archived_at * 1000).toLocaleString() : "—";
+  const hc = costRollup(h.lanes);
   // A run can be archived and STILL on disk (ff-archive called directly rather than
   // by ff-clean). Claiming its files are gone when they are not would send someone
   // hunting for a directory that is right there.
@@ -1473,6 +2001,8 @@ function historyCard(h) {
     name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
     { label:"tokens per lane", showX:true }) + brandLegend(h.brains);
   return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <button class="crumb" data-k="${esc("repo:" + (h.repo_label || h.repo))}">${esc(h.repo_label || h.repo)}</button>
     <div class="rhead-r"><h2 class="mono">${esc(h.run)}</h2>
       <span class="tag">archived</span>${stateTag(h.state, 0)}
       ${(h.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
@@ -1484,11 +2014,11 @@ function historyCard(h) {
       <div class="stat"><b>${fmt(h.elapsed_s)}</b><span>elapsed</span></div>
       <div class="stat"><b>${tok(h.tokens_total)}</b><span>tokens</span></div>
       <div class="stat"><b>${tok(h.tokens_out)}</b><span>output</span></div>
-      <div class="stat"><b>${usd(h.cost_usd)}</b><span>cost${h.cost_partial?"*":""}</span></div>
+      <div class="stat" title="${esc(costTitle(hc))}"><b>${costFmt(hc)}</b><span>cost</span></div>
     </div>
     <div class="note">archived ${esc(when)} — ${fate}
-      ${h.cost_partial ? `Cost covers ${h.cost_lanes}/${h.lane_count} lanes (codex/grok report
-      none), so the real spend is higher.` : ""}</div>
+      ${hc.kind !== "reported" || hc.partial ? esc(costTitle(hc)) + ". Archived lanes keep no "
+        + "input/cache split, so uncosted brains cannot be re-estimated here." : ""}</div>
   </div>
   <div class="tablewrap"><table class="hist mono"><thead><tr><th>lane</th><th>brain</th><th>phase</th><th>state</th>
     <th class="num">elapsed</th><th class="num">tokens</th><th class="num">out</th>
@@ -1499,7 +2029,7 @@ function historyCard(h) {
       <td><span class="sq ${l.state}" style="display:inline-block"></span> ${esc(l.state)}</td>
       <td class="num">${fmt(l.elapsed_s)}</td><td class="num">${tok(l.tokens_total)}</td>
       <td class="num">${tok(l.tokens_out)}</td><td class="num">${l.commits||"—"}</td>
-      <td class="num">${usd(l.cost_usd)}</td></tr>`).join("")}
+      <td class="num">${costFmt(laneCost(l))}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
@@ -1517,6 +2047,21 @@ document.getElementById("fleetbtn").onclick = () => {
   document.body.classList.remove("nav-open");
   if (doc) render();
 };
+/* The wordmark is "home": back to the FLEET overview from any drill level. */
+const brandEl = document.querySelector(".brand b");
+brandEl.style.cursor = "pointer";
+brandEl.title = "fleet overview";
+brandEl.onclick = () => { selected = ""; location.hash = ""; if (doc) render(); };
+document.getElementById("cogbtn").onclick = openPricingModal;
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closePricingModal();
+  // `/` focuses the filter from anywhere — unless the user is already typing.
+  else if (e.key === "/" && !e.ctrlKey && !e.metaKey &&
+           !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || "")) {
+    e.preventDefault();
+    document.getElementById("filter").focus();
+  }
+});
 document.getElementById("filter").addEventListener("input", e => {
   filter = e.target.value.trim().toLowerCase(); if (doc) render();
 });
@@ -1533,6 +2078,7 @@ window.addEventListener("hashchange", () => {
 });
 document.getElementById("build").textContent = PAGE_BUILD;
 tick();
+fetchRoost(false);   // one boot probe decides whether the roost section exists
 setInterval(tick, POLL_MS);
 </script>
 </body>

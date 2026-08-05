@@ -499,6 +499,15 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   and a dashboard that quietly billed a provider round-trip on every poll would
   be a bug with an invoice attached. Live probes run in the server's background
   and the page polls until they settle.
+- **ROOST accounts (conditional).** On machines with the `roost` CLI installed
+  (claude-lb, the Claude Code OAuth profile health/load-balancer), the sidebar
+  gains a "roost · accounts" entry and `/api/roost.json` serves a trimmed
+  `roost status --json` — per-profile health, session/weekly usage meters with
+  reset clocks, and the status.claude.com platform indicator. The server probes
+  `shutil.which("roost")` once; absent binary → `{"available": false}` and the
+  section never renders. The probe runs in a background thread, cached 60s
+  (roost caches its own probes ~5 min); page fetches are tick/click driven,
+  never on a timer of their own.
 - **Zero external dependencies, still.** No CDN, no webfont, no remote image, no
   build step — the page is one file that works offline, from `file://`, and in a
   preview pane with no network. A test asserts it (`dashboard: still zero
@@ -544,6 +553,17 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   (was ~6 min before ff-status's per-lane passes were collapsed). The cache key
   includes ff-status's own mtime, so editing the reader invalidates exactly the
   entries it affects instead of serving the old shape forever.
+- **Three drill levels, all hash-addressable.** The default view is **FLEET**
+  (everything on the machine, live + archived, with lanes/token-breakdown/cost/
+  failure-rate/runtime roll-ups); clicking a repo name in the sidebar drills to
+  **PROJECT** (`#repo:<label>` — that repo's on-disk runs plus archived history,
+  same stat row); a run card or row drills to **WAVE** (the lane grid).
+  Breadcrumbs walk back up; the wordmark is home. The sidebar is accordion
+  strata — pinned capability rows (fleet, roost when installed), *live now*,
+  *projects*, *history* — sharing one collapse-persistence contract. Small
+  comforts: the tab title carries `(N▶ M⚠)` so a background tab still alerts on
+  stalls, `/` focuses the filter, Esc closes the costs modal, and every run
+  detail has an "export json" button (client-side blob, nothing leaves the box).
 - **Card language is shared with the [summon](../summon/) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the
@@ -557,9 +577,19 @@ consistently that GLM lane had consumed 4.5M. `ff-status` now also emits
 `tokens_in` / `tokens_cached` / `tokens_out` / `tokens_total`, which mean the
 same thing for every brain, plus `cost_usd` where the worker prices its own turn.
 **Cost is partial by construction:** claude-family workers self-report
-`total_cost_usd`; codex and grok report none, so run totals say how many lanes
-they cover and the dashboard marks them `*`. For GLM the figure is the CLI's
-Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an amount owed. A
+`total_cost_usd`; codex and grok report none. For GLM the self-reported figure
+is the CLI's Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an
+amount owed. The dashboard therefore carries its own hand-maintained `PRICING`
+registry (rates verified against Anthropic/z.ai/OpenAI/xAI published pricing,
+date stamped in the file) and a per-brain **pricing basis** the operator picks
+in the ⚙ costs modal: `api` (compute from the lane's token counts at published
+per-MTok rates — the default wherever a rate card exists; this is what fixes
+GLM), `plan` (flat subscription — Claude Max / GLM Coding / ChatGPT — marginal
+cost shows as "plan"), or `report` (trust the CLI's figure). Every figure says
+what it is: plain `$x` is self-reported, `≈$x` contains estimates, `*` means
+uncosted lanes remain, and nothing is ever presented as an invoice. The basis
+persists under `ffd.pricing`. Archived history lanes keep no input/cache split,
+so they cannot be re-estimated — they fall back to reported-or-nothing. A
 snapshot card follows the monitor's layout doctrine: the run summary (name,
 totals, per-lane strip) sits in a header pinned via `position: sticky` at the
 card's top, with agent/lane cards listed vertically beneath it ordered
