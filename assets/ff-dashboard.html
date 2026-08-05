@@ -500,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · blended-plans";
+const PAGE_BUILD = "2026-08-05 · quiet-costs";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -707,7 +707,7 @@ const PLANS = {
 const BASES = [
   ["api",    "API rates",    "computed from this lane's tokens at the provider's published per-MTok rates"],
   ["plan",   "plan (blended)","flat subscription, shown as a BLENDED cost: the monthly fee allocated across that month's plan-basis lanes by API-notional share — a month's blended costs sum to the fee"],
-  ["report", "self-reported","whatever the worker CLI printed (GLM prints an Anthropic-rate figure - wrong for z.ai)"],
+  ["report", "CLI figure",   "the cost number the worker CLI itself printed (claude -p's total_cost_usd). GLM's CLI prices z.ai traffic at Anthropic rates — wrong; codex and grok print nothing"],
 ];
 /* Which bases make sense per brain: api needs a rate card, plan needs a plan. */
 function basesFor(brain) {
@@ -831,12 +831,12 @@ function costFmt(c) {
 function costTitle(c) {
   if (!c) return "";
   const bits = [];
-  if (c.reported) bits.push(`${c.reported} lane(s) self-reported`);
-  if (c.estimated) bits.push(`${c.estimated} estimated from tokens at ${PRICING.verified} rates`);
-  if (c.blended) bits.push(`${c.blended} blended from monthly plan fees (fee × this lane's API-notional share of the month)`);
-  if (c.plan) bits.push(`${c.plan} plan-basis without a token split — cannot be blended`);
-  if (c.none) bits.push(`${c.none} with no figure — true spend is higher`);
-  return bits.join(" · ");
+  if (c.reported) bits.push(`${c.reported} priced by the worker CLI`);
+  if (c.estimated) bits.push(`${c.estimated} estimated at API rates`);
+  if (c.blended) bits.push(`${c.blended} blended from the plan fee`);
+  if (c.plan) bits.push(`${c.plan} plan lane(s) with no token split`);
+  if (c.none) bits.push(`${c.none} unpriced`);
+  return bits.join(" · ") + " — details in ⚙ costs";
 }
 
 /* ── settings modal ──────────────────────────────────────────────────────── */
@@ -880,14 +880,15 @@ function renderPricingModal() {
           ${esc(o.label)} · $${o.usd}/mo</label>`).join("")}
       </div>`;
     }).join("")}
-    <div class="note">Figures marked <b>≈</b> are estimates or blended shares, <b>*</b>
-      means some lanes carry no figure at all (true spend is higher), and none of this
-      is an invoice — token counts (<span class="mono">tokens_total</span>) remain the
-      only brain-consistent comparison. GLM's self-report is the Claude CLI pricing
-      z.ai traffic at Anthropic rates, which is why its default basis is API rates.
-      Archived lanes keep no input/cache split, so they can't be estimated OR blended.
-      Running several subscriptions of one tier (multiple Max accounts) is not yet
-      modelled — the blend covers one fee.</div>
+    <div class="note"><b>Markers:</b> <b>≈</b> estimate or blended share · <b>*</b> some
+      lanes have no figure (true spend is higher) · <b>plan</b> on a subscription but
+      unblendable. None of this is an invoice — token counts
+      (<span class="mono">tokens_total</span>) are the only brain-consistent comparison.
+      GLM's CLI figure prices z.ai traffic at Anthropic rates (wrong), which is why its
+      default basis is API rates. Archived lanes keep no input/cache token split, so
+      they can't be estimated or blended. Multiple subscriptions of one tier (several
+      Max accounts) aren't modelled yet — the blend covers one fee. Rates verified
+      ${esc(PRICING.verified)}.</div>
   </div>`;
 }
 function openPricingModal() {
@@ -1670,10 +1671,7 @@ function fleetView() {
         ${ico("activity")}${probeLabel}</button>
       ${d?.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div>
-    <div class="note">${esc(costTitle(totalCost) || "no cost data yet")}. ≈ marks token-based
-      estimates at ${esc(PRICING.verified)} rates, * means uncosted lanes remain — never an
-      invoice. Basis per brain: ⚙ costs. Counts cover every run under the configured roots
-      plus the archived history. “available” reflects the last capacity probe, not the spec.</div>
+    <div class="note">“available” reflects the last capacity probe, not the spec.</div>
   </div>
   <div class="phase"><div class="phase-h mono"><span>harnesses</span>
     <span class="n">${HARNESS.length}</span></div>
@@ -1832,9 +1830,6 @@ function overview() {
         title="${doc.cache.hits} of ${doc.cache.hits + doc.cache.misses} runs served from cache this build — ${doc.cache.entries} entries on disk. A finished run whose directory has not changed is never re-read; this is the difference between a 29s build and a 15ms one."
         ><b>${Math.round((doc.cache.hit_rate ?? 0) * 100)}%</b><span>cache hit</span></div>` : ""}
     </div>
-    <div class="note">${esc(costTitle(a.cost))}. ≈ marks estimates, * means uncosted
-      lanes remain — basis per brain in ⚙ costs. Counts cover live runs AND archived
-      history. Click a project name on the left for its roll-up, a run for its lanes.</div>
   </div>` + (live.length ? `<div class="phase"><div class="phase-h mono"><span>in flight</span>
       <span class="n">${live.length}</span></div>
     <div class="deck">${live.map(runCard).join("")}</div></div>` : "");
@@ -1866,9 +1861,6 @@ function projectView(label) {
     <div class="path mono">${ico("folder")}${esc(repoPath)}</div>
     ${chart}${brandLegend(a.brains)}
     ${aggStatRow(a, live)}
-    <div class="note">${esc(costTitle(a.cost) || "no cost data")}. Roll-up covers this
-      repo's runs still on disk plus its archived history. Click a run card for the
-      wave's lane grid.</div>
   </div>
   ${runs.length ? `<div class="phase"><div class="phase-h mono"><span>runs</span>
       <span class="n">${runs.length}</span></div>
@@ -1971,9 +1963,6 @@ function runDetail(r) {
       ${stalledN ? `<div class="stat warn"><b>${stalledN}</b><span>stalled</span></div>` : ""}
       ${failedN  ? `<div class="stat bad"><b>${failedN}</b><span>failed</span></div>` : ""}
     </div>
-    ${cr.kind !== "reported" || cr.partial ? `<div class="note">${esc(costTitle(cr))}.
-      Cost basis per brain is set in the ⚙ costs dialog; token counts cover every lane
-      and are the comparable figure.</div>` : ""}
     ${uncovered ? `<div class="note">${ico("alert")} ${uncovered} in-flight lane(s) emit no live
       stream (grok, or claude lanes spawned without --worktree). For those the stall detector
       reports “cannot tell”, never “healthy”.</div>` : ""}
@@ -2032,10 +2021,10 @@ function laneCard(l, age) {
   const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
   const lc = laneCost(l);
   const lcPlan = PLANS[PLAN_GROUP[l.brain]];
-  const lcTitle = lc.kind === "estimated" ? `estimated from tokens at ${PRICING.verified} API rates — not an invoice`
-    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee — a month's blended costs sum to the fee`
-    : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan but no token split survives — cannot be blended`
-    : lc.kind === "reported" ? "self-reported by the worker CLI" : "no cost figure for this lane";
+  const lcTitle = lc.kind === "estimated" ? "estimated from tokens at API rates"
+    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee`
+    : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan — no token split to blend`
+    : lc.kind === "reported" ? "the worker CLI's own cost figure" : "no cost figure for this lane";
   return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${isCollapsed(l.id)?" collapsed":""}">
     <div class="hd">
       ${brandMark(l.brain, col)}
@@ -2104,9 +2093,7 @@ function historyCard(h) {
       <div class="stat"><b>${tok(h.tokens_out)}</b><span>output</span></div>
       <div class="stat" title="${esc(costTitle(hc))}"><b>${costFmt(hc)}</b><span>cost</span></div>
     </div>
-    <div class="note">archived ${esc(when)} — ${fate}
-      ${hc.kind !== "reported" || hc.partial ? esc(costTitle(hc)) + ". Archived lanes keep no "
-        + "input/cache split, so uncosted brains cannot be re-estimated here." : ""}</div>
+    <div class="note">archived ${esc(when)} — ${fate}</div>
   </div>
   <div class="tablewrap"><table class="hist mono"><thead><tr><th>lane</th><th>brain</th><th>phase</th><th>state</th>
     <th class="num">elapsed</th><th class="num">tokens</th><th class="num">out</th>
