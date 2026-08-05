@@ -680,6 +680,22 @@ grep -q 'threading.Thread(target=self._run' "$SRV" \
 python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$SRV" \
   && ok "ff-serve: parses" || bad "ff-serve: syntax error"
 
+# --- roost integration (optional capability, conditional section) ----------------
+grep -q '/api/roost.json' "$SRV" && grep -q 'class Roost' "$SRV" \
+  && ok "ff-serve: roost endpoint + cache present" || bad "ff-serve: roost endpoint missing"
+# absence of the binary is a capability gap, not an error — probed, never assumed
+grep -q 'shutil.which("roost")' "$SRV" \
+  && ok "ff-serve: roost availability probed, not assumed" \
+  || bad "ff-serve: roost binary not probed"
+grep -q 'threading.Thread(target=self._run, daemon=True)' "$SRV" \
+  && ok "ff-serve: roost probe is backgrounded" || bad "ff-serve: roost probe would block"
+grep -q 'function roostView' "$DASH" && grep -q 'roostDoc.available' "$DASH" \
+  && ok "dashboard: roost pane present and gated on availability" \
+  || bad "dashboard: roost pane missing or unconditional"
+grep -q 'setInterval.*fetchRoost' "$DASH" \
+  && bad "dashboard: roost on its own timer" \
+  || ok "dashboard: roost fetches are tick/click driven only"
+
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by
 # agentId) + two agent transcripts (one string content, one content-array).

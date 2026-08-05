@@ -390,6 +390,17 @@
   .prow input { accent-color:var(--run); margin:0; }
   .modal .note { color:var(--text-muted); font-size:11px; margin-top:10px; line-height:1.5; }
 
+  /* usage meter for the roost account pane */
+  .meter { flex:1; min-width:70px; height:6px; background:var(--surface-1);
+    border:1px solid var(--border); border-radius:var(--r-pill); overflow:hidden; }
+  .meter i { display:block; height:100%; border-radius:var(--r-pill); }
+  .mrow { display:flex; align-items:center; gap:8px; font-size:11px;
+    color:var(--text-secondary); }
+  .mrow .lbl { width:52px; flex:none; color:var(--text-muted); font-size:10px;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .mrow .pct { width:34px; flex:none; text-align:right; font-family:var(--font-mono); }
+  .mrow .rst { color:var(--text-muted); font-size:10px; white-space:nowrap; }
+
   .empty { color:var(--text-muted); padding:32px 4px; text-align:center; line-height:1.7; }
   /* A 7-column table cannot fit a 440px preview pane, and without this the whole
      PAGE scrolled sideways - every card and the top bar dragged along with it.
@@ -509,6 +520,7 @@ const ICO = {
   alert:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   db:'<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  key:'<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 19 4m-3 1 3 3m-6 0 2 2"/>',
 };
 const ico = (n, cls) => `<svg class="i ${cls||""}" viewBox="0 0 24 24" aria-hidden="true">${ICO[n]||""}</svg>`;
 const chip = (icon, val, lbl, cls) =>
@@ -1027,9 +1039,19 @@ function renderNav() {
   for (const r of doc.runs) (r.summary?.brains || []).forEach(b => brainsSeen.add(b));
   for (const h of (doc.history || [])) (h.brains || []).forEach(b => brainsSeen.add(b));
   let html = `<button class="runrow ${selected === "fleet" ? "on" : ""}" data-k="fleet"
-      style="margin-bottom:7px" title="harnesses, models, and live capacity">
+      title="harnesses, models, and live capacity">
       <div class="rl">${ico("cpu")}<span class="nm">fleet · harnesses</span>
         <span class="rs">${brainsSeen.size} in use</span></div></button>`;
+  // Conditional: only machines with the roost CLI installed get the section —
+  // the server said available:false everywhere else, so no dead menu entry.
+  if (roostDoc && roostDoc.available) {
+    const rc = roostDoc.counts || {};
+    html += `<button class="runrow ${selected === "roost" ? "on" : ""}" data-k="roost"
+      title="Claude Code OAuth profile health via roost (claude-lb)">
+      <div class="rl">${ico("key")}<span class="nm">roost · accounts</span>
+        <span class="rs">${rc.ok ?? "…"}${rc.count != null ? "/" + rc.count + " ok" : ""}</span></div></button>`;
+  }
+  html += `<div style="height:7px"></div>`;
   for (const [label, runs] of groups) {
     const live = runs.filter(r => inflight(r.summary?.state)).length;
     const isC = collapsed.has(label);
@@ -1261,6 +1283,96 @@ async function probeDoctor(live, force) {
   if (doctorDoc && doctorDoc.building) setTimeout(() => probeDoctor(live, false), 4000);
 }
 
+/* ── roost: Claude OAuth profile health (optional capability) ────────────── */
+/* roost (claude-lb) is a per-machine optional install. The server probes for
+   the binary and answers {"available": false} when absent — that answer is
+   what keeps the whole section out of the nav, so a machine without roost
+   never sees a dead menu entry. Fetches are tick- and click-driven, never on
+   their own timer; roost itself caches probes, the server caches 60s. */
+let roostDoc = null, roostPending = false;
+async function fetchRoost(force) {
+  if (roostPending) return;
+  roostPending = true;
+  try {
+    const res = await fetch("api/roost.json" + (force ? "?force=1" : ""), { cache: "no-store" });
+    if (res.ok) roostDoc = await res.json();
+  } catch (e) { /* keep the last good pane; the main banner covers a dead server */ }
+  roostPending = false;
+  if (doc) { renderNav(); if (selected === "roost") renderDetail(); }
+  // A forced probe runs in the server's background; settle-poll the cache
+  // until it lands (bounded: building clears once the CLI returns).
+  if (roostDoc && roostDoc.available && roostDoc.building)
+    setTimeout(() => fetchRoost(false), 3000);
+}
+const resetIn = iso => {
+  if (!iso) return "";
+  const s = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  return s > 0 ? `resets in ${fmt(s)}` : "reset due";
+};
+const HEALTH_TAG = h =>
+  h === "ok" ? `<span class="tag run">ok</span>`
+  : h === "rate_limited" || h === "session_limit" || h === "weekly_limit"
+    ? `<span class="tag stall">${esc(h.replace("_", " "))}</span>`
+  : h ? `<span class="tag fail">${esc(h.replace("_", " "))}</span>` : "";
+function meterRow(label, pct, resetAt) {
+  if (pct == null) return "";
+  const col = pct >= 90 ? "var(--bad)" : pct >= 70 ? "var(--warn)" : "var(--ok)";
+  return `<div class="mrow"><span class="lbl">${esc(label)}</span>
+    <span class="meter"><i style="width:${Math.min(100, pct)}%;background:${col}"></i></span>
+    <span class="pct">${pct}%</span><span class="rst">${esc(resetIn(resetAt))}</span></div>`;
+}
+function roostView() {
+  const d = roostDoc;
+  if (!d) return `<div class="empty">checking for roost…</div>`;
+  if (!d.available) return `<div class="empty">roost is not installed on this machine</div>`;
+  const c = d.counts || {}, p = d.platform;
+  const ind = p?.indicator || "none";
+  const indCol = ind === "none" ? "var(--ok)" : ind === "minor" ? "var(--warn)" : "var(--bad)";
+  const limited = (c.rate_limited || 0) + (c.session_limit || 0) + (c.weekly_limit || 0);
+  const authBad = (c.auth_expired || 0) + (c.auth_dead || 0);
+  const cards = (d.profiles || []).map(pr => `
+    <div class="card${pr.health === "ok" ? "" : " is-stalled"}">
+      <div class="hd">${ico("key")}
+        <span class="proj" style="font-weight:600">${esc(pr.name || "?")}</span>
+        ${HEALTH_TAG(pr.health)}
+        ${pr.subscription_type ? `<span class="tag">${esc(pr.subscription_type)}</span>` : ""}
+      </div>
+      ${meterRow("session", pr.session_pct, pr.session_reset_at)}
+      ${meterRow("weekly", pr.weekly_pct, pr.weekly_reset_at)}
+      ${pr.error ? `<div class="errline" title="${esc(pr.error)}">${esc(pr.error)}</div>` : ""}
+    </div>`).join("");
+  return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <div class="rhead-r"><h2>roost · accounts</h2>
+      <span class="tag">Claude Code OAuth profiles</span>
+      ${d.building ? `<span class="tag">probing…</span>`
+        : d.age_s != null ? `<span class="tag">probed ${fmt(d.age_s)} ago</span>` : ""}</div>
+    ${p ? `<div class="path" style="word-break:normal"><span class="dstat" style="background:${indCol}"></span>
+      ${esc(p.description || "platform status unknown")}${p.active_incidents
+        ? ` · ${p.active_incidents} active incident(s)` : ""}${(p.degraded || []).length
+        ? ` · degraded: ${esc(p.degraded.join(", "))}` : ""}</div>` : ""}
+    <div class="stats mono">
+      <div class="stat ${c.ok ? "ok" : ""}"><b>${c.ok ?? "—"}</b><span>ok</span></div>
+      <div class="stat"><b>${c.count ?? "—"}</b><span>profiles</span></div>
+      ${limited ? `<div class="stat warn"><b>${limited}</b><span>limited</span></div>` : ""}
+      ${authBad ? `<div class="stat bad"><b>${authBad}</b><span>auth</span></div>` : ""}
+      ${c.network_error ? `<div class="stat bad"><b>${c.network_error}</b><span>network</span></div>` : ""}
+    </div>
+    <div class="treectl" style="border:0;padding:9px 0 0;margin:0">
+      <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
+        title="Re-run roost status --json now (local CLI, no model calls)">
+        ${ico("activity")}${d.building ? "probing…" : "re-probe accounts"}</button>
+      ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
+    </div>
+    <div class="note">Per-profile session/weekly usage as roost last measured it
+      (roost caches probes ~5 min; the server another 60s). Platform status comes from
+      status.claude.com via roost.</div>
+  </div>
+  <div class="phase"><div class="phase-h mono"><span>profiles</span>
+    <span class="n">${(d.profiles || []).length}</span></div>
+  <div class="deck">${cards || `<div class="empty">no profiles discovered</div>`}</div></div>`;
+}
+
 /* Roll every lane this machine has a record of - live runs AND archived history -
    up by brain and by resolved model. History lanes carry a reduced digest with no
    `model`, which is why the model table is explicitly labelled as covering runs
@@ -1467,6 +1579,12 @@ function renderDetail() {
       : `<div class="empty">no fleetflow runs found under:<br><span class="mono">
          ${esc((doc.roots||[]).join("  ·  ") || "(no roots)")}</span><br>
          roots come from <span class="mono">${esc(doc.roots_source || "?")}</span></div>`;
+  } else if (selected === "roost") {
+    // tick-driven staleness refresh — no timer of its own
+    if (roostDoc && roostDoc.available && !roostDoc.building
+        && roostDoc.age_s != null && roostDoc.age_s > 45 && !roostPending)
+      fetchRoost(false);
+    html = roostView();
   } else if (selected.startsWith("repo:")) {
     html = projectView(selected.slice(5));
   } else {
@@ -1502,6 +1620,8 @@ function bindCardControls(r) {
   });
   const probe = document.getElementById("ffProbe");
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
+  const rr = document.getElementById("roostRefresh");
+  if (rr) rr.onclick = () => { fetchRoost(true); };
   // Drill navigation inside the pane: run cards on the FLEET/PROJECT levels and
   // breadcrumbs carry data-k, same contract as the sidebar rows.
   document.querySelectorAll("#main [data-k]").forEach(b => b.onclick = ev => {
@@ -1894,6 +2014,7 @@ window.addEventListener("hashchange", () => {
 });
 document.getElementById("build").textContent = PAGE_BUILD;
 tick();
+fetchRoost(false);   // one boot probe decides whether the roost section exists
 setInterval(tick, POLL_MS);
 </script>
 </body>

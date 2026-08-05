@@ -486,6 +486,15 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   and a dashboard that quietly billed a provider round-trip on every poll would
   be a bug with an invoice attached. Live probes run in the server's background
   and the page polls until they settle.
+- **ROOST accounts (conditional).** On machines with the `roost` CLI installed
+  (claude-lb, the Claude Code OAuth profile health/load-balancer), the sidebar
+  gains a "roost · accounts" entry and `/api/roost.json` serves a trimmed
+  `roost status --json` — per-profile health, session/weekly usage meters with
+  reset clocks, and the status.claude.com platform indicator. The server probes
+  `shutil.which("roost")` once; absent binary → `{"available": false}` and the
+  section never renders. The probe runs in a background thread, cached 60s
+  (roost caches its own probes ~5 min); page fetches are tick/click driven,
+  never on a timer of their own.
 - **Zero external dependencies, still.** No CDN, no webfont, no remote image, no
   build step — the page is one file that works offline, from `file://`, and in a
   preview pane with no network. A test asserts it (`dashboard: still zero

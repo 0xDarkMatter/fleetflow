@@ -282,9 +282,121 @@ class Doctor:
                 "age_s": int(time.time() - doc["ran_at"])}
 
 
+class Roost:
+    """Surfaces `roost status --json` for the dashboard's ROOST accounts pane.
+
+    roost is the Claude Code OAuth profile health/load-balancer (claude-lb).
+    It is a per-machine optional install: absence is a capability this box
+    does not have, not an error - the binary is probed once at startup and
+    the endpoint answers {"available": false}, which is the page's signal to
+    not render the section at all.
+
+    Same one-process, request-driven design as Doctor: the CLI call runs in a
+    BACKGROUND thread and requests are answered from the last good verdict
+    immediately. roost caches its own probes (~5 min TTL server-side in
+    roost itself), so the TTL here only keeps the dashboard's poll from
+    spawning a process per tick. The raw --json payload is tens of KB
+    (28 days of per-component platform-status history); only the fields the
+    pane actually renders are forwarded.
+    """
+
+    TTL = 60          # seconds a verdict is served without re-running the CLI
+    TIMEOUT = 90      # roost's own probe path can take a few seconds cold
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.doc: dict | None = None
+        self.at = 0.0
+        self.running = False
+        self.last_error: str | None = None
+        self.bin = shutil.which("roost")
+        if self.bin:
+            err(f"roost detected at {self.bin} - ROOST accounts pane enabled")
+
+    def _run(self) -> None:
+        t0 = time.time()
+        try:
+            p = subprocess.run(
+                [self.bin, "status", "--json"],
+                capture_output=True, text=True, timeout=self.TIMEOUT,
+                encoding="utf-8", errors="replace",
+                stdin=subprocess.DEVNULL)
+            data = json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
+            if data is None:
+                tail = (p.stderr or "").strip().splitlines()
+                raise RuntimeError(tail[-1] if tail else f"roost exit {p.returncode}")
+            doc = self._trim(data)
+            doc["took_ms"] = int((time.time() - t0) * 1000)
+            with self.lock:
+                self.doc = doc
+                self.at = time.time()
+                self.last_error = None
+        except Exception as e:  # noqa: BLE001 - any failure = stale pane, never a crash
+            with self.lock:
+                self.last_error = f"{type(e).__name__}: {e}"
+            err(f"roost probe FAILED: {self.last_error}")
+        finally:
+            with self.lock:
+                self.running = False
+
+    @staticmethod
+    def _trim(data: dict) -> dict:
+        profiles = []
+        for p in data.get("data") or []:
+            u = p.get("usage") or {}
+            profiles.append({
+                "name": p.get("name"),
+                "health": p.get("health"),
+                "subscription_type": p.get("subscription_type"),
+                "session_pct": u.get("session_pct"),
+                "weekly_pct": u.get("weekly_pct"),
+                "session_reset_at": p.get("session_reset_at"),
+                "weekly_reset_at": p.get("weekly_reset_at"),
+                "error": p.get("error"),
+                "probed_at": p.get("probed_at"),
+            })
+        meta = data.get("meta") or {}
+        ps = meta.get("platform_status") or {}
+        return {
+            "schema": "fleetflow/roost/1", "available": True,
+            "ran_at": int(time.time()),
+            "profiles": profiles,
+            "counts": {k: meta.get(k) for k in (
+                "count", "ok", "rate_limited", "session_limit", "weekly_limit",
+                "auth_expired", "auth_dead", "network_error", "unknown") if k in meta},
+            "platform": {
+                "indicator": ps.get("indicator"),
+                "description": ps.get("description"),
+                "active_incidents": len(ps.get("active_incidents") or []),
+                "degraded": [c.get("name") for c in (ps.get("degraded_components") or [])],
+                "age_seconds": ps.get("age_seconds"),
+            } if ps else None,
+        }
+
+    def get(self, force: bool) -> dict:
+        if not self.bin:
+            return {"schema": "fleetflow/roost/1", "available": False}
+        with self.lock:
+            fresh = self.doc is not None and time.time() - self.at < self.TTL and not force
+            start = not fresh and not self.running
+            if start:
+                self.running = True
+        if start:
+            threading.Thread(target=self._run, daemon=True).start()
+        with self.lock:
+            doc, building, error = self.doc, self.running, self.last_error
+        if doc is None:
+            return {"schema": "fleetflow/roost/1", "available": True,
+                    "building": building, "profiles": [], "counts": {},
+                    "platform": None, "age_s": None, "error": error}
+        return {**doc, "building": building,
+                "age_s": int(time.time() - self.at), "error": error}
+
+
 class Handler(BaseHTTPRequestHandler):
     state: State = None  # type: ignore[assignment]
     doctor: Doctor = None  # type: ignore[assignment]
+    roost: Roost = None  # type: ignore[assignment]
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):  # noqa: A002 - signature is the base class's
@@ -366,6 +478,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self.doctor.get(mode, force=force))
             return
 
+        if path == "/api/roost.json":
+            q = parse_qs(urlsplit(self.path).query)
+            force = q.get("force", [None])[0] in {"1", "true", "yes", ""}
+            self._json(200, self.roost.get(force=force))
+            return
+
         if path in ("/api/health", "/health"):
             doc, meta = self.state.snapshot()
             self._json(200, {"ok": True, "has_aggregate": doc is not None,
@@ -390,6 +508,10 @@ def main(argv: list[str]) -> int:
                         model calls, so it runs in the background and is only
                         ever started by an explicit request. ?force=1 ignores
                         the cache.
+  /api/roost.json       Claude OAuth profile health via the roost CLI (claude-lb),
+                        trimmed to what the pane renders; {"available": false}
+                        when roost is not installed on this machine. Cached 60s,
+                        probed in the background. ?force=1 ignores the cache.
   /api/health           liveness + whether an aggregate exists yet
 
 EXAMPLES
@@ -430,6 +552,7 @@ EXAMPLES
     state = State(roots, source, a)
     Handler.state = state
     Handler.doctor = Doctor(a)
+    Handler.roost = Roost()
     err(f"fleetflow {FF_VERSION} - roots from {source}: "
         f"{', '.join(str(r) for r in roots)}")
 
