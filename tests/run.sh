@@ -649,6 +649,23 @@ grep -q 'id="cogbtn"' "$DASH" && grep -q 'modal-wrap' "$DASH" \
   && ok "dashboard: cost settings cog + in-app modal present" \
   || bad "dashboard: cost settings surface missing"
 
+# --- dashboard: FLEET / PROJECT / WAVE drill ------------------------------------
+grep -q 'function projectView' "$DASH" && grep -q 'function aggStats' "$DASH" \
+  && ok "dashboard: PROJECT drill level present" \
+  || bad "dashboard: project view missing"
+# repo header must be TWO controls: chevron folds, name drills into the project
+grep -q 'class="tgl" data-toggle' "$DASH" && grep -q '"repo:" + label' "$DASH" \
+  && ok "dashboard: repo name drills to project, chevron still folds" \
+  || bad "dashboard: repo header lost its drill or its fold control"
+# run cards on FLEET/PROJECT must click through to the wave
+grep -q 'card clickcard' "$DASH" \
+  && ok "dashboard: run cards click through to the wave" \
+  || bad "dashboard: run cards are dead ends"
+# breadcrumbs back up the hierarchy
+grep -q 'class="crumb" data-k=""' "$DASH" \
+  && ok "dashboard: breadcrumb back to the fleet level" \
+  || bad "dashboard: no breadcrumb up the drill hierarchy"
+
 # --- ff-serve: doctor endpoint ---------------------------------------------------
 SRV="$HERE/../scripts/ff-serve.py"
 grep -q '/api/doctor.json' "$SRV" \

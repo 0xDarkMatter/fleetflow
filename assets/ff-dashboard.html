@@ -152,10 +152,19 @@
   .tbtn .cnt { margin-left:auto; }
 
   .repo { margin-bottom:3px; }
-  .repo-h { width:100%; text-align:left; background:none; border:0; cursor:pointer;
-    font-size:11px; color:var(--text-secondary); padding:4px 5px; border-radius:var(--r-md);
+  /* The repo header is TWO controls, not one: the chevron folds the group, the
+     name drills into the PROJECT view. One button doing both meant the project
+     level had no entry point at all. */
+  .repo-h { width:100%; display:flex; gap:0; align-items:stretch; }
+  .repo-h .tgl { background:none; border:0; cursor:pointer; color:var(--text-muted);
+    padding:4px 3px 4px 5px; border-radius:var(--r-md); display:flex; align-items:center; }
+  .repo-h .tgl:hover { background:var(--surface-1); color:var(--text-accent); }
+  .repo-h .sel { flex:1; min-width:0; text-align:left; background:none; cursor:pointer;
+    font-size:11px; color:var(--text-secondary); padding:4px 5px;
+    border:1px solid transparent; border-radius:var(--r-md);
     display:flex; gap:6px; align-items:center; }
-  .repo-h:hover { background:var(--surface-1); }
+  .repo-h .sel:hover { background:var(--surface-1); }
+  .repo-h .sel.on { background:var(--surface-1); border-color:var(--border-accent); }
   .repo-h .nm { font-weight:600; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; letter-spacing:.01em; }
   .repo-h .dot { width:8px; height:8px; border-radius:50%; flex:none; }
@@ -256,6 +265,11 @@
   /* ── lane card - shape matched to the summon picker ──────────────────── */
   .card { background:var(--surface-2); border:1px solid var(--border);
     border-radius:var(--r-lg); padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+  .card.clickcard { cursor:pointer; }
+  .card.clickcard:hover { border-color:var(--border-strong); }
+  .crumb { display:inline-flex; align-items:center; gap:5px; border:0; background:none;
+    cursor:pointer; color:var(--text-accent); font-size:11px; padding:2px 6px 2px 0; }
+  .crumb:hover { text-decoration:underline; }
   .card.is-stalled { border-color:var(--warn); }
   .card.is-failed { border-color:var(--bad); }
   .hd { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; row-gap:5px; }
@@ -927,7 +941,17 @@ function applyDeepLink() {
   let hits = doc.runs.filter(r =>
     (!wantRepo || normRepo(r) === wantRepo || normRepo(r).endsWith("/" + wantRepo.split("/").pop())) &&
     (!wantRun || (r.run || "").toLowerCase() === wantRun));
-  if (!hits.length) return;
+  if (!hits.length) {
+    // No live run for this repo — every wave may have been cleaned. Fall back to
+    // the PROJECT level so the deep-link still lands somewhere useful.
+    if (wantRepo && !wantRun) {
+      const h = (doc.history || []).find(x => norm(x.repo) === wantRepo ||
+        norm(x.repo).endsWith("/" + wantRepo.split("/").pop()));
+      if (h) { selected = "repo:" + (h.repo_label || h.repo);
+               location.hash = encodeURIComponent(selected); }
+    }
+    return;
+  }
   // in-flight first, then newest - "what is happening in this repo right now"
   hits.sort((a, b) =>
     (inflight(b.summary?.state) ? 1 : 0) - (inflight(a.summary?.state) ? 1 : 0) ||
@@ -1009,13 +1033,18 @@ function renderNav() {
   for (const [label, runs] of groups) {
     const live = runs.filter(r => inflight(r.summary?.state)).length;
     const isC = collapsed.has(label);
+    const pk = "repo:" + label;
     html += `<div class="repo ${isC ? "collapsed" : ""}" data-g="${esc(label)}">
-      <button class="repo-h" data-toggle="${esc(label)}">
-        ${ico("chev","chev")}
-        <span class="dot" style="background:${repoColor(label)}"></span>
-        <span class="nm">${esc(label)}</span>
-        <span class="n${live ? " live" : ""}">${live ? live + " live" : runs.length}</span>
-      </button>
+      <div class="repo-h">
+        <button class="tgl" data-toggle="${esc(label)}"
+          aria-label="${isC ? "Expand" : "Collapse"} ${esc(label)}">${ico("chev","chev")}</button>
+        <button class="sel${selected === pk ? " on" : ""}" data-k="${esc(pk)}"
+          title="project view — every ${esc(label)} run and its archived history, rolled up">
+          <span class="dot" style="background:${repoColor(label)}"></span>
+          <span class="nm">${esc(label)}</span>
+          <span class="n${live ? " live" : ""}">${live ? live + " live" : runs.length}</span>
+        </button>
+      </div>
       <div class="runs">${runs.map(runRow).join("")}</div></div>`;
   }
   // History is a peer group in the same tree, not a separate screen: a run that was
@@ -1058,9 +1087,11 @@ function renderNav() {
     collapsed.has(g) ? collapsed.delete(g) : collapsed.add(g);
     save(); renderNav();
   });
-  document.querySelectorAll(".runrow").forEach(b => b.onclick = () => {
+  // Generic: anything in the nav carrying data-k selects that key — run rows,
+  // repo names (project view), the pinned fleet entry.
+  document.querySelectorAll("#nav [data-k]").forEach(b => b.onclick = () => {
     selected = b.dataset.k; location.hash = encodeURIComponent(selected);
-    document.body.classList.remove("nav-open");   // picking a run closes the drawer
+    document.body.classList.remove("nav-open");   // picking closes the drawer
     render();
   });
 }
@@ -1436,6 +1467,8 @@ function renderDetail() {
       : `<div class="empty">no fleetflow runs found under:<br><span class="mono">
          ${esc((doc.roots||[]).join("  ·  ") || "(no roots)")}</span><br>
          roots come from <span class="mono">${esc(doc.roots_source || "?")}</span></div>`;
+  } else if (selected.startsWith("repo:")) {
+    html = projectView(selected.slice(5));
   } else {
     const h = selected.startsWith("hist:")
       ? (doc.history || []).find(x => histKey(x) === selected) : null;
@@ -1469,44 +1502,129 @@ function bindCardControls(r) {
   });
   const probe = document.getElementById("ffProbe");
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
+  // Drill navigation inside the pane: run cards on the FLEET/PROJECT levels and
+  // breadcrumbs carry data-k, same contract as the sidebar rows.
+  document.querySelectorAll("#main [data-k]").forEach(b => b.onclick = ev => {
+    if (ev.target.closest(".caret")) return;   // the collapse caret is not navigation
+    selected = b.dataset.k; location.hash = encodeURIComponent(selected);
+    render();
+  });
 }
 
+/* Shared roll-up across a mixed set of live runs + archived history records.
+   Both carry the same token/elapsed field names (runs under .summary, history
+   at top level), which is what makes one aggregator serve FLEET and PROJECT. */
+function aggStats(runs, hist) {
+  const S = r => r.summary || {};
+  const lanes = runs.flatMap(r => r.lanes || []).concat(hist.flatMap(h => h.lanes || []));
+  const sum = f => runs.reduce((a, r) => a + (f(S(r)) || 0), 0)
+                 + hist.reduce((a, h) => a + (f(h) || 0), 0);
+  const failed = lanes.filter(l => l.state === "failed").length;
+  const brains = new Set();
+  runs.forEach(r => (S(r).brains || []).forEach(b => brains.add(b)));
+  hist.forEach(h => (h.brains || []).forEach(b => brains.add(b)));
+  return {
+    lanes, laneN: lanes.length, failed,
+    failPct: lanes.length ? Math.round(failed / lanes.length * 100) : 0,
+    tokens: sum(x => x.tokens_total), tokIn: sum(x => x.tokens_in),
+    tokCached: sum(x => x.tokens_cached), tokOut: sum(x => x.tokens_out),
+    runtime: sum(x => x.elapsed_s),
+    cost: costRollup(lanes), brains: [...brains].sort(),
+  };
+}
+function aggStatRow(a, live) {
+  return `<div class="stats mono">
+      ${live != null ? `<div class="stat ${live ? "ok" : ""}"><b>${live}</b><span>live</span></div>` : ""}
+      <div class="stat"><b>${nf(a.laneN)}</b><span>lanes</span></div>
+      <div class="stat"><b>${tok(a.tokens)}</b><span>tokens</span></div>
+      <div class="stat"><b>${tok(a.tokOut)}</b><span>output</span></div>
+      <div class="stat"><b>${tok(a.tokCached)}</b><span>cached</span></div>
+      <div class="stat" title="${esc(costTitle(a.cost))}"><b>${costFmt(a.cost)}</b><span>cost</span></div>
+      <div class="stat ${a.failed ? "bad" : ""}"
+        title="${a.failed} of ${a.laneN} lanes ended failed"><b>${a.failPct}%</b><span>failed</span></div>
+      <div class="stat" title="lane-hours summed across every run — wall-clock of the longest lane per run"><b>${fmt(a.runtime)}</b><span>runtime</span></div>
+    </div>`;
+}
+
+/* FLEET — the default level: everything on the machine, all repos, live +
+   archived. Click a project name for PROJECT, a run for WAVE. */
 function overview() {
+  const hist = doc.history || [];
   const live = doc.runs.filter(r => inflight(r.summary?.state));
-  const byTok = doc.runs.slice().sort((a,b) =>
-    (b.summary?.tokens_total||0) - (a.summary?.tokens_total||0)).slice(0, 30);
-  const allLanes = doc.runs.flatMap(r => r.lanes || [])
-    .concat((doc.history || []).flatMap(h => h.lanes || []));
-  const cost = costRollup(allLanes);
+  const a = aggStats(doc.runs, hist);
+  const byTok = doc.runs.slice().sort((x,y) =>
+    (y.summary?.tokens_total||0) - (x.summary?.tokens_total||0)).slice(0, 30);
   const chart = columnChart(byTok.map(r => ({
     name: r.run, value: r.summary?.tokens_total || 0,
     color: repoColor(r.repo_label || r.repo), state: r.summary?.state })),
-    { label:"tokens per run · top 30", showX:false });
+    { label:"tokens per run · top 30 on disk", showX:false });
   return `<div class="rhead">
     <div class="rhead-r"><h2>${live.length ? live.length + " run" + (live.length>1?"s":"") + " in flight" : "fleet idle"}</h2>
-      <span class="tag">${doc.totals.runs} runs · ${doc.totals.repos} repos</span></div>
-    ${chart}
-    <div class="stats mono">
-      <div class="stat ${live.length?"ok":""}"><b>${live.length}</b><span>live</span></div>
-      <div class="stat"><b>${doc.totals.lanes||0}</b><span>lanes</span></div>
-      <div class="stat"><b>${tok(doc.totals.tokens_total)}</b><span>tokens</span></div>
-      <div class="stat" title="${esc(costTitle(cost))}"><b>${costFmt(cost)}</b><span>cost</span></div>
-      <div class="stat"><b>${doc.totals.history_runs||0}</b><span>archived</span></div>
+      <span class="tag">fleet · everything on this machine</span>
+      <span class="tag">${doc.totals.runs} runs · ${doc.totals.repos} repos · ${doc.totals.history_runs||0} archived</span></div>
+    ${chart}${brandLegend(a.brains)}
+    ${aggStatRow(a, live.length)}
+    <div class="stats mono" style="margin-top:6px">
       ${doc.cache ? `<div class="stat ${doc.cache.hit_rate >= 0.9 ? "ok" : ""}"
         title="${doc.cache.hits} of ${doc.cache.hits + doc.cache.misses} runs served from cache this build — ${doc.cache.entries} entries on disk. A finished run whose directory has not changed is never re-read; this is the difference between a 29s build and a 15ms one."
         ><b>${Math.round((doc.cache.hit_rate ?? 0) * 100)}%</b><span>cache hit</span></div>` : ""}
     </div>
-    <div class="note">${esc(costTitle(cost))}. ≈ marks estimates, * means uncosted
-      lanes remain. Basis per brain: ⚙ costs. Pick a run on the left for its lane grid.</div>
+    <div class="note">${esc(costTitle(a.cost))}. ≈ marks estimates, * means uncosted
+      lanes remain — basis per brain in ⚙ costs. Counts cover live runs AND archived
+      history. Click a project name on the left for its roll-up, a run for its lanes.</div>
   </div>` + (live.length ? `<div class="phase"><div class="phase-h mono"><span>in flight</span>
       <span class="n">${live.length}</span></div>
     <div class="deck">${live.map(runCard).join("")}</div></div>` : "");
 }
 
+/* PROJECT — one repo's runs + its archived history, rolled up. */
+function projectView(label) {
+  const runs = sortRuns(doc.runs.filter(r => (r.repo_label || r.repo) === label));
+  const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
+  const hist = (doc.history || []).filter(h =>
+    (h.repo_label || h.repo) === label &&
+    !onDisk.has((h.repo + "|" + h.run).toLowerCase()));
+  if (!runs.length && !hist.length)
+    return `<div class="empty">no runs recorded for <span class="mono">${esc(label)}</span>
+      — it may have been filtered out, renamed, or cleaned without archiving</div>`;
+  const repoPath = runs[0]?.repo || hist[0]?.repo || "";
+  const live = runs.filter(r => inflight(r.summary?.state)).length;
+  const a = aggStats(runs, hist);
+  const bars = runs.map(r => ({ name: r.run, value: r.summary?.tokens_total || 0,
+      color: repoColor(label), state: r.summary?.state }))
+    .concat(hist.map(h => ({ name: h.run, value: h.tokens_total || 0,
+      color: repoColor(label), state: h.state })));
+  const chart = columnChart(bars, { label: "tokens per run · on disk + archived", showX: bars.length <= 26 });
+  return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <div class="rhead-r"><h2><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${repoColor(label)}"></span> ${esc(label)}</h2>
+      <span class="tag">project</span>
+      <span class="tag">${runs.length} run${runs.length===1?"":"s"} on disk · ${hist.length} archived</span></div>
+    <div class="path mono">${ico("folder")}${esc(repoPath)}</div>
+    ${chart}${brandLegend(a.brains)}
+    ${aggStatRow(a, live)}
+    <div class="note">${esc(costTitle(a.cost) || "no cost data")}. Roll-up covers this
+      repo's runs still on disk plus its archived history. Click a run card for the
+      wave's lane grid.</div>
+  </div>
+  ${runs.length ? `<div class="phase"><div class="phase-h mono"><span>runs</span>
+      <span class="n">${runs.length}</span></div>
+    <div class="deck">${runs.map(runCard).join("")}</div></div>` : ""}
+  ${hist.length ? `<div class="phase"><div class="phase-h mono"><span>archived</span>
+      <span class="n">${hist.length}</span></div>
+    <div class="runs" style="padding:0">${hist.map(h => `
+      <button class="runrow archived" data-k="${esc(histKey(h))}">
+        <div class="rl"><span class="sq ${h.state}"></span>
+          <span class="nm mono">${esc(h.run)}</span>
+          <span class="rs">${h.lane_count} lanes · ${tok(h.tokens_total)} · ${costFmt(costRollup(h.lanes))}</span></div>
+      </button>`).join("")}</div></div>` : ""}`;
+}
+
 /* Run-level card, same shape as a lane card so the two nest visually. */
 function runCard(r) {
   const s = r.summary || {}, age = ageOf(r), col = repoColor(r.repo_label || r.repo);
-  return `<div class="card ${s.state==="running"?"is-running":s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}">
+  return `<div class="card clickcard ${s.state==="running"?"is-running":s.state==="stalled"?"is-stalled":s.state==="failed"?"is-failed":""}"
+    data-k="${esc(runKey(r))}" role="link" title="open this wave's lane grid">
     <div class="hd"><span class="dot ${s.state}" style="background:${STATE_COLOR[s.state]||col}"></span>
       <span class="proj">${esc(r.repo_label || "")}</span>${stateTag(s.state, (s.idle_s||0)+age)}</div>
     <div class="ttl mono">${esc(r.run)}</div>
@@ -1566,8 +1684,10 @@ function runDetail(r) {
       <button class="tbtn" id="cCollapse">${ico("chev")}collapse all lanes</button>
     </div>
     <div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <button class="crumb" data-k="${esc("repo:" + (r.repo_label || r.repo))}">${esc(r.repo_label || r.repo)}</button>
     ${orchBadge(s.orchestrator)}
-    <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2>
+    <div class="rhead-r"><h2 class="mono">${esc(r.run)}</h2><span class="tag">wave</span>
       ${stateTag(s.state, (s.idle_s||0)+age)}
       ${(s.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
         color:${brainOf(b)[1]};display:inline-flex;align-items:center;gap:4px;padding:1px 6px">
@@ -1703,6 +1823,8 @@ function historyCard(h) {
     name: l.id, value: l.tokens_total || 0, color: brainOf(l.brain)[1], state: l.state })),
     { label:"tokens per lane", showX:true }) + brandLegend(h.brains);
   return `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <button class="crumb" data-k="${esc("repo:" + (h.repo_label || h.repo))}">${esc(h.repo_label || h.repo)}</button>
     <div class="rhead-r"><h2 class="mono">${esc(h.run)}</h2>
       <span class="tag">archived</span>${stateTag(h.state, 0)}
       ${(h.brains||[]).map(b => `<span class="tag" style="border-color:${brainOf(b)[1]};
@@ -1747,6 +1869,11 @@ document.getElementById("fleetbtn").onclick = () => {
   document.body.classList.remove("nav-open");
   if (doc) render();
 };
+/* The wordmark is "home": back to the FLEET overview from any drill level. */
+const brandEl = document.querySelector(".brand b");
+brandEl.style.cursor = "pointer";
+brandEl.title = "fleet overview";
+brandEl.onclick = () => { selected = ""; location.hash = ""; if (doc) render(); };
 document.getElementById("cogbtn").onclick = openPricingModal;
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") closePricingModal();
