@@ -451,7 +451,7 @@
     title="harnesses, models, and live capacity — what this machine can run">
     <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>fleet</button>
   <button class="topbtn" id="cogbtn" aria-label="Cost settings"
-    title="cost settings — pick the pricing basis (API rates / subscription plan / self-reported) per brain">
+    title="cost settings — pick the pricing basis (API rates / plan blended / CLI figure) per model family">
     <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>costs</button>
   <div class="totals" id="totals">connecting…</div>
   <span class="stamp mono" id="stamp"></span>
@@ -500,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · blended-plans";
+const PAGE_BUILD = "2026-08-05 · roost-widget";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -509,7 +509,24 @@ const fmt = s => s == null ? "—"
   : s >= 60    ? Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s" : s+"s";
 const tok = n => !n ? "—" : n >= 1e9 ? (n/1e9).toFixed(2)+"B" : n >= 1e6 ? (n/1e6).toFixed(1)+"M"
   : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n);
-const usd = v => v == null ? "—" : v >= 100 ? "$"+v.toFixed(0) : "$"+v.toFixed(2);
+/* Display currency. Costs are computed in USD (every provider bills in USD);
+   conversion is DISPLAY-ONLY, at hand-pinned rates — this page fetches nothing
+   external, so the rates are a snapshot (xe.com, verified date below), not a
+   live feed. Selected in the ⚙ costs modal, persisted under ffd.currency. */
+const FX = {
+  verified: "2026-08-05",
+  rates: { USD: 1, AUD: 1.4213, EUR: 0.8678, GBP: 0.7435, JPY: 157.25, CAD: 1.4064 },
+  sym:   { USD: "$", AUD: "A$", EUR: "€", GBP: "£", JPY: "¥", CAD: "C$" },
+};
+let currency = localStorage.getItem("ffd.currency") || "USD";
+if (!FX.rates[currency]) currency = "USD";
+const money = v => {
+  if (v == null) return "—";
+  const x = v * FX.rates[currency], s = FX.sym[currency];
+  if (currency === "JPY") return s + Math.round(x).toLocaleString("en-US");
+  return x >= 100 ? s + x.toFixed(0) : s + x.toFixed(2);
+};
+const usd = money;   // historical name — every call site predates the currency selector
 const nf  = n => (n||0).toLocaleString("en-US");
 /* String() first: callers pass numbers and occasionally structured objects
    (a roost profile's `error` is a dict) — `.replace` on those threw and took
@@ -700,14 +717,15 @@ const PLANS = {
     { id: "lite", label: "Lite", usd: 18 },
     { id: "pro",  label: "Pro",  usd: 72 },
     { id: "max",  label: "Max",  usd: 160 }] },
-  openai: { label: "ChatGPT", options: [
-    { id: "plus", label: "Plus", usd: 20 },
-    { id: "pro",  label: "Pro",  usd: 200 }] },
+  openai: { label: "ChatGPT", def: "codex100", options: [
+    { id: "plus",     label: "Plus",  usd: 20 },
+    { id: "codex100", label: "Codex", usd: 100 },   // chatgpt.com/codex/pricing
+    { id: "pro",      label: "Pro",   usd: 200 }] },
 };
 const BASES = [
   ["api",    "API rates",    "computed from this lane's tokens at the provider's published per-MTok rates"],
   ["plan",   "plan (blended)","flat subscription, shown as a BLENDED cost: the monthly fee allocated across that month's plan-basis lanes by API-notional share — a month's blended costs sum to the fee"],
-  ["report", "self-reported","whatever the worker CLI printed (GLM prints an Anthropic-rate figure - wrong for z.ai)"],
+  ["report", "CLI figure",   "the cost number the worker CLI itself printed (claude -p's total_cost_usd). GLM's CLI prices z.ai traffic at Anthropic rates — wrong; codex and grok print nothing"],
 ];
 /* Which bases make sense per brain: api needs a rate card, plan needs a plan. */
 function basesFor(brain) {
@@ -730,7 +748,9 @@ const basisOf = brain => {
 const planOf = group => {
   const g = PLANS[group];
   if (!g) return null;
-  return g.options.find(o => o.id === planChoice[group]) || g.options[g.options.length - 1];
+  return g.options.find(o => o.id === planChoice[group])
+      || g.options.find(o => o.id === g.def)
+      || g.options[g.options.length - 1];
 };
 const savePricing = () => {
   localStorage.setItem("ffd.pricing", JSON.stringify(pricingBasis));
@@ -831,41 +851,63 @@ function costFmt(c) {
 function costTitle(c) {
   if (!c) return "";
   const bits = [];
-  if (c.reported) bits.push(`${c.reported} lane(s) self-reported`);
-  if (c.estimated) bits.push(`${c.estimated} estimated from tokens at ${PRICING.verified} rates`);
-  if (c.blended) bits.push(`${c.blended} blended from monthly plan fees (fee × this lane's API-notional share of the month)`);
-  if (c.plan) bits.push(`${c.plan} plan-basis without a token split — cannot be blended`);
-  if (c.none) bits.push(`${c.none} with no figure — true spend is higher`);
-  return bits.join(" · ");
+  if (c.reported) bits.push(`${c.reported} priced by the worker CLI`);
+  if (c.estimated) bits.push(`${c.estimated} estimated at API rates`);
+  if (c.blended) bits.push(`${c.blended} blended from the plan fee`);
+  if (c.plan) bits.push(`${c.plan} plan lane(s) with no token split`);
+  if (c.none) bits.push(`${c.none} unpriced`);
+  return bits.join(" · ") + " — details in ⚙ costs";
 }
 
 /* ── settings modal ──────────────────────────────────────────────────────── */
 const SPAWNABLE = ["fable", "opus", "sonnet", "haiku", "glm", "codex", "grok", "pi"];
+/* One row per MODEL FAMILY, not per model: a basis choice is really a billing
+   question, and billing happens per provider account (one Claude Max covers
+   fable/opus/sonnet/haiku), so four identical Claude rows were noise. */
+const MODEL_GROUPS = [
+  { key: "claude", label: "Claude", brains: ["fable", "opus", "sonnet", "haiku"] },
+  { key: "glm",    label: "GLM",    brains: ["glm"] },
+  { key: "openai", label: "Codex",  brains: ["codex"] },
+  { key: "xai",    label: "Grok",   brains: ["grok"] },
+  { key: "pi",     label: "Pi",     brains: ["pi"] },
+];
 function renderPricingModal() {
-  const rows = SPAWNABLE.map(b => {
-    const r = PRICING.rates[b], col = brainOf(b)[1], cur = basisOf(b);
-    const radios = basesFor(b).map(id => {
+  const rows = MODEL_GROUPS.map(g => {
+    const first = g.brains[0], col = brainOf(first)[1], cur = basisOf(first);
+    const radios = basesFor(first).map(id => {
       const meta = BASES.find(x => x[0] === id);
       const label = id === "plan"
-        ? (PLANS[PLAN_GROUP[b]]?.label || "plan") + " (blended)" : meta[1];
-      return `<label title="${esc(meta[2])}"><input type="radio" name="pb-${b}" value="${id}"
+        ? (PLANS[PLAN_GROUP[first]]?.label || "plan") + " (blended)" : meta[1];
+      return `<label title="${esc(meta[2])}"><input type="radio" name="pb-${g.key}" value="${id}"
         ${cur === id ? "checked" : ""}>${esc(label)}</label>`;
     }).join("");
-    const rate = r
-      ? `${r.provider} · $${r.in}/M in · $${r.cached}/M cached · $${r.out}/M out`
-      : "no published rate — wildcard/unpriceable brain";
+    const rate = g.brains.length > 1
+      ? `${PRICING.rates[first].provider} $/MTok in·cached·out — ` + g.brains.map(b => {
+          const r = PRICING.rates[b];
+          return `${b} ${r.in}·${r.cached}·${r.out}`;
+        }).join("  ")
+      : (PRICING.rates[first]
+        ? `${PRICING.rates[first].provider} · $${PRICING.rates[first].in}/M in · $${PRICING.rates[first].cached}/M cached · $${PRICING.rates[first].out}/M out`
+        : "no published rate — wildcard provider");
     return `<div class="prow">
-      <span class="nm" style="color:${col}">${esc(b)}</span>${radios}
+      <span class="nm" style="color:${col}">${esc(g.label)}</span>${radios}
       <span class="rate">${esc(rate)}</span></div>`;
   }).join("");
   return `<div class="modal">
-    <h3>${ico("coin")}cost basis per brain
+    <h3>${ico("coin")}cost settings
       <button class="x" id="modalclose" aria-label="Close">✕</button></h3>
-    <div class="sub">How each brain's spend is priced everywhere on this page.
+    <div class="sub">How each model family's spend is priced everywhere on this page.
       <b>API rates</b> computes from the lane's own token counts at the provider's
-      published prices (verified ${esc(PRICING.verified)}). <b>plan-covered</b> is for
-      accounts on a flat subscription — marginal cost is $0. <b>self-reported</b>
-      trusts whatever the worker CLI printed.</div>
+      published prices. <b>Plan (blended)</b> allocates the subscription fee across the
+      month's plan-basis lanes. <b>CLI figure</b> trusts the number the worker CLI printed.</div>
+    <div class="prow">
+      <span class="nm">currency</span>
+      <select id="fxsel" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg)">
+        ${Object.keys(FX.rates).map(c =>
+          `<option value="${c}" ${c === currency ? "selected" : ""}>${c}${c === "USD" ? " (default)" : ""}</option>`).join("")}
+      </select>
+      <span class="rate">display-only conversion at ${esc(FX.verified)} rates — everything is computed and billed in USD</span>
+    </div>
     ${rows}
     <div class="sub" style="margin-top:14px"><b>Plan tiers</b> — which subscription each
       provider group is actually on. Blending allocates this monthly fee across the
@@ -877,17 +919,18 @@ function renderPricingModal() {
         <span class="nm">${esc(p.label)}</span>
         ${p.options.map(o => `<label title="$${o.usd}/month"><input type="radio"
           name="plan-${g}" value="${o.id}" ${cur.id === o.id ? "checked" : ""}>
-          ${esc(o.label)} · $${o.usd}/mo</label>`).join("")}
+          ${esc(o.label)} · ${money(o.usd)}/mo</label>`).join("")}
       </div>`;
     }).join("")}
-    <div class="note">Figures marked <b>≈</b> are estimates or blended shares, <b>*</b>
-      means some lanes carry no figure at all (true spend is higher), and none of this
-      is an invoice — token counts (<span class="mono">tokens_total</span>) remain the
-      only brain-consistent comparison. GLM's self-report is the Claude CLI pricing
-      z.ai traffic at Anthropic rates, which is why its default basis is API rates.
-      Archived lanes keep no input/cache split, so they can't be estimated OR blended.
-      Running several subscriptions of one tier (multiple Max accounts) is not yet
-      modelled — the blend covers one fee.</div>
+    <div class="note"><b>Markers:</b> <b>≈</b> estimate or blended share · <b>*</b> some
+      lanes have no figure (true spend is higher) · <b>plan</b> on a subscription but
+      unblendable. None of this is an invoice — token counts
+      (<span class="mono">tokens_total</span>) are the only brain-consistent comparison.
+      GLM's CLI figure prices z.ai traffic at Anthropic rates (wrong), which is why its
+      default basis is API rates. Archived lanes keep no input/cache token split, so
+      they can't be estimated or blended. Multiple subscriptions of one tier (several
+      Max accounts) aren't modelled yet — the blend covers one fee. Rates verified
+      ${esc(PRICING.verified)}.</div>
   </div>`;
 }
 function openPricingModal() {
@@ -897,13 +940,24 @@ function openPricingModal() {
   document.getElementById("modalclose").onclick = closePricingModal;
   w.onclick = ev => { if (ev.target === w) closePricingModal(); };
   w.querySelectorAll("input[type=radio]").forEach(inp => inp.onchange = () => {
-    if (inp.name.startsWith("pb-")) pricingBasis[inp.name.slice(3)] = inp.value;
+    if (inp.name.startsWith("pb-")) {
+      const grp = MODEL_GROUPS.find(x => x.key === inp.name.slice(3));
+      (grp?.brains || []).forEach(b => pricingBasis[b] = inp.value);
+    }
     else if (inp.name.startsWith("plan-")) planChoice[inp.name.slice(5)] = inp.value;
     savePricing();
     // repaint the page behind the modal so the new basis shows immediately
     lastHTML.delete(document.getElementById("main"));
     if (doc) render();
   });
+  const fx = document.getElementById("fxsel");
+  if (fx) fx.onchange = () => {
+    currency = fx.value;
+    localStorage.setItem("ffd.currency", currency);
+    lastHTML.delete(document.getElementById("main"));
+    if (doc) render();
+    openPricingModal();   // re-render the modal so its own money() labels follow
+  };
 }
 function closePricingModal() {
   const w = document.getElementById("modalwrap");
@@ -1462,6 +1516,21 @@ function roostView() {
   const indCol = ind === "none" ? "var(--ok)" : ind === "minor" ? "var(--warn)" : "var(--bad)";
   const limited = (c.rate_limited || 0) + (c.session_limit || 0) + (c.weekly_limit || 0);
   const authBad = (c.auth_expired || 0) + (c.auth_dead || 0);
+  // roost ships its own widget (script-free, .rw-scoped) — embed it verbatim.
+  // The hand-rolled cards below survive only as the fallback for a roost old
+  // enough to lack the `widget` subcommand.
+  const header = `<div class="rhead">
+    <button class="crumb" data-k="">${ico("chev")}fleet</button>
+    <div class="rhead-r"><h2>roost · accounts</h2>
+      <span class="tag">Claude Code OAuth profiles</span>
+      ${d.building ? `<span class="tag">probing…</span>`
+        : d.age_s != null ? `<span class="tag">probed ${fmt(d.age_s)} ago</span>` : ""}
+      <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
+        title="Re-run roost now (local CLI, no model calls)">
+        ${ico("activity")}${d.building ? "probing…" : "re-probe"}</button>
+      ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
+    </div></div>`;
+  if (d.widget) return header + `<div class="rw-host">${d.widget}</div>`;
   const cards = (d.profiles || []).map(pr => `
     <div class="card${pr.health === "ok" ? "" : " is-stalled"}">
       <div class="hd">${ico("key")}
@@ -1474,12 +1543,7 @@ function roostView() {
       ${pr.error ? (e => `<div class="errline" title="${esc(e)}">${esc(e)}</div>`)(
         typeof pr.error === "string" ? pr.error : JSON.stringify(pr.error)) : ""}
     </div>`).join("");
-  return `<div class="rhead">
-    <button class="crumb" data-k="">${ico("chev")}fleet</button>
-    <div class="rhead-r"><h2>roost · accounts</h2>
-      <span class="tag">Claude Code OAuth profiles</span>
-      ${d.building ? `<span class="tag">probing…</span>`
-        : d.age_s != null ? `<span class="tag">probed ${fmt(d.age_s)} ago</span>` : ""}</div>
+  return header + `<div class="rhead">
     ${p ? `<div class="path" style="word-break:normal"><span class="dstat" style="background:${indCol}"></span>
       ${esc(p.description || "platform status unknown")}${p.active_incidents
         ? ` · ${p.active_incidents} active incident(s)` : ""}${(p.degraded || []).length
@@ -1490,12 +1554,6 @@ function roostView() {
       ${limited ? `<div class="stat warn"><b>${limited}</b><span>limited</span></div>` : ""}
       ${authBad ? `<div class="stat bad"><b>${authBad}</b><span>auth</span></div>` : ""}
       ${c.network_error ? `<div class="stat bad"><b>${c.network_error}</b><span>network</span></div>` : ""}
-    </div>
-    <div class="treectl" style="border:0;padding:9px 0 0;margin:0">
-      <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
-        title="Re-run roost status --json now (local CLI, no model calls)">
-        ${ico("activity")}${d.building ? "probing…" : "re-probe accounts"}</button>
-      ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div>
     <div class="note">Per-profile session/weekly usage as roost last measured it
       (roost caches probes ~5 min; the server another 60s). Platform status comes from
@@ -1563,7 +1621,7 @@ function harnessCard(h, stats) {
        ${s.commits && sCost && sCost.usd != null
          ? `<span class="chip" title="rough efficiency: covered cost divided by commits landed by this harness's lanes">${ico("coin")}${usd(sCost.usd / s.commits)}<span style="color:var(--text-muted)">/commit</span></span>` : ""}
        ${s.failed ? chip("alert", nf(s.failed), "failed", "warn") : ""}`
-    : `<span class="chip" title="no lane on this machine has ever run on this brain">never used</span>`;
+    : `<span class="chip" title="no lane on this machine has ever run on this model">never used</span>`;
   // Same collapse mechanism as a lane card, and the same rule about WHAT
   // collapse may hide: the chart, the numbers and the capacity dot stay, the
   // spec table folds. Namespaced "h:" so a harness can never collide with a
@@ -1621,7 +1679,7 @@ function fleetView() {
   const modelTable = models.length ? `
     <div class="phase"><div class="phase-h mono"><span>models observed</span>
       <span class="n">${models.length}</span></div>
-    <div class="tablewrap"><table class="hist mono"><thead><tr><th>model</th><th>brain</th>
+    <div class="tablewrap"><table class="hist mono"><thead><tr><th>model</th><th>family</th>
       <th class="num">lanes</th><th class="num">runs</th><th class="num">tokens</th>
       <th class="num">output</th><th class="num">cost</th></tr></thead><tbody>
       ${models.map(([m, v]) => `<tr><td>${esc(m)}</td>
@@ -1670,10 +1728,7 @@ function fleetView() {
         ${ico("activity")}${probeLabel}</button>
       ${d?.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div>
-    <div class="note">${esc(costTitle(totalCost) || "no cost data yet")}. ≈ marks token-based
-      estimates at ${esc(PRICING.verified)} rates, * means uncosted lanes remain — never an
-      invoice. Basis per brain: ⚙ costs. Counts cover every run under the configured roots
-      plus the archived history. “available” reflects the last capacity probe, not the spec.</div>
+    <div class="note">“available” reflects the last capacity probe, not the spec.</div>
   </div>
   <div class="phase"><div class="phase-h mono"><span>harnesses</span>
     <span class="n">${HARNESS.length}</span></div>
@@ -1832,9 +1887,6 @@ function overview() {
         title="${doc.cache.hits} of ${doc.cache.hits + doc.cache.misses} runs served from cache this build — ${doc.cache.entries} entries on disk. A finished run whose directory has not changed is never re-read; this is the difference between a 29s build and a 15ms one."
         ><b>${Math.round((doc.cache.hit_rate ?? 0) * 100)}%</b><span>cache hit</span></div>` : ""}
     </div>
-    <div class="note">${esc(costTitle(a.cost))}. ≈ marks estimates, * means uncosted
-      lanes remain — basis per brain in ⚙ costs. Counts cover live runs AND archived
-      history. Click a project name on the left for its roll-up, a run for its lanes.</div>
   </div>` + (live.length ? `<div class="phase"><div class="phase-h mono"><span>in flight</span>
       <span class="n">${live.length}</span></div>
     <div class="deck">${live.map(runCard).join("")}</div></div>` : "");
@@ -1866,9 +1918,6 @@ function projectView(label) {
     <div class="path mono">${ico("folder")}${esc(repoPath)}</div>
     ${chart}${brandLegend(a.brains)}
     ${aggStatRow(a, live)}
-    <div class="note">${esc(costTitle(a.cost) || "no cost data")}. Roll-up covers this
-      repo's runs still on disk plus its archived history. Click a run card for the
-      wave's lane grid.</div>
   </div>
   ${runs.length ? `<div class="phase"><div class="phase-h mono"><span>runs</span>
       <span class="n">${runs.length}</span></div>
@@ -1971,9 +2020,6 @@ function runDetail(r) {
       ${stalledN ? `<div class="stat warn"><b>${stalledN}</b><span>stalled</span></div>` : ""}
       ${failedN  ? `<div class="stat bad"><b>${failedN}</b><span>failed</span></div>` : ""}
     </div>
-    ${cr.kind !== "reported" || cr.partial ? `<div class="note">${esc(costTitle(cr))}.
-      Cost basis per brain is set in the ⚙ costs dialog; token counts cover every lane
-      and are the comparable figure.</div>` : ""}
     ${uncovered ? `<div class="note">${ico("alert")} ${uncovered} in-flight lane(s) emit no live
       stream (grok, or claude lanes spawned without --worktree). For those the stall detector
       reports “cannot tell”, never “healthy”.</div>` : ""}
@@ -2032,10 +2078,10 @@ function laneCard(l, age) {
   const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
   const lc = laneCost(l);
   const lcPlan = PLANS[PLAN_GROUP[l.brain]];
-  const lcTitle = lc.kind === "estimated" ? `estimated from tokens at ${PRICING.verified} API rates — not an invoice`
-    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee — a month's blended costs sum to the fee`
-    : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan but no token split survives — cannot be blended`
-    : lc.kind === "reported" ? "self-reported by the worker CLI" : "no cost figure for this lane";
+  const lcTitle = lc.kind === "estimated" ? "estimated from tokens at API rates"
+    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee`
+    : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan — no token split to blend`
+    : lc.kind === "reported" ? "the worker CLI's own cost figure" : "no cost figure for this lane";
   return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${isCollapsed(l.id)?" collapsed":""}">
     <div class="hd">
       ${brandMark(l.brain, col)}
@@ -2104,11 +2150,9 @@ function historyCard(h) {
       <div class="stat"><b>${tok(h.tokens_out)}</b><span>output</span></div>
       <div class="stat" title="${esc(costTitle(hc))}"><b>${costFmt(hc)}</b><span>cost</span></div>
     </div>
-    <div class="note">archived ${esc(when)} — ${fate}
-      ${hc.kind !== "reported" || hc.partial ? esc(costTitle(hc)) + ". Archived lanes keep no "
-        + "input/cache split, so uncosted brains cannot be re-estimated here." : ""}</div>
+    <div class="note">archived ${esc(when)} — ${fate}</div>
   </div>
-  <div class="tablewrap"><table class="hist mono"><thead><tr><th>lane</th><th>brain</th><th>phase</th><th>state</th>
+  <div class="tablewrap"><table class="hist mono"><thead><tr><th>lane</th><th>model</th><th>phase</th><th>state</th>
     <th class="num">elapsed</th><th class="num">tokens</th><th class="num">out</th>
     <th class="num">commits</th><th class="num">cost</th></tr></thead><tbody>
     ${(h.lanes||[]).map(l => `<tr><td>${esc(l.id)}</td>

@@ -501,9 +501,12 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   and the page polls until they settle.
 - **ROOST accounts (conditional).** On machines with the `roost` CLI installed
   (claude-lb, the Claude Code OAuth profile health/load-balancer), the sidebar
-  gains a "roost · accounts" entry and `/api/roost.json` serves a trimmed
-  `roost status --json` — per-profile health, session/weekly usage meters with
-  reset clocks, and the status.claude.com platform indicator. The server probes
+  gains a "roost · accounts" entry. The pane embeds **roost's own `roost
+  widget` fragment verbatim** (script-free, `.rw`-scoped CSS, built for
+  embedding — never re-design a surface roost already ships; a test enforces
+  the pass-through); `/api/roost.json` also carries a trimmed
+  `roost status --json` as the fallback for a roost without the widget
+  subcommand. The server probes
   `shutil.which("roost")` once; absent binary → `{"available": false}` and the
   section never renders. The probe runs in a background thread, cached 60s
   (roost caches its own probes ~5 min); page fetches are tick/click driven,
@@ -585,8 +588,8 @@ date stamped in the file) and a per-brain **pricing basis** the operator picks
 in the ⚙ costs modal: `api` (compute from the lane's token counts at published
 per-MTok rates — the default wherever a rate card exists; this is what fixes
 GLM), `plan` (flat subscription with a **tier** picked per provider group —
-Claude Max 5×/$100 or 20×/$200, GLM Coding Lite/Pro/Max, ChatGPT Plus/Pro —
-shown as a **blended** cost: each calendar month's fee allocated across that
+Claude Max 5×/$100 or 20×/$200, GLM Coding Lite/Pro/Max, ChatGPT Plus/Codex
+$100/Pro — shown as a **blended** cost: each calendar month's fee allocated across that
 month's plan-basis lanes by API-notional share, so a month's blended costs sum
 to exactly the fee, never a flat $0), or `report` (trust the CLI's figure).
 Multiple concurrent subscriptions of one tier are not yet modelled. Every figure says

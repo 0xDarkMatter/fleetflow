@@ -326,6 +326,22 @@ class Roost:
                 tail = (p.stderr or "").strip().splitlines()
                 raise RuntimeError(tail[-1] if tail else f"roost exit {p.returncode}")
             doc = self._trim(data)
+            # `roost widget` is roost's OWN visual for exactly this data — a
+            # self-contained, script-free, .rw-scoped HTML fragment built for
+            # embedding. The dashboard renders it verbatim rather than
+            # re-designing roost's surface. Best-effort: an older roost
+            # without the subcommand just means the pane falls back to the
+            # dashboard's plain profile cards.
+            try:
+                w = subprocess.run(
+                    [self.bin, "widget"],
+                    capture_output=True, text=True, timeout=self.TIMEOUT,
+                    encoding="utf-8", errors="replace",
+                    stdin=subprocess.DEVNULL)
+                if w.returncode == 0 and "<" in (w.stdout or ""):
+                    doc["widget"] = w.stdout
+            except (OSError, subprocess.SubprocessError):
+                pass
             doc["took_ms"] = int((time.time() - t0) * 1000)
             with self.lock:
                 self.doc = doc
