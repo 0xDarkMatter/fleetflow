@@ -931,6 +931,13 @@ function render() {
     ((doc.errors || []).length ? ` · ${doc.errors.length} dir(s) skipped` : "");
   document.getElementById("stamp").title =
     (doc.errors || []).map(e => `${e.path}: ${e.error}`).join("\n") || "";
+  // Tab-title badge: the cheapest alerting surface there is. A stalled lane is
+  // the state most likely to be burning money while looking like progress, so
+  // it earns the ⚠ even when the tab is in the background.
+  const runningRuns = doc.runs.filter(x => x.summary?.state === "running").length;
+  const stalledRuns = doc.runs.filter(x => x.summary?.state === "stalled").length;
+  document.title = (runningRuns || stalledRuns
+    ? `(${runningRuns ? runningRuns + "▶" : ""}${runningRuns && stalledRuns ? " " : ""}${stalledRuns ? stalledRuns + "⚠" : ""}) ` : "") + "fleetflow";
   const fb = document.getElementById("fleetbtn");
   fb.classList.toggle("on", selected === "fleet");
   fb.setAttribute("aria-pressed", String(selected === "fleet"));
@@ -1662,6 +1669,16 @@ function bindCardControls(r) {
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
   const rr = document.getElementById("roostRefresh");
   if (rr) rr.onclick = () => { fetchRoost(true); };
+  const ex2 = document.getElementById("exportRun");
+  if (ex2 && r) ex2.onclick = () => {
+    // Client-side blob download — nothing leaves the machine, no new endpoint.
+    const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `fleetflow-${(r.run || "run").replace(/[^\w.-]/g, "_")}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
   // Drill navigation inside the pane: run cards on the FLEET/PROJECT levels and
   // breadcrumbs carry data-k, same contract as the sidebar rows.
   document.querySelectorAll("#main [data-k]").forEach(b => b.onclick = ev => {
@@ -1840,6 +1857,7 @@ function runDetail(r) {
     { label:"tokens per lane", showX:true }) + brandLegend(s.brains);
 
   const head = `<div class="treectl" style="justify-content:flex-end;margin-bottom:10px">
+      <button class="tbtn" id="exportRun" title="Download this run's full status document (lanes, tokens, states) as JSON — what ff-status reported, plus the roll-up">${ico("file")}export json</button>
       <button class="tbtn" id="cExpand">${ico("chev")}expand all lanes</button>
       <button class="tbtn" id="cCollapse">${ico("chev")}collapse all lanes</button>
     </div>
@@ -2037,6 +2055,12 @@ brandEl.onclick = () => { selected = ""; location.hash = ""; if (doc) render(); 
 document.getElementById("cogbtn").onclick = openPricingModal;
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") closePricingModal();
+  // `/` focuses the filter from anywhere — unless the user is already typing.
+  else if (e.key === "/" && !e.ctrlKey && !e.metaKey &&
+           !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || "")) {
+    e.preventDefault();
+    document.getElementById("filter").focus();
+  }
 });
 document.getElementById("filter").addEventListener("input", e => {
   filter = e.target.value.trim().toLowerCase(); if (doc) render();

@@ -540,6 +540,17 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   (was ~6 min before ff-status's per-lane passes were collapsed). The cache key
   includes ff-status's own mtime, so editing the reader invalidates exactly the
   entries it affects instead of serving the old shape forever.
+- **Three drill levels, all hash-addressable.** The default view is **FLEET**
+  (everything on the machine, live + archived, with lanes/token-breakdown/cost/
+  failure-rate/runtime roll-ups); clicking a repo name in the sidebar drills to
+  **PROJECT** (`#repo:<label>` — that repo's on-disk runs plus archived history,
+  same stat row); a run card or row drills to **WAVE** (the lane grid).
+  Breadcrumbs walk back up; the wordmark is home. The sidebar is accordion
+  strata — pinned capability rows (fleet, roost when installed), *live now*,
+  *projects*, *history* — sharing one collapse-persistence contract. Small
+  comforts: the tab title carries `(N▶ M⚠)` so a background tab still alerts on
+  stalls, `/` focuses the filter, Esc closes the costs modal, and every run
+  detail has an "export json" button (client-side blob, nothing leaves the box).
 - **Card language is shared with the [summon](../summon/) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the
