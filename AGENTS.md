@@ -78,7 +78,8 @@ operational playbook — read it first; this file only carries repo mechanics.
 - **The dashboard's `const PRICING` registry is hand-maintained** (like
   `HARNESS`): per-brain $/MTok rates verified against provider pricing pages,
   with the verification date stamped in the file. When a provider ships new
-  rates or fleetflow gains a brain, update the registry (and its `plans` map)
+  rates or fleetflow gains a brain, update the registry (and the `PLANS` tier
+  table — plan lanes show a BLENDED share of the monthly fee, never $0)
   in the same commit — a stale rate silently mis-prices every ≈ estimate.
   Tests assert every spawnable brain has an entry, GLM is priced at z.ai
   rates, estimates carry the `≈` marker, and no native `alert`/`confirm`/

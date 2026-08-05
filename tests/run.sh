@@ -641,9 +641,17 @@ grep -q '"z.ai"' "$DASH" && grep -q '1.40' "$DASH" \
   && ok "pricing: GLM priced at z.ai rates, not Anthropic's" \
   || bad "pricing: z.ai rate card missing (GLM cost stays wrong)"
 # basis choice persists under the dashboard's ffd.* namespace, never ff.*
-grep -q '"ffd.pricing"' "$DASH" \
-  && ok "pricing: basis persisted under ffd.* namespace" \
-  || bad "pricing: basis key not namespaced (ffd.pricing)"
+grep -q '"ffd.pricing"' "$DASH" && grep -q '"ffd.planChoice"' "$DASH" \
+  && ok "pricing: basis + plan tier persisted under ffd.* namespace" \
+  || bad "pricing: basis/plan keys not namespaced (ffd.*)"
+# plan basis must be tiered (Max 5x/20x etc.) and BLENDED, never a flat $0
+grep -q 'const PLANS' "$DASH" && grep -q '"blended"' "$DASH" \
+  && grep -q 'function computePlanPools' "$DASH" \
+  && ok "pricing: tiered plans blend the monthly fee (never \$0)" \
+  || bad "pricing: plan basis missing tiers or blending"
+grep -q 'usd: 0, kind: "plan"' "$DASH" \
+  && bad "pricing: plan lanes hardcoded to \$0 again" \
+  || ok "pricing: no hardcoded \$0 plan lanes"
 # estimates must be visually distinct from invoices: the ≈ marker
 grep -q '"≈"' "$DASH" \
   && ok "pricing: estimates carry the ≈ marker" \

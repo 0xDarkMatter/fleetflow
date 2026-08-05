@@ -500,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · dash-polish";
+const PAGE_BUILD = "2026-08-05 · blended-plans";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -683,33 +683,94 @@ const PRICING = {
        no rate that would be honest. native is a provenance label, not a brain. */
     pi: null, native: null,
   },
-  plans: {
-    fable: "Claude Max", opus: "Claude Max", sonnet: "Claude Max",
-    haiku: "Claude Max", glm: "GLM Coding plan", codex: "ChatGPT plan",
-    grok: null, pi: null, native: null,
-  },
+};
+/* Subscription plans, by billing group. A plan covers a PROVIDER's brains
+   together (one Claude Max subscription serves fable/opus/sonnet/haiku), so
+   tier choice lives per group, not per brain. Fees verified 2026-08-05:
+   Claude Max 5x $100 / 20x $200, GLM Coding Lite $18 / Pro $72 / Max $160,
+   ChatGPT Plus $20 / Pro $200 (Codex CLI bills to the ChatGPT plan). */
+const PLAN_GROUP = { fable: "claude", opus: "claude", sonnet: "claude",
+                     haiku: "claude", glm: "glm", codex: "openai",
+                     grok: null, pi: null, native: null };
+const PLANS = {
+  claude: { label: "Claude Max", options: [
+    { id: "max5x",  label: "Max 5×",  usd: 100 },
+    { id: "max20x", label: "Max 20×", usd: 200 }] },
+  glm: { label: "GLM Coding", options: [
+    { id: "lite", label: "Lite", usd: 18 },
+    { id: "pro",  label: "Pro",  usd: 72 },
+    { id: "max",  label: "Max",  usd: 160 }] },
+  openai: { label: "ChatGPT", options: [
+    { id: "plus", label: "Plus", usd: 20 },
+    { id: "pro",  label: "Pro",  usd: 200 }] },
 };
 const BASES = [
   ["api",    "API rates",    "computed from this lane's tokens at the provider's published per-MTok rates"],
-  ["plan",   "plan-covered", "the account pays a flat subscription; marginal lane cost is $0 and shows as 'plan'"],
+  ["plan",   "plan (blended)","flat subscription, shown as a BLENDED cost: the monthly fee allocated across that month's plan-basis lanes by API-notional share — a month's blended costs sum to the fee"],
   ["report", "self-reported","whatever the worker CLI printed (GLM prints an Anthropic-rate figure - wrong for z.ai)"],
 ];
 /* Which bases make sense per brain: api needs a rate card, plan needs a plan. */
 function basesFor(brain) {
   const out = [];
   if (PRICING.rates[brain]) out.push("api");
-  if (PRICING.plans[brain]) out.push("plan");
+  if (PLANS[PLAN_GROUP[brain]]) out.push("plan");
   out.push("report");
   return out;
 }
-let pricingBasis = {};
+let pricingBasis = {}, planChoice = {};
 try { pricingBasis = JSON.parse(localStorage.getItem("ffd.pricing") || "{}"); } catch (e) {}
+try { planChoice = JSON.parse(localStorage.getItem("ffd.planChoice") || "{}"); } catch (e) {}
 const basisOf = brain => {
   const legal = basesFor(brain);
   const v = pricingBasis[brain];
   return legal.includes(v) ? v : legal[0];   // default: api where a rate exists
 };
-const savePricing = () => localStorage.setItem("ffd.pricing", JSON.stringify(pricingBasis));
+/* Selected tier for a plan group; defaults to the TOP tier — under-stating a
+   fleet operator's subscription would under-blend every lane. */
+const planOf = group => {
+  const g = PLANS[group];
+  if (!g) return null;
+  return g.options.find(o => o.id === planChoice[group]) || g.options[g.options.length - 1];
+};
+const savePricing = () => {
+  localStorage.setItem("ffd.pricing", JSON.stringify(pricingBasis));
+  localStorage.setItem("ffd.planChoice", JSON.stringify(planChoice));
+};
+
+/* API-notional value of one lane — what it WOULD have cost at API rates.
+   The unit of account for blending; needs the live lane's token split. */
+const apiEst = l => {
+  const r = PRICING.rates[l.brain];
+  if (!r || l.tokens_in == null || l.tokens_out == null) return null;
+  return ((l.tokens_in || 0) * r.in + (l.tokens_cached || 0) * r.cached
+        + (l.tokens_out || 0) * r.out) / 1e6;
+};
+
+/* BLENDED plan pricing. "Marginal cost $0" is true and useless — the honest
+   per-lane figure for a flat subscription is an amortisation: each calendar
+   month's plan fee is allocated across that month's plan-basis lanes in
+   proportion to their API-notional value, so one month's blended costs sum to
+   exactly the fee. Pools are rebuilt from the aggregate each render; lanes
+   without a token split (archived digests) can't join a pool and show 'plan'.
+   Early in a month the pool is small, so each lane carries a big share — that
+   is amortisation-to-date, not a bug. */
+let PLAN_POOLS = new Map();   // "group|YYYY-MM" -> Σ api-notional
+const monthOf = sec => sec ? new Date(sec * 1000).toISOString().slice(0, 7) : null;
+function computePlanPools() {
+  PLAN_POOLS = new Map();
+  const add = (l, fallbackSec) => {
+    const g = PLAN_GROUP[l.brain];
+    if (!g || basisOf(l.brain) !== "plan") return;
+    const m = monthOf(l.started || fallbackSec);
+    const est = apiEst(l);
+    if (!m || est == null || est <= 0) return;
+    l._planMonth = m;
+    const k = g + "|" + m;
+    PLAN_POOLS.set(k, (PLAN_POOLS.get(k) || 0) + est);
+  };
+  for (const r of doc.runs || []) for (const l of r.lanes || []) add(l, r.summary?.started);
+  for (const h of doc.history || []) for (const l of h.lanes || []) add(l, h.archived_at);
+}
 
 /* One lane's cost under the chosen basis.
    Returns {usd, kind} - kind: reported | estimated | plan | none.
@@ -721,37 +782,41 @@ const savePricing = () => localStorage.setItem("ffd.pricing", JSON.stringify(pri
    lane's tokens_in/tokens_cached and archived lanes fall back to none. */
 function laneCost(l) {
   const brain = l.brain, basis = basisOf(brain), r = PRICING.rates[brain];
-  if (basis === "plan") return { usd: 0, kind: "plan" };
+  if (basis === "plan") {
+    const g = PLAN_GROUP[brain], plan = planOf(g);
+    const est = apiEst(l);
+    const pool = l._planMonth ? PLAN_POOLS.get(g + "|" + l._planMonth) : null;
+    if (!plan || est == null || !pool) return { usd: null, kind: "plan" };
+    return { usd: est * plan.usd / pool, kind: "blended" };
+  }
   if (basis === "report")
     return l.cost_usd != null ? { usd: l.cost_usd, kind: "reported" } : { usd: null, kind: "none" };
   // basis === "api"
   const anthropic = r && r.provider === "Anthropic";
   if (anthropic && l.cost_usd != null) return { usd: l.cost_usd, kind: "reported" };
-  if (r && l.tokens_in != null && l.tokens_out != null) {
-    const est = ((l.tokens_in || 0) * r.in + (l.tokens_cached || 0) * r.cached
-               + (l.tokens_out || 0) * r.out) / 1e6;
-    return { usd: est, kind: "estimated" };
-  }
+  const est = apiEst(l);
+  if (est != null) return { usd: est, kind: "estimated" };
   return { usd: null, kind: "none" };
 }
 /* Roll a set of lanes up into one figure + coverage counts. `kind` is
    'reported' only when every covered lane was reported; any estimate taints
    the total into 'estimated' so the ≈ marker can never launder a guess. */
 function costRollup(lanes) {
-  let usd = 0, reported = 0, estimated = 0, plan = 0, none = 0;
+  let usd = 0, reported = 0, estimated = 0, blended = 0, plan = 0, none = 0;
   for (const l of lanes || []) {
     const c = laneCost(l);
     if (c.kind === "reported") { usd += c.usd; reported++; }
     else if (c.kind === "estimated") { usd += c.usd; estimated++; }
+    else if (c.kind === "blended") { usd += c.usd; blended++; }
     else if (c.kind === "plan") plan++;
     else none++;
   }
-  const covered = reported + estimated;
+  const covered = reported + estimated + blended;
   const total = (lanes || []).length;
-  return { usd: covered ? usd : null, reported, estimated, plan, none,
+  return { usd: covered ? usd : null, reported, estimated, blended, plan, none,
            covered, total,
            kind: covered === 0 ? (plan === total && total ? "plan" : "none")
-               : estimated ? "estimated" : "reported",
+               : (estimated || blended) ? "estimated" : "reported",
            partial: none > 0 };
 }
 /* Format a cost with its honesty marker: ≈ = contains estimates, * = some
@@ -760,14 +825,16 @@ function costRollup(lanes) {
 function costFmt(c) {
   if (!c || c.kind === "none") return "—";
   if (c.kind === "plan") return "plan";
-  return (c.kind === "estimated" ? "≈" : "") + usd(c.usd) + (c.partial ? "*" : "");
+  return (c.kind === "estimated" || c.kind === "blended" ? "≈" : "")
+    + usd(c.usd) + (c.partial ? "*" : "");
 }
 function costTitle(c) {
   if (!c) return "";
   const bits = [];
   if (c.reported) bits.push(`${c.reported} lane(s) self-reported`);
   if (c.estimated) bits.push(`${c.estimated} estimated from tokens at ${PRICING.verified} rates`);
-  if (c.plan) bits.push(`${c.plan} plan-covered (flat subscription)`);
+  if (c.blended) bits.push(`${c.blended} blended from monthly plan fees (fee × this lane's API-notional share of the month)`);
+  if (c.plan) bits.push(`${c.plan} plan-basis without a token split — cannot be blended`);
   if (c.none) bits.push(`${c.none} with no figure — true spend is higher`);
   return bits.join(" · ");
 }
@@ -779,7 +846,8 @@ function renderPricingModal() {
     const r = PRICING.rates[b], col = brainOf(b)[1], cur = basisOf(b);
     const radios = basesFor(b).map(id => {
       const meta = BASES.find(x => x[0] === id);
-      const label = id === "plan" ? (PRICING.plans[b] || "plan") : meta[1];
+      const label = id === "plan"
+        ? (PLANS[PLAN_GROUP[b]]?.label || "plan") + " (blended)" : meta[1];
       return `<label title="${esc(meta[2])}"><input type="radio" name="pb-${b}" value="${id}"
         ${cur === id ? "checked" : ""}>${esc(label)}</label>`;
     }).join("");
@@ -799,12 +867,27 @@ function renderPricingModal() {
       accounts on a flat subscription — marginal cost is $0. <b>self-reported</b>
       trusts whatever the worker CLI printed.</div>
     ${rows}
-    <div class="note">Figures marked <b>≈</b> contain estimates, <b>*</b> means some
-      lanes carry no figure at all (true spend is higher), and none of this is an
-      invoice — token counts (<span class="mono">tokens_total</span>) remain the only
-      brain-consistent comparison. GLM's self-report is the Claude CLI pricing z.ai
-      traffic at Anthropic rates, which is why its default basis is API rates.
-      Archived lanes keep no input/cache split, so they can't be re-estimated.</div>
+    <div class="sub" style="margin-top:14px"><b>Plan tiers</b> — which subscription each
+      provider group is actually on. Blending allocates this monthly fee across the
+      month's plan-basis lanes by API-notional share, so a month's blended costs sum
+      to the fee.</div>
+    ${Object.entries(PLANS).map(([g, p]) => {
+      const cur = planOf(g);
+      return `<div class="prow">
+        <span class="nm">${esc(p.label)}</span>
+        ${p.options.map(o => `<label title="$${o.usd}/month"><input type="radio"
+          name="plan-${g}" value="${o.id}" ${cur.id === o.id ? "checked" : ""}>
+          ${esc(o.label)} · $${o.usd}/mo</label>`).join("")}
+      </div>`;
+    }).join("")}
+    <div class="note">Figures marked <b>≈</b> are estimates or blended shares, <b>*</b>
+      means some lanes carry no figure at all (true spend is higher), and none of this
+      is an invoice — token counts (<span class="mono">tokens_total</span>) remain the
+      only brain-consistent comparison. GLM's self-report is the Claude CLI pricing
+      z.ai traffic at Anthropic rates, which is why its default basis is API rates.
+      Archived lanes keep no input/cache split, so they can't be estimated OR blended.
+      Running several subscriptions of one tier (multiple Max accounts) is not yet
+      modelled — the blend covers one fee.</div>
   </div>`;
 }
 function openPricingModal() {
@@ -814,7 +897,8 @@ function openPricingModal() {
   document.getElementById("modalclose").onclick = closePricingModal;
   w.onclick = ev => { if (ev.target === w) closePricingModal(); };
   w.querySelectorAll("input[type=radio]").forEach(inp => inp.onchange = () => {
-    pricingBasis[inp.name.slice(3)] = inp.value;
+    if (inp.name.startsWith("pb-")) pricingBasis[inp.name.slice(3)] = inp.value;
+    else if (inp.name.startsWith("plan-")) planChoice[inp.name.slice(5)] = inp.value;
     savePricing();
     // repaint the page behind the modal so the new basis shows immediately
     lastHTML.delete(document.getElementById("main"));
@@ -917,6 +1001,8 @@ function clearBanner() { document.getElementById("banner").className = "banner";
 
 /* ── render ──────────────────────────────────────────────────────────────── */
 function render() {
+  // Blended-plan pools must exist before anything prices a lane this pass.
+  computePlanPools();
   const t = doc.totals || {};
   document.getElementById("totals").innerHTML =
     `<span><b>${t.live_runs || 0}</b> live</span><span><b>${t.runs || 0}</b> runs</span>` +
@@ -1945,8 +2031,10 @@ function laneCard(l, age) {
   const tot = Math.max(1, l.tokens_total || 0);
   const freshPct = Math.round(((l.tokens_in || 0) / tot) * 100);
   const lc = laneCost(l);
+  const lcPlan = PLANS[PLAN_GROUP[l.brain]];
   const lcTitle = lc.kind === "estimated" ? `estimated from tokens at ${PRICING.verified} API rates — not an invoice`
-    : lc.kind === "plan" ? `covered by ${PRICING.plans[l.brain] || "a flat plan"} — no marginal cost`
+    : lc.kind === "blended" ? `blended share of the ${lcPlan?.label || "plan"} ${planOf(PLAN_GROUP[l.brain])?.label || ""} monthly fee — a month's blended costs sum to the fee`
+    : lc.kind === "plan" ? `on the ${lcPlan?.label || "flat"} plan but no token split survives — cannot be blended`
     : lc.kind === "reported" ? "self-reported by the worker CLI" : "no cost figure for this lane";
   return `<div class="card ${l.state==="running"?"is-running":l.state==="stalled"?"is-stalled":l.state==="failed"?"is-failed":""}${isCollapsed(l.id)?" collapsed":""}">
     <div class="hd">
