@@ -544,9 +544,19 @@ consistently that GLM lane had consumed 4.5M. `ff-status` now also emits
 `tokens_in` / `tokens_cached` / `tokens_out` / `tokens_total`, which mean the
 same thing for every brain, plus `cost_usd` where the worker prices its own turn.
 **Cost is partial by construction:** claude-family workers self-report
-`total_cost_usd`; codex and grok report none, so run totals say how many lanes
-they cover and the dashboard marks them `*`. For GLM the figure is the CLI's
-Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an amount owed. A
+`total_cost_usd`; codex and grok report none. For GLM the self-reported figure
+is the CLI's Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an
+amount owed. The dashboard therefore carries its own hand-maintained `PRICING`
+registry (rates verified against Anthropic/z.ai/OpenAI/xAI published pricing,
+date stamped in the file) and a per-brain **pricing basis** the operator picks
+in the ⚙ costs modal: `api` (compute from the lane's token counts at published
+per-MTok rates — the default wherever a rate card exists; this is what fixes
+GLM), `plan` (flat subscription — Claude Max / GLM Coding / ChatGPT — marginal
+cost shows as "plan"), or `report` (trust the CLI's figure). Every figure says
+what it is: plain `$x` is self-reported, `≈$x` contains estimates, `*` means
+uncosted lanes remain, and nothing is ever presented as an invoice. The basis
+persists under `ffd.pricing`. Archived history lanes keep no input/cache split,
+so they cannot be re-estimated — they fall back to reported-or-nothing. A
 snapshot card follows the monitor's layout doctrine: the run summary (name,
 totals, per-lane strip) sits in a header pinned via `position: sticky` at the
 card's top, with agent/lane cards listed vertically beneath it ordered

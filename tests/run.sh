@@ -616,6 +616,39 @@ grep -q 'setInterval.*probeDoctor' "$DASH" \
   && bad "fleet view: live probe on a timer (spends model calls)" \
   || ok "fleet view: no timer-driven capacity probe"
 
+# --- dashboard: pricing registry + cost honesty ---------------------------------
+# The self-reported cost column was brain-inconsistent (GLM prints an
+# Anthropic-rate figure for z.ai traffic; codex/grok print nothing). The
+# PRICING registry + per-brain basis is the fix; guard its invariants.
+grep -q 'const PRICING' "$DASH" && grep -q 'function laneCost' "$DASH" \
+  && ok "dashboard: pricing registry + laneCost present" \
+  || bad "dashboard: pricing machinery missing"
+# every rated brain must appear in the registry (rates or explicit null)
+PMISS=""
+for b in fable opus sonnet haiku glm codex grok pi; do
+  grep -qE "^\s+$b:" "$DASH" || PMISS="$PMISS $b"
+done
+[ -z "$PMISS" ] && ok "pricing: every spawnable brain has a registry entry" \
+  || bad "pricing: registry missing brain(s):$PMISS"
+grep -q '"z.ai"' "$DASH" && grep -q '1.40' "$DASH" \
+  && ok "pricing: GLM priced at z.ai rates, not Anthropic's" \
+  || bad "pricing: z.ai rate card missing (GLM cost stays wrong)"
+# basis choice persists under the dashboard's ffd.* namespace, never ff.*
+grep -q '"ffd.pricing"' "$DASH" \
+  && ok "pricing: basis persisted under ffd.* namespace" \
+  || bad "pricing: basis key not namespaced (ffd.pricing)"
+# estimates must be visually distinct from invoices: the ≈ marker
+grep -q '"≈"' "$DASH" \
+  && ok "pricing: estimates carry the ≈ marker" \
+  || bad "pricing: estimates indistinguishable from reported cost"
+# the settings surface is a styled in-app modal — native dialogs are banned
+grep -qE 'window\.(alert|confirm|prompt)\(|[^.a-zA-Z](alert|confirm|prompt)\(' "$DASH" \
+  && bad "dashboard: native browser dialog present (alert/confirm/prompt)" \
+  || ok "dashboard: no native browser dialogs"
+grep -q 'id="cogbtn"' "$DASH" && grep -q 'modal-wrap' "$DASH" \
+  && ok "dashboard: cost settings cog + in-app modal present" \
+  || bad "dashboard: cost settings surface missing"
+
 # --- ff-serve: doctor endpoint ---------------------------------------------------
 SRV="$HERE/../scripts/ff-serve.py"
 grep -q '/api/doctor.json' "$SRV" \
