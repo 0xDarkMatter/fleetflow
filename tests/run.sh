@@ -732,6 +732,14 @@ grep -q 'setInterval.*fetchRoost' "$DASH" \
 grep -q '\[self.bin, "widget"\]' "$SRV" && grep -q 'rw-host' "$DASH" \
   && ok "roost: ships its own widget, embedded verbatim (no redesign)" \
   || bad "roost: widget fragment not passed through"
+# auth refresh mutates the token store: click-gated endpoint, never a timer
+grep -q '/api/roost/refresh' "$SRV" && grep -q '"refresh", "--soon"' "$SRV" \
+  && grep -q 'id="roostAuth"' "$DASH" \
+  && ok "roost: auth refresh is a click-gated endpoint" \
+  || bad "roost: auth refresh missing"
+grep -q 'setInterval.*roost/refresh\|setInterval.*roostAuth' "$DASH" \
+  && bad "roost: auth refresh on a timer (mutates token store)" \
+  || ok "roost: no timer-driven auth refresh"
 
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by

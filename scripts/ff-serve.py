@@ -308,10 +308,49 @@ class Roost:
         self.doc: dict | None = None
         self.at = 0.0
         self.running = False
+        self.refreshing = False
+        self.refresh_result: dict | None = None
         self.last_error: str | None = None
         self.bin = shutil.which("roost")
         if self.bin:
             err(f"roost detected at {self.bin} - ROOST accounts pane enabled")
+
+    def refresh_auth(self) -> dict:
+        """Kick `roost refresh --soon 30m --json` in the background: renews the
+        OAuth tokens of expired and soon-to-expire profiles. Local CLI only, no
+        model calls - but it IS a state change to the auth store, so it runs
+        strictly click-gated, never on a poll or timer."""
+        if not self.bin:
+            return {"available": False}
+        with self.lock:
+            start = not self.refreshing
+            if start:
+                self.refreshing = True
+        if start:
+            threading.Thread(target=self._refresh, daemon=True).start()
+        with self.lock:
+            return {"available": True, "refreshing": True,
+                    "last": self.refresh_result}
+
+    def _refresh(self) -> None:
+        try:
+            p = subprocess.run(
+                [self.bin, "refresh", "--soon", "30m", "--json"],
+                capture_output=True, text=True, timeout=180,
+                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+            out = (p.stdout or p.stderr or "").strip()
+            with self.lock:
+                self.refresh_result = {"ok": p.returncode == 0,
+                                       "at": int(time.time()),
+                                       "detail": out[:400]}
+        except Exception as e:  # noqa: BLE001
+            with self.lock:
+                self.refresh_result = {"ok": False, "at": int(time.time()),
+                                       "detail": f"{type(e).__name__}: {e}"}
+        finally:
+            with self.lock:
+                self.refreshing = False
+                self.at = 0.0   # token state changed - next status read re-probes
 
     def _run(self) -> None:
         t0 = time.time()
@@ -401,12 +440,16 @@ class Roost:
             threading.Thread(target=self._run, daemon=True).start()
         with self.lock:
             doc, building, error = self.doc, self.running, self.last_error
+        with self.lock:
+            refreshing, refresh = self.refreshing, self.refresh_result
         if doc is None:
             return {"schema": "fleetflow/roost/1", "available": True,
                     "building": building, "profiles": [], "counts": {},
-                    "platform": None, "age_s": None, "error": error}
+                    "platform": None, "age_s": None, "error": error,
+                    "refreshing": refreshing, "refresh": refresh}
         return {**doc, "building": building,
-                "age_s": int(time.time() - self.at), "error": error}
+                "age_s": int(time.time() - self.at), "error": error,
+                "refreshing": refreshing, "refresh": refresh}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -492,6 +535,10 @@ class Handler(BaseHTTPRequestHandler):
             mode = "live" if (q.get("live", [None])[0] in truthy) else "offline"
             force = q.get("force", [None])[0] in truthy
             self._json(200, self.doctor.get(mode, force=force))
+            return
+
+        if path == "/api/roost/refresh":
+            self._json(200, self.roost.refresh_auth())
             return
 
         if path == "/api/roost.json":

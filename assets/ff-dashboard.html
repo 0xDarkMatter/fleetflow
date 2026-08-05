@@ -500,7 +500,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · model-rename";
+const PAGE_BUILD = "2026-08-05 · auth-refresh";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -1528,6 +1528,11 @@ function roostView() {
       <button class="tbtn" id="roostRefresh" ${d.building ? "disabled" : ""}
         title="Re-run roost now (local CLI, no model calls)">
         ${ico("activity")}${d.building ? "probing…" : "re-probe"}</button>
+      <button class="tbtn" id="roostAuth" ${d.refreshing ? "disabled" : ""}
+        title="roost refresh --soon 30m — renew OAuth tokens for expired and soon-expiring profiles, then re-probe">
+        ${ico("key")}${d.refreshing ? "refreshing auth…" : "refresh auth"}</button>
+      ${d.refresh ? `<span class="tbtn" style="color:${d.refresh.ok ? "var(--ok)" : "var(--bad)"};cursor:default"
+        title="${esc(d.refresh.detail || "")}">${ico(d.refresh.ok ? "activity" : "alert")}auth ${d.refresh.ok ? "renewed" : "refresh failed"}</span>` : ""}
       ${d.error ? `<span class="tbtn" style="color:var(--bad)">${ico("alert")}${esc(d.error)}</span>` : ""}
     </div></div>`;
   if (d.widget) return header + `<div class="rw-host">${d.widget}</div>`;
@@ -1810,6 +1815,18 @@ function bindCardControls(r) {
   if (probe) probe.onclick = () => { probeDoctor(true, true); };
   const rr = document.getElementById("roostRefresh");
   if (rr) rr.onclick = () => { fetchRoost(true); };
+  // Auth refresh mutates the token store, so it is strictly click-gated; the
+  // settle-poll below just watches the flag until the background CLI returns.
+  const ra = document.getElementById("roostAuth");
+  if (ra) ra.onclick = async () => {
+    try { await fetch("api/roost/refresh", { cache: "no-store" }); } catch (e) {}
+    const watch = async () => {
+      await fetchRoost(false);
+      if (roostDoc && roostDoc.refreshing) setTimeout(watch, 2000);
+      else fetchRoost(true);   // tokens changed — force a fresh status probe
+    };
+    watch();
+  };
   const ex2 = document.getElementById("exportRun");
   if (ex2 && r) ex2.onclick = () => {
     // Client-side blob download — nothing leaves the machine, no new endpoint.

@@ -506,7 +506,10 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   embedding — never re-design a surface roost already ships; a test enforces
   the pass-through); `/api/roost.json` also carries a trimmed
   `roost status --json` as the fallback for a roost without the widget
-  subcommand. The server probes
+  subcommand. A click-gated **refresh auth** button hits `/api/roost/refresh`
+  (`roost refresh --soon 30m --json` in a background thread — renews expired
+  and soon-expiring OAuth tokens, then forces a status re-probe); it mutates
+  the token store, so it is never on a poll or timer. The server probes
   `shutil.which("roost")` once; absent binary → `{"available": false}` and the
   section never renders. The probe runs in a background thread, cached 60s
   (roost caches its own probes ~5 min); page fetches are tick/click driven,
