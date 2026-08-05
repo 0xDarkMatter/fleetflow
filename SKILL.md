@@ -584,8 +584,12 @@ registry (rates verified against Anthropic/z.ai/OpenAI/xAI published pricing,
 date stamped in the file) and a per-brain **pricing basis** the operator picks
 in the ⚙ costs modal: `api` (compute from the lane's token counts at published
 per-MTok rates — the default wherever a rate card exists; this is what fixes
-GLM), `plan` (flat subscription — Claude Max / GLM Coding / ChatGPT — marginal
-cost shows as "plan"), or `report` (trust the CLI's figure). Every figure says
+GLM), `plan` (flat subscription with a **tier** picked per provider group —
+Claude Max 5×/$100 or 20×/$200, GLM Coding Lite/Pro/Max, ChatGPT Plus/Pro —
+shown as a **blended** cost: each calendar month's fee allocated across that
+month's plan-basis lanes by API-notional share, so a month's blended costs sum
+to exactly the fee, never a flat $0), or `report` (trust the CLI's figure).
+Multiple concurrent subscriptions of one tier are not yet modelled. Every figure says
 what it is: plain `$x` is self-reported, `≈$x` contains estimates, `*` means
 uncosted lanes remain, and nothing is ever presented as an invoice. The basis
 persists under `ffd.pricing`. Archived history lanes keep no input/cache split,
