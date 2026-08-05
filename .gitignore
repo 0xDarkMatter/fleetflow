@@ -8,3 +8,5 @@ __pycache__/
 # fleetflow run dirs — runs belong to the TARGET repo's .fleetflow/, but guard
 # against an accidental fleet launched with this repo as cwd
 .fleetflow/
+.claude/fleet/
+.fleet-worktrees/
