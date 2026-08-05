@@ -710,6 +710,11 @@ grep -q 'function roostView' "$DASH" && grep -q 'roostDoc.available' "$DASH" \
 grep -q 'setInterval.*fetchRoost' "$DASH" \
   && bad "dashboard: roost on its own timer" \
   || ok "dashboard: roost fetches are tick/click driven only"
+# roost's own widget (script-free, .rw-scoped) is embedded verbatim — the pane
+# must not re-design a surface roost already ships
+grep -q '\[self.bin, "widget"\]' "$SRV" && grep -q 'rw-host' "$DASH" \
+  && ok "roost: ships its own widget, embedded verbatim (no redesign)" \
+  || bad "roost: widget fragment not passed through"
 
 # --- ff-import.sh (feature B): native Workflow run import ------------------------
 # build a synthetic native wf_ dir: journal.jsonl (started/result keyed by
