@@ -789,6 +789,17 @@ RRN="$(bash "$S/ff-run.sh" resume --run imp1 --repo "$REPO" 2>/dev/null)"; RCRR=
 printf '%s' "$RRN" | jq -e 'any(.[]; .id=="a01cb5f01fadf5610" and .status=="imported")' >/dev/null \
   && ok "ff-run: native packet reported imported (skipped)" || bad "ff-run: native packet not skipped"
 
+# --- ADR conformance (the docs contract, eaten at home) -------------------------
+# adr-lint ships with the adr-ops skill, not this repo; skip (loudly) if absent.
+ADRL="$HOME/.claude/skills/adr-ops/scripts/adr-lint.py"
+if [ -f "$ADRL" ] && command -v python >/dev/null 2>&1; then
+  python "$ADRL" --strict --dir "$HERE/../docs/adr" >/dev/null 2>&1 \
+    && ok "adr: docs/adr conforms (adr-lint --strict)" \
+    || bad "adr: adr-lint --strict has findings (run it directly for detail)"
+else
+  echo "  SKIP  adr-lint unavailable (adr-ops skill or python missing)"
+fi
+
 echo "=== $PASS passed, $FAILN failed ==="
 [ "$FAILN" = 0 ] || exit 1
 exit 0
