@@ -20,6 +20,7 @@ The playbook is [SKILL.md](SKILL.md). This repo is simultaneously a Claude Code
 | [assets/ff-monitor.html](assets/ff-monitor.html) | Single-run live monitor: tethered summary header, active-first sort, S/M/L card sizes, stall-aware pips |
 | [assets/ff-dashboard.html](assets/ff-dashboard.html) | Machine-wide dashboard UI (all runs, live + archived) |
 | [references/](references/) | Per-model worker contracts, native Workflow internals extraction, model-routing doctrine |
+| [docs/adr/](docs/adr/) | Architecture Decision Records — the append-only WHY behind the standing rules (one process, escape guard, stall detection, pricing, …); lint-gated by the test suite |
 
 ## Install as a skill
 
