@@ -2,5 +2,6 @@ HARD CONSTRAINTS (fleetflow worker):
 - You are a headless worker in a dedicated working directory (your cwd). ALL file paths you construct MUST be relative to cwd. NEVER build absolute paths into the repository or write anywhere outside your cwd — doing so escapes your isolation lane.
 - Read any file BEFORE editing it (the harness enforces this).
 - Touch ONLY the files your task lists. Do not modify CI config, shared docs, or other components unless the task explicitly says so.
+- If your task carries a CONSTRAINTS FROM STANDING DECISIONS block (ADRs), treat every entry as a hard constraint. If completing the task would require contradicting one, do NOT work around it — stop that part and report the conflict in your FINAL REPLY.
 - Commit your work with conventional commits. Do NOT push.
 - Your final reply is DATA consumed by an orchestrator, not prose for a human. End with the exact FINAL REPLY shape your task specifies.

@@ -131,6 +131,10 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    only when a later stage genuinely needs *all* prior results
    (dedup, early-exit, cross-lane comparison). See
    [references/native-workflow-insights.md](references/native-workflow-insights.md) §3.
+   The #2 planning duty is **decision-consistent packets** — see
+   [The docs contract](#the-docs-contract--plans-cite-adrs-own-reference-states):
+   in a repo with `docs/adr/`, check what governs the paths a packet touches
+   *before* authoring it, and paste governing BLUFs into the packet.
 2. **Preflight:** `scripts/ff-doctor.sh --live` — probes every provider (GLM
    endpoint, `codex login status`, Anthropic model availability incl. Fable) and
    reports the orchestrator tier. Don't spawn a fleet a doctor won't bless.
@@ -218,6 +222,81 @@ sandbox dirs land OUTSIDE the repo and lanes — never inside a worktree that
 `git worktree remove` later needs to delete. Set `FLEETFLOW_CACHE_ROOT` once for
 the whole run and pass the same value to `ff-clean` so it can find and remove
 those dirs.
+
+## The docs contract — plans cite, ADRs own, reference states
+
+Fleetflow runs generate code *and documents* at fan-out speed, and the observed
+failure mode (ga4-port, ATDW-MCP, settled 2026-08-07) is documentary drift: a
+run's plan doc restates a decision that lives elsewhere — a spec, a landmine,
+another repo's ADR — the restatement drifts, and the plan becomes the wrong
+record. ATDW-MCP hand-rolled an entire supersession lifecycle inside one plan
+doc (`D1-SYNC-EVALUATION.md`) and had to write *"the repo has no `docs/adr/`
+convention"* into its own preamble. The contract below prevents both.
+
+**The one-line rule: plans are mutable and cite; ADRs are append-only and own;
+reference docs are living state. A plan edit may never be the only record of a
+decision changing.** Separation is time-vs-state: an ADR records an *event*
+("we chose X over Y, dated, here's why"); a reference doc records the *current
+state* ("how it works now"); a plan records *intent for one run* and is
+disposable. Facts belong in reference docs; only choices belong in ADRs.
+
+The doc kit a fleetflow-built repo carries (Diátaxis for the canonical side,
+[adr-ops](../adr-ops/SKILL.md) for the decision side, arc42-shaped architecture
+doc; ATDW-MCP's `00_INDEX.md` filing criterion is the reference implementation):
+
+| Layer | Holds | Mutability |
+|---|---|---|
+| `AGENTS.md` + Landmines | entry doc; one-line warnings linking to ADRs | living, lean |
+| `docs/reference/`, `api/` | specs of record, parity tables, measured facts | living — drift is a bug |
+| `ARCHITECTURE.md` | how the shipped system works | living |
+| `docs/adr/` | decisions: BLUF, alternatives, consequences | append-only |
+| `docs/plans/` | run plans, wave tables, handoffs — self-declared status | disposable |
+| `docs/reports/` | measured outcomes, audits | point-in-time |
+
+**Greenfield (clean-room runs):** seeding the target repo includes
+`adr-init` and the kit skeleton above. The plan's load-bearing decisions land
+as ADR-001..N *before* packets are authored; the plan cites them, never
+restates. By wave 2, `adr-touching` works because wave 1 populated `touches:`.
+
+**Brownfield:** before authoring packets, run adr-ops's `adr-touching.py`
+against the paths each packet owns. Exit 10 → paste the governing ADR's BLUF
+into the packet under a `CONSTRAINTS FROM STANDING DECISIONS` heading. Workers
+cannot read what they are not given — non-Claude lanes have no ambient
+knowledge of the target repo's decision log, and a Codex sandbox may not reach
+`docs/adr/` unless the packet points at it.
+
+**Mid-run replanning stays fast.** Resequencing waves, reassigning lanes,
+checking off work, deferring scope — all free, no ceremony: none of it is ADR
+material (reversible without re-litigating a trade-off). The discipline bites
+only when a plan edit *contradicts a cited decision* — and that is the drift
+being caught, not bureaucracy. Then either supersede first
+(`adr-new --supersedes ADR-OLD --apply-supersede`, minutes, done while waves
+run) or don't make the edit. Design claims resting on unmeasured evidence stay
+in the plan as labelled hypotheses — they become ADRs only after a spike
+confirms them (`status: proposed` if a direction must be recorded early).
+
+**Land time — docs are a wave class, not exhaust.** Every run that changes
+behaviour ships doc lanes in the same run: reference-doc updates for what the
+build waves changed (cheap models; a GLM lane wrote ga4-port's PARITY.md), and
+new future-constraining choices made mid-run land as `proposed` ADRs in the
+target repo — never as plan prose only. The verify wave gets **doc-parity
+refuters**: a cross-provider lane reads a canonical doc and the implementation
+and is prompted to *refute the doc*; every falsifiable claim is a finding.
+Prefer **derived docs** over authored prose wherever possible (coverage
+inventories, capability tables, exit-code maps — the ga4 `capabilities()`
+pattern that turns drift into a build failure); refuters police what can't be
+derived. At closeout, a decision doc whose conclusions were acted on
+*graduates*: current-state content moves to `docs/reference/`, the choice
+record stays behind (ATDW's `mirror-query-spec.md` path).
+
+**Sprawl guard.** ADRs record *architecturally significant* decisions —
+expensive to reverse, cross-cutting: boundaries, invariants, wire formats,
+storage shapes, always/never rules. Module-level choices are guard comments;
+test-enforced invariants are landmines. A large project produces dozens of
+ADRs, not hundreds — most verdicts are facts (→ reference) or evidence (→ the
+evaluation doc, kept byte-intact; the ADR is a short card that *cites* it).
+Never convert a rich evaluation doc into ADRs — extract each constraining
+verdict into a short ADR that points back at the doc's section.
 
 ## Patterns ported from the native Workflow tool
 
@@ -663,3 +742,6 @@ visual continuity in the monitor — not to resume native work in place.
 - [fleet-worker](../fleet-worker/) — the single-worker spawn layer fleetflow builds on (GLM auth isolation, model routing, terms).
 - [fleet-ops](../fleet-ops/) — the landing layer; every fleetflow run ends there.
 - [loop-ops](../loop-ops/) — schedule a recurring fleetflow run as an L1/L2 loop.
+- [adr-ops](../adr-ops/) — the decision layer of the docs contract: `adr-init` at
+  greenfield seeding, `adr-touching` before packet authoring, `adr-new
+  --supersedes` for mid-run reversals, `adr-lint` in the target repo's gate.
