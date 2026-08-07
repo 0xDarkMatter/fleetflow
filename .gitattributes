@@ -1,0 +1,23 @@
+# Line-ending policy — pinned so a Windows clone with core.autocrlf=true cannot
+# corrupt shell scripts on checkout. Bash treats a trailing CR as part of the
+# token, so a CRLF `set -u` parses as `set -u\r` => "invalid option", and every
+# brace/quote after it breaks. Diagnosed 2026-08-07 against scripts/ff-doctor.sh.
+#
+# Note for future debugging: MSYS `sed` strips CR silently on read and will tell
+# you the file is clean. Use binary-safe checks instead:
+#   tr -cd '\r' < file | wc -c     # non-zero => CRLF on disk
+#
+# Default: normalize to LF in the repo AND in the working tree.
+* text=auto eol=lf
+
+# Executed by bash — MUST be LF on disk, on every platform.
+*.sh text eol=lf
+
+# Executed by PowerShell, which tolerates CRLF and Windows PowerShell 5.1
+# prefers it. None tracked today; pinned so a future one is not caught by the
+# eol=lf default above.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
