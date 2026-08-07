@@ -147,10 +147,10 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    `started` record, runs the worker to completion, journals the `result`.
    **Author packets at `.fleetflow/<run>/packets/<id>.task.md`** (any path
    outside the run dir works too) — **never `.fleetflow/<run>/<id>.prompt.txt`**,
-   which is where ff-spawn writes its own effective prompt (guard preamble +
-   your packet). Pointing `--prompt-file` at that path used to destroy the
-   packet and launch a task-less worker that still passed every gate; ff-spawn
-   now refuses it with exit 2, but the convention is what keeps you clear of it.
+   which ff-spawn owns and refuses as input (exit 2): pointing `--prompt-file`
+   there once destroyed the packet and launched a task-less worker that still
+   passed every gate. See
+   [docs/adr/ADR-012](docs/adr/ADR-012-packet-cache-key-purity.md).
 4. **Collect + gate:** `scripts/ff-collect.sh --run <run> --id <id>` — flags,
    not positionals (a positional invocation is rejected with exit 2) — per-model success
    semantics (Claude JSON `is_error`; Codex exit + last-message), then the
@@ -172,15 +172,12 @@ peer-to-peer between long-lived workers is out of scope; that's what a message
 bus like pigeon is for.)
 
 **Why not Claude Desktop's `ccd_session_mgmt` messaging here** (asked and settled
-2026-08-03): it addresses *Desktop sessions* — wrapper JSONs under
-`claude-code-sessions/`. A fleetflow worker is an OS process (`claude -p`,
-`codex exec`, a GLM/Grok endpoint call); it registers no wrapper, and the
-non-Anthropic models are not Claude at all, so `send_message` has no address for
-them. The tools are also absent from the terminal CLI binary entirely, so a
-headless worker could not call them even if it had an address. Hub-and-spoke is
-not a shortcut here — it is the only topology this process model permits. Where
-cross-worker signalling IS wanted, use `pigeon` (a real CLI, works for any
-harness). The Desktop-only channel is documented in
+2026-08-03): it addresses Desktop sessions, and a fleetflow worker is an OS
+process with no address in that system — hub-and-spoke is the only topology
+this process model permits, and where cross-worker signalling IS wanted the
+tool is `pigeon` (a real CLI, works for any harness). Full settlement:
+[docs/adr/ADR-005](docs/adr/ADR-005-hub-and-spoke-worker-topology.md). The
+Desktop-only channel is documented in
 [fleet-ops SKILL.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-ops/SKILL.md),
 which also owns the MAIN-coordinator role that fleetflow runs land through.
 
@@ -196,9 +193,9 @@ tool's mechanism: each spawn is keyed by a content hash of
 `(model, prompt, opts)` — and `opts` includes `--effort`, so changing only the
 effort lever is a cache miss (a different run). Re-running `ff-spawn` with an
 unchanged packet returns the cached result instantly (exit 3 + path); change
-the prompt and only that lane re-runs. Corollary (same reason the native tool
-bans `Date.now()`): keep timestamps and random values OUT of packet prompts, or
-the key changes and the cache never hits.
+the prompt and only that lane re-runs. Keep timestamps and random values OUT
+of packet prompts, or the key changes and the cache never hits. See
+[docs/adr/ADR-012](docs/adr/ADR-012-packet-cache-key-purity.md).
 
 **Manifest & resume.** Each spawn also upserts a packet into
 `.fleetflow/<run>/manifest.json` (`{run, base, created_by, phases[], packets[]}`,
@@ -239,6 +236,10 @@ decision changing.** Separation is time-vs-state: an ADR records an *event*
 ("we chose X over Y, dated, here's why"); a reference doc records the *current
 state* ("how it works now"); a plan records *intent for one run* and is
 disposable. Facts belong in reference docs; only choices belong in ADRs.
+
+Fleetflow eats its own cooking: this repo's standing decisions live in
+[docs/adr/](docs/adr/) (backfilled 2026-08-07, lint-gated by `tests/run.sh`),
+and the prose in this file cites them rather than owning the archaeology.
 
 The doc kit a fleetflow-built repo carries (Diátaxis for the canonical side,
 [adr-ops](../adr-ops/SKILL.md) for the decision side, arc42-shaped architecture
@@ -362,67 +363,40 @@ default the script-author follows, not an option — and real runs routinely hit
   `--always-approve` (autonomous tools), confined by the lane worktree — no
   config-dir isolation needed (no Claude OAuth to collide with; auth is the
   `GROK_DEPLOYMENT_KEY` env var, read from env, never written to disk).
-- **Codex lanes cannot `git commit` (learned 2026-07-08, codex-cli 0.142):**
-  a worktree's git metadata (`HEAD.lock`/`index.lock`) lives under the MAIN
-  repo's `.git/worktrees/`, outside the lane the sandbox confines Codex to —
-  commits die with a lock-permission error after the work itself succeeded.
-  Convention: Codex packets say "DO NOT COMMIT — leave changes in the working
-  tree", the worker reports `FILES_CHANGED`, and the **orchestrator reviews
-  the diff and commits**. (GLM/Anthropic `claude -p` workers are unaffected
-  and may self-commit.) Tightens the gate as a side effect: nothing a Codex
-  lane produces lands without an orchestrator diff review.
+- **Codex lanes cannot `git commit` (learned 2026-07-08):** a worktree's git
+  metadata lives outside the lane the sandbox confines Codex to. Convention:
+  Codex packets say "DO NOT COMMIT — leave changes in the working tree", the
+  worker reports `FILES_CHANGED`, and the **orchestrator reviews the diff and
+  commits** (GLM/Anthropic workers are unaffected and may self-commit). See
+  [docs/adr/ADR-006](docs/adr/ADR-006-codex-lanes-never-self-commit.md).
 - **Codex on Windows must never depend on an elevation prompt (learned
-  2026-07-27, codex-cli 0.144.1, run `bkv2p2`):** codex-cli's `elevated`
-  Windows sandbox mode provisions its AppContainer through a setup helper
-  launched with `ShellExecuteExW` — a UAC dialog. Headless, nobody can approve
-  it, so Windows cancels the launch (error `1223` = `ERROR_CANCELLED`, surfaced
-  as `orchestrator_helper_launch_canceled`) and the lane **hangs instead of
-  failing fast** — two lanes burned 2.7h. `ff-spawn` pins
-  `-c windows.sandbox="unelevated"` **per invocation** on Windows hosts
-  (`FLEETFLOW_CODEX_WINDOWS_SANDBOX` overrides it; empty passes nothing and
-  defers to the global config). Deliberately *not* an edit to the user's
-  `~/.codex/config.toml` — interactive Codex keeps whatever mode they chose.
-  Provisioning caches under `~/.codex/.sandbox`, `.sandbox-bin`,
-  `.sandbox-secrets`, which is why ten lanes can succeed and the eleventh
-  wedges: any cache invalidation — or two lanes provisioning at once —
-  re-triggers the prompt. **`ff-doctor --live` guards the guard:** `codex -c`
-  accepts unknown dotted keys silently, so if codex ever renames or drops
-  `windows.sandbox` the pin degrades to an inert no-op and lanes hang again with
-  no signal. The doctor therefore feeds it a deliberately *invalid* value and
-  requires codex to reject it — rejection proves the key is still live. It rides
-  on `codex debug prompt-input` (config load only, ~1.2s, no network, no model
-  call) rather than `codex sandbox`, because sandbox provisioning is
-  machine-global and is the very thing being guarded against; a preflight must
-  never trigger it.
+  2026-07-27):** the `elevated` sandbox mode raises a UAC dialog nobody can
+  approve headless, and the lane **hangs instead of failing fast**. `ff-spawn`
+  pins `-c windows.sandbox="unelevated"` **per invocation** on Windows hosts
+  (`FLEETFLOW_CODEX_WINDOWS_SANDBOX` overrides; empty defers to global config)
+  — deliberately never an edit to the user's `~/.codex/config.toml`. And
+  **`ff-doctor --live` guards the guard**: codex accepts unknown `-c` keys
+  silently, so the doctor feeds `windows.sandbox` a deliberately invalid value
+  and requires rejection, proving the key is still live. Full incident and
+  rationale: [docs/adr/ADR-007](docs/adr/ADR-007-codex-windows-sandbox-unelevated-pin.md).
 - **A stalled lane is indistinguishable from a working one — trust
-  `last_activity_s`, not `state: running`.** Through the whole 2.7h hang
-  `ff-status` reported both lanes `running` with `elapsed_s` climbing
-  normally; the only tell was that their `<run>/<id>.events.jsonl` mtimes had
-  frozen ~160s after spawn. `ff-status` now measures that silence for every
-  lane and flips it to `state: "stalled"` (plus `stalled: true`) past
-  `FLEETFLOW_STALL_SECONDS` (default 600); the monitor draws those lanes as a
-  *frozen* amber pip captioned with the silence, not the elapsed clock. Before
-  assuming a long wave is progressing:
+  `last_activity_s`, not `state: running`** (through the whole 2.7h hang both
+  lanes read `running` with `elapsed_s` climbing normally). `ff-status`
+  measures live-stream silence per lane and flips it to `state: "stalled"`
+  past `FLEETFLOW_STALL_SECONDS` (default 600); the monitor draws those lanes
+  as a *frozen* amber pip captioned with the silence. Before assuming a long
+  wave is progressing:
   `ff-status.sh --run <name> | jq '.lanes[]|select(.stalled)|{id,last_activity_s}'`.
-- **Know what the stall detector covers — `live_signal` tells you.** A stall can
-  only be proven where the model writes *while it works*: codex's/pi's `--json`
-  event stream, a claude/glm session transcript, or the **worker heartbeat** —
-  worktree lanes' guard preamble instructs the worker to append a line to
-  `./.ff-heartbeat` after each major step (rookery's `parcel progress` pattern,
-  filed down to one git-excluded file), and ff-status counts its mtime as a live
-  stream. That closes the gap for **grok worktree lanes** (grok's
-  `--output-format json` buffers to exit — the heartbeat is their only live
-  signal, and it never touches the buffered envelope ff-collect gates on).
-  Artifact and `.err` files are created by the shell redirect at launch and
-  untouched until exit, so they cannot distinguish work from a wedge — an early
-  build of this detector counted them and flagged every healthy 10-minute sonnet
-  lane as stalled. Uncovered today: **claude/grok lanes spawned without
-  `--worktree`** (no heartbeat clause — a non-worktree lane's cwd is the shared
-  main checkout, so a heartbeat there could not be attributed to a lane; and a
-  shared transcript dir has the same attribution problem). Those report
-  `live_signal: false`, and their `stalled: false` means *cannot tell*, never
-  *healthy* — one more reason to spawn mutating workers with `--worktree`, which
-  makes them fully covered.
+- **Know what the stall detector covers — `live_signal` tells you.** A stall
+  is provable only where the model writes *while it works*: codex's/pi's
+  `--json` event stream, a claude/glm session transcript, or the worker
+  heartbeat (`./.ff-heartbeat`, appended by worktree lanes per the guard
+  preamble — grok worktree lanes' only live signal, since grok's
+  `--output-format json` buffers to exit). Lanes spawned without `--worktree`
+  report `live_signal: false`, and their `stalled: false` means *cannot
+  tell*, never *healthy* — one more reason to spawn mutating workers with
+  `--worktree`. Boundaries, false-positive history, and the grok deferral:
+  [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
 - **Killing a lane leaves orphans — reap them.** `TaskStop` (or killing the
   background Bash task) kills the *wrapper*, not the worker's children; the
   2026-07-27 cleanup left five live `codex.exe` / `codex-code-mode-host.exe`
@@ -445,20 +419,17 @@ default the script-author follows, not an option — and real runs routinely hit
   — but that kills every Codex on the box. Either way, `taskkill /PID` on the
   PIDs `ps -W` prints does **not** work: those are Cygwin PIDs, and Windows
   needs the WINPID from the same table's fourth column.
-- **Escape guard (learned 2026-07-05, incident):** a worker CAN escape its
-  worktree by writing absolute paths — a GLM worker once wrote its output into
-  the main checkout while its own lane stayed clean. Two mechanical defenses,
-  both defaults: the guard preamble's *relative-paths-only* clause, and
-  `ff-collect.sh --check-main-clean` after every run (exit 12 = escape
-  detected; stop, `git stash push -u` to salvage, investigate).
-- **Baseline-before-closeout (learned 2026-07-08, exit 12 false positive):**
-  `--check-main-clean` compares `main` against whatever it was when the check
-  runs — if the orchestrator makes its own edits to `main` (docs, PLAN.md,
-  closeout commits) between spawning lanes and running the check, those
-  self-made edits look identical to an escaped worker's writes. Snapshot a
+- **Escape guard (learned 2026-07-05):** a worker CAN escape its worktree by
+  writing absolute paths. Two mechanical defenses, both defaults: the guard
+  preamble's *relative-paths-only* clause, and `ff-collect.sh
+  --check-main-clean` after every run (exit 12 = escape detected; stop,
+  `git stash push -u` to salvage, investigate).
+- **Baseline-before-closeout (learned 2026-07-08):** orchestrator self-edits
+  to `main` look identical to an escaped worker's writes, so snapshot a
   clean-`main` baseline (`git status --short` / a commit sha) **before** any
-  orchestrator-authored closeout edit, so the check compares against the
-  pre-spawn state, not a moving target the orchestrator itself just moved.
+  orchestrator-authored closeout edit — the check must compare against the
+  pre-spawn state, not a target the orchestrator just moved. Both incidents:
+  [docs/adr/ADR-009](docs/adr/ADR-009-escape-guard-and-baseline.md).
 - **Permission posture:** workers run non-interactive
   (`bypassPermissions` default; `FLEETFLOW_PERMISSION_MODE=dontAsk` + allowlist
   when the orchestrator session is in auto mode — a `bypassPermissions` child
@@ -552,51 +523,42 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   `ff-status.sh` per run rather than reimplementing it — the stall detector's
   `live_signal:false` = *cannot tell* distinction is exactly the kind of subtlety
   a second copy would quietly lose.
-- **History survives cleanup.** `ff-clean` now calls `ff-archive` **before**
+- **History survives cleanup.** `ff-clean` calls `ff-archive` **before**
   removing anything, appending a compact record to `~/.fleetflow/history.jsonl`
-  (outside every repo). A cleaned run keeps its card: lanes, models, states,
-  elapsed, tokens, commits, cost. Prompts, diffs, and transcripts are not copied —
-  this is an index, not a backup. `--no-archive` opts out.
+  (outside every repo) — an index, not a backup; `--no-archive` opts out. See
+  [docs/adr/ADR-011](docs/adr/ADR-011-archive-before-remove.md).
 - **Rebuilds are request-driven and non-blocking.** No standing watcher process
-  to die silently — the single failure that made the predecessor dashboards
-  untrustworthy. If the server is unreachable the page says so in red and stamps
-  the snapshot's age; it never renders stale numbers as if they were live.
+  to die silently — the failure that made the predecessor dashboards
+  untrustworthy. An unreachable server shows red with the snapshot's age; stale
+  numbers are never rendered as live. See
+  [docs/adr/ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md).
 - **The Fleet view answers "what can this box run"** — pinned at the top of the
-  sidebar, and the only view that is about capability rather than history. It
-  holds three registers deliberately kept apart, because they have different
-  truth values and merging them is how a dashboard starts lying:
-  **spec** (static doctrine per model — process, auth, isolation, live-stream,
-  concurrency ceiling, whether the model may self-commit — transcribed from this
-  file and [worker-contracts](references/worker-contracts.md), hand-maintained,
-  so change it here in the same commit as a contract change);
-  **observed** (measured across every run under the roots *plus* archived
-  history — lanes, tokens, cost, failures per harness, and a resolved-model
-  table); and **capacity** (an `ff-doctor` probe via `api/doctor.json`, always
-  shown with its age because it is a point-in-time claim).
+  sidebar, and the only view about capability rather than history. It holds
+  three registers deliberately kept apart — **spec** (hand-maintained doctrine
+  per model, changed in the same commit as a contract change), **observed**
+  (measured across runs + archived history), and **capacity** (an `ff-doctor`
+  probe, always shown with its age) — because merging registers with different
+  truth values is how a dashboard starts lying
+  ([docs/adr/ADR-014](docs/adr/ADR-014-fleet-view-three-registers.md)).
   `--offline` (binaries + `bash -n`) runs automatically when the view opens;
-  **`--live` is click-gated and never on a timer** — it spends real model calls,
-  and a dashboard that quietly billed a provider round-trip on every poll would
-  be a bug with an invoice attached. Live probes run in the server's background
-  and the page polls until they settle.
+  **`--live` is click-gated and never on a timer** — it spends real model calls
+  ([docs/adr/ADR-004](docs/adr/ADR-004-live-probes-click-gated-never-timed.md)).
+  Live probes run in the server's background and the page polls until they
+  settle.
 - **ROOST accounts (conditional).** On machines with the `roost` CLI installed
   (claude-lb, the Claude Code OAuth profile health/load-balancer), the sidebar
   gains a "roost · accounts" entry. The pane embeds **roost's own `roost
-  widget` fragment verbatim** (script-free, `.rw`-scoped CSS, built for
-  embedding — never re-design a surface roost already ships; a test enforces
-  the pass-through); `/api/roost.json` also carries a trimmed
-  `roost status --json` as the fallback for a roost without the widget
-  subcommand. A click-gated **refresh auth** button hits `/api/roost/refresh`
-  (`roost refresh --soon 30m --json` in a background thread — renews expired
-  and soon-expiring OAuth tokens, then forces a status re-probe); it mutates
-  the token store, so it is never on a poll or timer. The server probes
-  `shutil.which("roost")` once; absent binary → `{"available": false}` and the
-  section never renders. The probe runs in a background thread, cached 60s
-  (roost caches its own probes ~5 min); page fetches are tick/click driven,
-  never on a timer of their own.
+  widget` fragment verbatim** — never re-design a surface roost already ships;
+  a test enforces the pass-through — with a trimmed `roost status --json` as
+  the fallback. The click-gated **refresh auth** button
+  (`/api/roost/refresh`) mutates the token store, so it is never on a poll or
+  timer. Absent binary → `{"available": false}` and the section never renders.
+  See [docs/adr/ADR-016](docs/adr/ADR-016-roost-widget-pass-through.md).
 - **Zero external dependencies, still.** No CDN, no webfont, no remote image, no
   build step — the page is one file that works offline, from `file://`, and in a
   preview pane with no network. A test asserts it (`dashboard: still zero
   external dependencies`); the only URL in the file is a provenance comment.
+  See [docs/adr/ADR-003](docs/adr/ADR-003-dashboard-zero-external-references.md).
 - **The pane is not repainted when nothing changed.** `paint()` compares the
   generated HTML against what is on screen and no-ops on a match, which is most
   ticks on a mostly-idle fleet. Before it, the 3s poll rebuilt the DOM
@@ -654,31 +616,24 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   The right pane leads with a **column chart** (tokens per lane, or per run on the
   overview), which is what makes the cross-model cost story visible at a glance.
 
-**Compare runs with `tokens_total`, not `tokens`.** The legacy `tokens` field is
-model-INCONSISTENT — codex reports a grand total, claude models report output
-only — and is frozen because `ff-monitor.html` renders it. A codex lane's 5.4M
-against a GLM lane's 42.6k is a total against an output count; measured
-consistently that GLM lane had consumed 4.5M. `ff-status` now also emits
+**Compare runs with `tokens_total`, not `tokens`.** The legacy `tokens` field
+is model-INCONSISTENT (codex reports a grand total, claude models output only)
+and is frozen because `ff-monitor.html` renders it; `ff-status` also emits
 `tokens_in` / `tokens_cached` / `tokens_out` / `tokens_total`, which mean the
-same thing for every model, plus `cost_usd` where the worker prices its own turn.
-**Cost is partial by construction:** claude-family workers self-report
-`total_cost_usd`; codex and grok report none. For GLM the self-reported figure
-is the CLI's Anthropic-rate estimate, not the z.ai invoice — a magnitude, not an
-amount owed. The dashboard therefore carries its own hand-maintained `PRICING`
-registry (rates verified against Anthropic/z.ai/OpenAI/xAI published pricing,
-date stamped in the file) and a per-model **pricing basis** the operator picks
-in the ⚙ costs modal: `api` (compute from the lane's token counts at published
-per-MTok rates — the default wherever a rate card exists; this is what fixes
-GLM), `plan` (flat subscription with a **tier** picked per provider group —
-Claude Max 5×/$100 or 20×/$200, GLM Coding Lite/Pro/Max, ChatGPT Plus/Codex
-$100/Pro — shown as a **blended** cost: each calendar month's fee allocated across that
-month's plan-basis lanes by API-notional share, so a month's blended costs sum
-to exactly the fee, never a flat $0), or `report` (trust the CLI's figure).
-Multiple concurrent subscriptions of one tier are not yet modelled. Every figure says
+same thing for every model, plus `cost_usd` where the worker prices its own
+turn. **Cost is partial by construction** — codex/grok report none, GLM's
+figure is a wrong-rate estimate — so the dashboard carries its own
+hand-maintained `PRICING` registry (rates verified against published pricing,
+date stamped in the file) and a per-model **pricing basis** picked in the ⚙
+costs modal: `api` (token counts × published rates), `plan` (subscription
+tier shown as a **blended** monthly-fee share — sums to exactly the fee,
+never a flat $0), or `report` (trust the CLI's figure). Every figure says
 what it is: plain `$x` is self-reported, `≈$x` contains estimates, `*` means
 uncosted lanes remain, and nothing is ever presented as an invoice. The basis
-persists under `ffd.pricing`. Archived history lanes keep no input/cache split,
-so they cannot be re-estimated — they fall back to reported-or-nothing. A
+persists under `ffd.pricing`; archived lanes without an input/cache split
+fall back to reported-or-nothing. Full rationale:
+[docs/adr/ADR-010](docs/adr/ADR-010-tokens-frozen-tokens-total-comparable.md)
+and [docs/adr/ADR-015](docs/adr/ADR-015-pricing-basis-and-blended-plans.md). A
 snapshot card follows the monitor's layout doctrine: the run summary (name,
 totals, per-lane strip) sits in a header pinned via `position: sticky` at the
 card's top, with agent/lane cards listed vertically beneath it ordered
@@ -688,12 +643,11 @@ summary never scrolls out of view.
 **Naming (renamed from `brain`, 2026-08-05):** the spawnable alias is the
 **model** (`--model glm|codex|grok|pi|sonnet|opus|haiku|fable`; wire fields
 `model` in journal/manifest/status lanes, `models` in roll-ups and archives)
-and the exact resolved id is **`model_id`** (e.g. `GLM-5.2`). Pre-rename
-artifacts wrote `brain`/`brains`, with the launch id under `model` — so in a
-legacy record `brain` must win the alias fallback. Every reader falls back
-(`.brain // .model` on journals, `.model // .brain` on manifests/archives),
-ff-aggregate normalises legacy history at the read boundary, and `--brain`
-survives as a deprecated flag alias. Tests pin both directions.
+and the exact resolved id is **`model_id`** (e.g. `GLM-5.2`). In a legacy
+record `brain` must win the alias fallback (`.brain // .model` on journals,
+`.model // .brain` on manifests/archives); `--brain` survives as a deprecated
+flag alias, and tests pin both directions. See
+[docs/adr/ADR-017](docs/adr/ADR-017-model-rename-alias-fallback-order.md).
 
 All follow the Skill Resource Protocol: stdout is data, chatter on stderr,
 semantic exit codes (`0` ok, `2` usage, `3` cached/missing, `7` unreachable,

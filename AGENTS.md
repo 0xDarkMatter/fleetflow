@@ -24,6 +24,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-import` (bash, Skill Resource Protocol) + `ff-serve.py` (dashboard server) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
+| `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
 | `tests/` | `run.sh` — the one gate; run it before landing anything |
 
 ## Landmines
@@ -47,51 +48,42 @@ operational playbook — read it first; this file only carries repo mechanics.
   unreachable, `10` worker failed, `12` escape detected, `14` lane stalled).
   Tests grep for specific markers (e.g. the torn-write guard comment, `.sq.stalled`,
   `STATE_RANK`) — keep those strings when refactoring.
-- **Grok lanes have no live stream** (buffered `--output-format json` by design;
-  see SKILL.md) — do not "fix" the monitor to show grok activity without
-  re-verifying the streaming envelope against `ff-collect`'s gate. Stall
-  coverage for grok WORKTREE lanes comes from the worker-authored
-  `.ff-heartbeat` file instead (guard clause in ff-spawn; mtime read by
-  ff-status) — it deliberately never touches the envelope.
-- **`ff-clean` archives before it removes** (`ff-archive.sh` →
-  `~/.fleetflow/history.jsonl`, `--no-archive` opts out) — teardown is the last
-  moment the run's data exists, so do not reorder the archive step below the
-  removal loop.
-- **`ff-serve.py` is deliberately ONE process** (server + request-driven
-  rebuilds). Do not split out a watcher — the predecessor's detached watcher
-  dying silently is the exact failure this design removes (contract block in
-  the file).
-- **`ff-dashboard.html` has ZERO external references and must keep them.** No
-  CDN, webfont, remote image, or build step: it is one file that has to work
-  offline, from `file://`, and in a preview pane with no network. A test
-  enforces it. (The one CDN string in the file is a provenance comment naming
-  where four inline SVG paths were copied from — prose, not a fetch.)
-- **`/api/doctor.json?live=1` spends real model calls** (a one-turn `claude -p`
-  per Anthropic model, plus provider auth probes). It is click-gated in the UI
-  and cached for 15 min server-side. Never put it on the poll path or a timer —
-  a test asserts there is no `setInterval` driving it.
+- **Grok lanes have no live stream** (buffered `--output-format json` by
+  design) — do not "fix" the monitor to show grok activity without
+  re-verifying the streaming envelope against `ff-collect`'s gate; grok
+  WORKTREE lanes are stall-covered by the `.ff-heartbeat` file instead.
+  See [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **`ff-clean` archives before it removes** — teardown is the last moment the
+  run's data exists; never reorder the archive step below the removal loop.
+  See [docs/adr/ADR-011](docs/adr/ADR-011-archive-before-remove.md).
+- **`ff-serve.py` is deliberately ONE process** (request-driven rebuilds). Do
+  not split out a watcher — the predecessor's watcher died silently (contract
+  block in the file). See [docs/adr/ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md).
+- **`ff-dashboard.html` has ZERO external references and must keep them** — it
+  must work offline, from `file://`, and in a network-less preview pane; a
+  test enforces it (the one CDN string is a provenance comment, not a fetch).
+  See [docs/adr/ADR-003](docs/adr/ADR-003-dashboard-zero-external-references.md).
+- **`/api/doctor.json?live=1` spends real model calls.** Click-gated, cached
+  15 min server-side; never on the poll path or a timer (a test asserts no
+  `setInterval` drives it). See [docs/adr/ADR-004](docs/adr/ADR-004-live-probes-click-gated-never-timed.md).
 - **The dashboard's Fleet view carries a hand-maintained capability matrix**
-  (`const HARNESS`). It encodes contracts that live in prose — sandbox posture,
-  whether a model may self-commit, concurrency ceilings — and that no run
-  artifact reports. When a model's contract changes in SKILL.md, change it there
-  in the SAME commit; a test asserts every spawnable model appears in it.
+  (`const HARNESS`) — it encodes contracts no run artifact reports; when a
+  model's contract changes in SKILL.md, change it in the SAME commit (a test
+  asserts every spawnable model appears).
+  See [docs/adr/ADR-014](docs/adr/ADR-014-fleet-view-three-registers.md).
 - **The dashboard's `const PRICING` registry is hand-maintained** (like
-  `HARNESS`): per-model $/MTok rates verified against provider pricing pages,
-  with the verification date stamped in the file. When a provider ships new
-  rates or fleetflow gains a model, update the registry (and the `PLANS` tier
-  table — plan lanes show a BLENDED share of the monthly fee, never $0)
-  in the same commit — a stale rate silently mis-prices every ≈ estimate.
-  Tests assert every spawnable model has an entry, GLM is priced at z.ai
-  rates, estimates carry the `≈` marker, and no native `alert`/`confirm`/
-  `prompt` dialog exists anywhere in the page.
+  `HARNESS`) — a stale rate silently mis-prices every ≈ estimate, so rate or
+  model changes update it (and the `PLANS` tier table — blended share of the
+  monthly fee, never $0) in the same commit; tests pin the entries, z.ai
+  rates for GLM, the `≈` marker, and the no-native-dialog rule.
+  See [docs/adr/ADR-015](docs/adr/ADR-015-pricing-basis-and-blended-plans.md).
 - **The `brain`→`model` rename (2026-08-05) left a load-bearing fallback
-  order.** Legacy journal `started` records carry BOTH `brain` (alias) and
-  `model` (launch id), so alias readers must prefer `brain` when present
-  (`.brain // .model`); reversing that reads a launch id as an alias.
-  Post-rename records write `model` (alias) + `model_id` (launch id). The
-  external formats ff-status scans (claude session transcripts, codex event
-  streams) still key on `"model"` — their regexes were deliberately NOT
-  renamed. A legacy-journal test pins the round trip.
-- **Dashboard `localStorage` keys are `ffd.*`, the monitor's are `ff.*`.** They
-  are served from one origin and `ff.sort` means different things to each; the
-  split is load-bearing, not cosmetic.
+  order** — on legacy journal records `brain` must win the alias fallback
+  (`.brain // .model`); reversing it reads a launch id as an alias, and the
+  external formats ff-status scans were deliberately NOT renamed. A
+  legacy-journal test pins the round trip.
+  See [docs/adr/ADR-017](docs/adr/ADR-017-model-rename-alias-fallback-order.md).
+- **Dashboard `localStorage` keys are `ffd.*`, the monitor's are `ff.*`** —
+  the pages can share one origin and `ff.sort` means different things to
+  each; the split is load-bearing, not cosmetic.
+  See [docs/adr/ADR-013](docs/adr/ADR-013-localstorage-namespace-split.md).
