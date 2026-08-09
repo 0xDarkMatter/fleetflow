@@ -828,6 +828,12 @@ if [ -f "$FINDINGS" ]; then
     && ok "waves ledger: duplicate fp is upserted, not appended" \
     || bad "waves ledger: duplicate fp produced a third ledger record"
 
+  # The ledger COMPUTES fp from content (§1) — a supplied fp is overridden, so
+  # re-read the real ones. tr -d '\r': Windows jq.exe emits CRLF (same trap
+  # ff-status/ff-widget/ff-run all guard — a raw capture breaks every = and -f).
+  FP1="$(jq -sr '.[]|select(.claim=="Save loses edits").fp' "$WREPO/.fleetflow/wledger/findings.jsonl" | head -1 | tr -d '\r')"
+  FP2="$(jq -sr '.[]|select(.claim=="Input reaches shell").fp' "$WREPO/.fleetflow/wledger/findings.jsonl" | head -1 | tr -d '\r')"
+
   bash "$FINDINGS" waive --run wledger --repo "$WREPO" --fp "$FP1" \
     --reason "accepted compatibility trade-off" >/dev/null 2>&1; LWRC=$?
   { [ "$LWRC" = "0" ] \
@@ -938,10 +944,10 @@ if [ -f "$WIDGET" ]; then
   printf '%s' "$WHTML" | grep -q 'sendPrompt(' \
     && ok "waves widget: footer uses sendPrompt actions" \
     || bad "waves widget: sendPrompt action missing"
-  WAVE_EXPECT="$(jq -r '.waves|length' "$WM")"; WAVE_RENDERED=0
+  WAVE_EXPECT="$(jq -r '.waves|length' "$WM" | tr -d '\r')"; WAVE_RENDERED=0
   while IFS= read -r wave_name; do
     printf '%s' "$WHTML" | grep -q "$wave_name" && WAVE_RENDERED=$((WAVE_RENDERED+1))
-  done < <(jq -r '.waves[].name' "$WM")
+  done < <(jq -r '.waves[].name' "$WM" | tr -d '\r')
   [ "$WAVE_RENDERED" = "$WAVE_EXPECT" ] \
     && ok "waves widget: wave-bar segment count matches fixture waves" \
     || bad "waves widget: rendered $WAVE_RENDERED/$WAVE_EXPECT wave segments"
@@ -958,7 +964,7 @@ if [ -f "$CATALOGUE" ]; then
   CAT_ROOT="$HERE/.."; TEMPLATE_PATHS_OK=1
   while IFS= read -r template_path; do
     [ -f "$CAT_ROOT/$template_path" ] || TEMPLATE_PATHS_OK=0
-  done < <(jq -r '.. | objects | .template? // empty' "$CATALOGUE" 2>/dev/null)
+  done < <(jq -r '.. | objects | .template? // empty, .cross_template? // empty' "$CATALOGUE" 2>/dev/null | tr -d '\r')
   [ "$TEMPLATE_PATHS_OK" = "1" ] \
     && ok "waves catalogue: every template path exists" \
     || bad "waves catalogue: missing template path"
@@ -968,7 +974,7 @@ if [ -f "$CATALOGUE" ]; then
       && grep -q 'FINAL REPLY' "$CAT_ROOT/$template_path" \
       && grep -qi 'read-only' "$CAT_ROOT/$template_path" \
       || FINDER_TEMPLATES_OK=0
-  done < <(jq -r '.waves[] | select(.kind=="finder") | .template' "$CATALOGUE" 2>/dev/null)
+  done < <(jq -r '.waves[] | select(.kind=="finder") | .template' "$CATALOGUE" 2>/dev/null | tr -d '\r')
   [ "$FINDER_TEMPLATES_OK" = "1" ] \
     && ok "waves catalogue: finder templates declare read-only FINAL REPLY contract" \
     || bad "waves catalogue: finder template missing role or FINAL REPLY"
@@ -991,7 +997,11 @@ if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ]; then
     waves:[{name:"docs-parity",kind:"finder",gate:"stop",status:"gated",round:0}]}' \
     > "$WGATE/manifest.json"
   : > "$WGATE/journal.jsonl"
-  check "waves gate: stop-gated fixture" 14 \
+  # No --continue: arriving AT a stop gate exits 14 (§2); --continue CLEARS the
+  # gate and proceeds (exit 0), which is the other half of the contract.
+  check "waves gate: stop-gated fixture exits 14 on arrival" 14 \
+    bash "$S/ff-run.sh" wave --run wgate --repo "$WREPO" --posture baseline
+  check "waves gate: --continue clears the gate" 0 \
     bash "$S/ff-run.sh" wave --run wgate --repo "$WREPO" --continue
 else
   echo "  SKIP  waves stop gate (sequencer absent)"
