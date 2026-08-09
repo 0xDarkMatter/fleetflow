@@ -374,10 +374,14 @@ pipeline, not a property of the deepest tier ([ADR-018](docs/adr/ADR-018-post-bu
 
 | Posture | Finder waves |
 |---|---|
-| `baseline` | docs-parity, regression |
-| `tested` | +qa, visual-qa |
+| `baseline` | docs-parity |
+| `tested` | +qa, visual-qa, regression |
 | `hardened` | +security, supply-chain, a11y |
-| `complete` | +polish, perf |
+| `complete` | +polish |
+
+`perf` joins any posture as an opt-in (`--wave +perf`) — never by default; it
+shares the browser harness with qa so its marginal cost is low, but it is
+rarely the binding concern on a freshly built feature (ADR-018).
 
 **Attendance is a macro; gates are the single source of truth** ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)):
 `--attend none|land|each` only *sets the default* gate on each wave; an explicit
