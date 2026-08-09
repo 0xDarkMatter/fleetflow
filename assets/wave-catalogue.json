@@ -1,0 +1,133 @@
+{
+  "waves": {
+    "docs-parity": {
+      "kind": "finder",
+      "postures": ["baseline", "tested", "hardened", "complete"],
+      "model": "haiku",
+      "effort": "",
+      "max_turns": 40,
+      "template": "assets/wave-packets/docs-parity.tmpl.md",
+      "lanes": 1,
+      "why": "cheap refuter reading docs against implementation; runs at every posture including baseline because SKILL.md's 'docs are a wave class, not exhaust' doctrine means scheduling it at a deeper tier would reintroduce the doc-lag it exists to prevent (ADR-018)"
+    },
+    "qa": {
+      "kind": "finder",
+      "postures": ["tested", "hardened", "complete"],
+      "model": "sonnet",
+      "effort": "",
+      "max_turns": 80,
+      "template": "assets/wave-packets/qa.tmpl.md",
+      "lanes": 1,
+      "why": "functional exhaustion needs full read-through comprehension of the diff plus entry docs to catch a broken claim; sonnet is the cheapest model that does this reliably"
+    },
+    "visual-qa": {
+      "kind": "finder",
+      "postures": ["tested", "hardened", "complete"],
+      "model": "sonnet",
+      "effort": "",
+      "max_turns": 60,
+      "template": "assets/wave-packets/visual-qa.tmpl.md",
+      "lanes": 1,
+      "why": "screenshot-vs-baseline comparison needs the same comprehension as qa to describe a mismatch usefully; grouped at the same posture tier and routed to the same model as qa"
+    },
+    "regression": {
+      "kind": "fix",
+      "postures": ["tested", "hardened", "complete"],
+      "model": "sonnet",
+      "effort": "",
+      "max_turns": 60,
+      "template": "assets/wave-packets/regression.tmpl.md",
+      "lanes": 1,
+      "why": "writes failing-then-passing tests for findings the fix lane already closed, so it mutates the repo like fix does rather than only reporting; grouped with qa/visual-qa at the same posture tier per ADR-018's routing directive"
+    },
+    "security": {
+      "kind": "finder",
+      "postures": ["hardened", "complete"],
+      "model": "codex",
+      "effort": "high",
+      "max_turns": 100,
+      "template": "assets/wave-packets/security.tmpl.md",
+      "cross": "opus",
+      "cross_template": "assets/wave-packets/security-opus.tmpl.md",
+      "lanes": 1,
+      "why": "two genuinely different toolchains attacking the same code — codex's exploit-construction habits vs opus's design-level trust-boundary reasoning — per ADR-018's cross-provider security routing; disagreement between the two lanes is signal, not noise. `lanes` is the codex-side lane count; `cross`/`cross_template` add the ONE opus lane on a distinct template so its packet is never byte-identical to codex's (no cache-key collision)"
+    },
+    "a11y": {
+      "kind": "finder",
+      "postures": ["hardened", "complete"],
+      "model": "haiku",
+      "effort": "",
+      "max_turns": 50,
+      "template": "assets/wave-packets/a11y.tmpl.md",
+      "lanes": 1,
+      "_comment": "glm is preferred over haiku when the z.ai endpoint is healthy — same checklist-shaped WCAG/axe pass at lower cost; haiku is the safe default routing here because catalogue data can't probe endpoint health at write time",
+      "why": "checklist-shaped WCAG/axe pass — a cheap model is sufficient, the value is in running axe-core when available, not in model reasoning depth"
+    },
+    "supply-chain": {
+      "kind": "finder",
+      "postures": ["hardened", "complete"],
+      "model": "haiku",
+      "effort": "",
+      "max_turns": 50,
+      "template": "assets/wave-packets/supply-chain.tmpl.md",
+      "lanes": 1,
+      "_comment": "glm is preferred over haiku when the z.ai endpoint is healthy — dependency-diff + lockfile checks are mechanical enough for a cheap model; haiku is the safe default routing here because catalogue data can't probe endpoint health at write time",
+      "why": "diffing a manifest/lockfile since base SHA and checking publish age is mechanical, cheap-model work"
+    },
+    "polish": {
+      "kind": "finder",
+      "postures": ["complete"],
+      "model": "sonnet",
+      "effort": "",
+      "max_turns": 70,
+      "template": "assets/wave-packets/polish.tmpl.md",
+      "lanes": 1,
+      "why": "judging what's worth improving (and distinguishing a real defect from a 'recommend:' redesign idea) needs the same comprehension tier as qa; only runs at the deepest posture where the marginal cost is worth it"
+    },
+    "perf": {
+      "kind": "finder",
+      "postures": [],
+      "model": "sonnet",
+      "effort": "",
+      "max_turns": 60,
+      "template": "assets/wave-packets/perf.tmpl.md",
+      "lanes": 1,
+      "why": "opt-in only via +perf, never a posture default — it shares qa's browser harness so its marginal cost is low when requested, but per ADR-018's alternatives-considered it's rarely the binding concern on a freshly built feature"
+    },
+    "docs-sync": {
+      "kind": "docs",
+      "model": "haiku",
+      "template": "assets/wave-packets/docs-sync.tmpl.md",
+      "lanes": 1,
+      "why": "cheap model is sufficient - the lane reads this run's fixed findings and updates the specific reference-doc claims they invalidate, not open-ended authoring; part of the fixed pipeline (ADR-018 §3), not posture-gated"
+    }
+  },
+  "fix": {
+    "model": "sonnet",
+    "template": "assets/wave-packets/fix.tmpl.md",
+    "why": "smallest-correct-change remediation across arbitrary file-disjoint groups; sonnet per ADR-018's routing default for the fix stage"
+  },
+  "reverify": {
+    "rule": "different-provider-than-fix",
+    "why": "re-verify replays the producing finder's own template against the fixed tree, routed to a different provider than whichever lane produced the fix — the adversarial-verify doctrine applied to remediation (ADR-018, SKILL.md 'Patterns ported from the native Workflow tool')"
+  },
+  "providers": {
+    "glm": "zai",
+    "codex": "openai",
+    "grok": "xai",
+    "pi": "pi",
+    "sonnet": "anthropic",
+    "opus": "anthropic",
+    "haiku": "anthropic",
+    "fable": "anthropic"
+  },
+  "always_escalate": [
+    {"name": "auth", "pattern": "auth"},
+    {"name": "crypto", "pattern": "crypto"},
+    {"name": "permissions", "pattern": "permission"},
+    {"name": "schema", "pattern": "schema|migrat"},
+    {"name": "deps", "pattern": "deps|dependenc|package\\.json|requirements\\.txt|cargo\\.toml|go\\.mod|poetry\\.lock"},
+    {"name": "public-api", "pattern": "public.?api"},
+    {"name": "wire-format", "pattern": "wire|protocol|serial"}
+  ]
+}
