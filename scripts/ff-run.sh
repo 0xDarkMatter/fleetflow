@@ -161,16 +161,17 @@ if [ ! -f "$MANIFEST" ]; then
     '{run:$run,base:"main",created_by:$by,phases:[],packets:[]}' > "$MANIFEST"
 fi
 
-if [ "$CONTINUE" = 1 ] && [ -z "$POSTURE" ]; then
+if [ -z "$POSTURE" ]; then
   POSTURE="$(jqr '.posture // empty' "$MANIFEST")"
-  [ -n "$POSTURE" ] || { err "--continue with no --posture and none recorded in manifest for run '$RUN'"; exit 2; }
+  [ -n "$POSTURE" ] || { err "no --posture given and none recorded in manifest for run '$RUN'"; exit 2; }
 fi
 case "$POSTURE" in baseline|tested|hardened|complete) ;; *) err "invalid or missing --posture '$POSTURE' (baseline|tested|hardened|complete)"; exit 2 ;; esac
 
-# --continue without an explicit --fix-rounds/--severity-floor keeps the
-# manifest's recorded value instead of silently resetting to the CLI default -
-# the same "manifest is truth on resume" rule --posture already gets above.
-if [ "$CONTINUE" = 1 ]; then
+# Manifest is truth on ANY resume (a waves key exists), not only --continue:
+# a re-invocation without explicit --fix-rounds/--severity-floor keeps the
+# recorded values instead of silently resetting them to CLI defaults.
+HAS_WAVES="$(jq '(.waves // []) | length' "$MANIFEST" 2>/dev/null || echo 0)"
+if [ "$CONTINUE" = 1 ] || [ "${HAS_WAVES:-0}" -gt 0 ]; then
   if [ "$FIX_ROUNDS_SET" = 0 ]; then
     mfr="$(jqr '.fix_rounds // empty' "$MANIFEST")"; [ -n "$mfr" ] && FIX_ROUNDS="$mfr"
   fi
@@ -578,8 +579,13 @@ for wave_name in "${ALL_WAVES[@]}"; do
       set_wave_status "$wave_name" done
       continue
     else
+      # Idempotent gate signal: re-encountering a stop gate without --continue
+      # exits 14 again (a watchdog reading 0 here would call a gated run green).
+      # review gates stay exit 0 - they are informational, not semaphores.
+      policy="$(jqr --arg n "$wave_name" '(.waves[] | select(.name==$n) | .gate)' "$MANIFEST")"
       err "wave $wave_name: still gated, awaiting --continue"
       print_summary
+      [ "$policy" = "stop" ] && exit 14
       exit 0
     fi
   fi
