@@ -397,20 +397,24 @@ escalates, never retried ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-se
 ```
 ff-run.sh wave --run NAME --posture baseline|tested|hardened|complete \
                [--attend none|land|each] [--gate WAVE=auto|review|stop]... \
-               [--fix-rounds N=2] [--severity-floor S=medium] [--dry-run|--continue]
+               [--fix-rounds N=2] [--severity-floor S=medium] [--repo PATH] \
+               [--dry-run|--continue]
 ```
+
+Run names are `[a-z0-9-]+` — no dots (`v0.2` is rejected; `v0-2` is fine).
 
 **Example 1** — tested posture, fully attended:
 ```bash
-ff-run.sh wave --run v0.2 --posture tested --attend each
+ff-run.sh wave --run v0-2 --posture tested --attend each
 ```
 
-**Example 2** — hardened, gated only at landing, per-wave costs visible:
+**Example 2** — hardened, gated only at landing (preview the plan first):
 ```bash
-ff-run.sh wave --run v0.2 --posture hardened --attend land --dry-run
+ff-run.sh wave --run v0-2 --posture hardened --attend land --dry-run
 ```
 
-Per-wave cost roll-ups aggregate from `ff-status`, visible in `--dry-run` and the run summary. **No posture deploys:** the pipeline terminates at land; deploying remains maintainer-gated from an interactive session ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
+Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
+(`--dry-run` previews the plan only — no lanes have run, so it has no costs). **No posture deploys:** the pipeline terminates at land; deploying remains maintainer-gated from an interactive session ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
 
 ## Safety — the cage, not the model
 
@@ -511,8 +515,8 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in `--dry-run` and th
 | [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-model result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
 | [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
 | [scripts/ff-run.sh](scripts/ff-run.sh) | `wave --run NAME --posture P [--attend none\|land\|each] [--gate WAVE=POLICY]... [--fix-rounds N] [--severity-floor S]` sequences post-build waves (QA, security, a11y, supply-chain, perf, docs, polish) — findings ledger, triage, fix-loop, re-verify, docs-sync. `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
-| [scripts/ff-findings.sh](scripts/ff-findings.sh) | findings ledger CLI: `append [--json '...']` dedupes by fingerprint, `list [--status S] [--severity S] [--wave W]`, `count`, `set-status --fp F --status S`, `waive --fp F --reason R`, `apply-waivers` (marks open findings whose fp appears in `docs/waivers.json` as waived); all take `--run NAME [--repo P]` |
-| [scripts/ff-widget.sh](scripts/ff-widget.sh) | HTML fragment for chat sandbox: wave bar, metric cells (lanes/tokens/cost/findings/elapsed), lane grid (capped at `--max-lanes N=10`), findings strip (severity chips when >0), buttons (refresh, triage failed, review gate when gated); stateless, zero external refs, CSS variables only |
+| [scripts/ff-findings.sh](scripts/ff-findings.sh) | findings ledger CLI: `append [--json '...']` dedupes by fingerprint, `list`/`count [--status S] [--severity S] [--min-severity S] [--wave W]`, `set-status --fp F --status S`, `waive --fp F --reason R [--expires DATE]`, `apply-waivers` (marks open findings whose fp appears in `docs/waivers.json` as waived); append accepts `--round`/`--lane` metadata; all take `--run NAME [--repo P]` |
+| [scripts/ff-widget.sh](scripts/ff-widget.sh) | HTML fragment for chat sandbox: wave bar, metric cells (lanes/tokens/cost/findings/elapsed), lane grid (capped at `--max-lanes N=10`), findings strip (severity chips when >0), buttons (refresh, triage failed, review gate when gated); stateless, CSS variables only, sole external reference is the fleetflow.lab anchor |
 | [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
 | [scripts/ff-archive.sh](scripts/ff-archive.sh) | `--run NAME` appends a compact run summary to `~/.fleetflow/history.jsonl` so the run outlives its own directory; `--dry-run` prints without appending |
 | [scripts/ff-aggregate.py](scripts/ff-aggregate.py) | discovers every run under the configured roots and emits ONE aggregate JSON (all repos, all runs, roll-ups, history); `--init-roots PATH...` writes the roots file |
