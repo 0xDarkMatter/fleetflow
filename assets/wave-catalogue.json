@@ -49,8 +49,8 @@
       "template": "assets/wave-packets/security.tmpl.md",
       "cross": "opus",
       "cross_template": "assets/wave-packets/security-opus.tmpl.md",
-      "lanes": 2,
-      "why": "two genuinely different toolchains attacking the same code — codex's exploit-construction habits vs opus's design-level trust-boundary reasoning — per ADR-018's cross-provider security routing; disagreement between the two lanes is signal, not noise"
+      "lanes": 1,
+      "why": "two genuinely different toolchains attacking the same code — codex's exploit-construction habits vs opus's design-level trust-boundary reasoning — per ADR-018's cross-provider security routing; disagreement between the two lanes is signal, not noise. `lanes` is the codex-side lane count; `cross`/`cross_template` add the ONE opus lane on a distinct template so its packet is never byte-identical to codex's (no cache-key collision)"
     },
     "a11y": {
       "kind": "finder",
@@ -93,6 +93,13 @@
       "template": "assets/wave-packets/perf.tmpl.md",
       "lanes": 1,
       "why": "opt-in only via +perf, never a posture default — it shares qa's browser harness so its marginal cost is low when requested, but per ADR-018's alternatives-considered it's rarely the binding concern on a freshly built feature"
+    },
+    "docs-sync": {
+      "kind": "docs",
+      "model": "haiku",
+      "template": "assets/wave-packets/docs-sync.tmpl.md",
+      "lanes": 1,
+      "why": "cheap model is sufficient - the lane reads this run's fixed findings and updates the specific reference-doc claims they invalidate, not open-ended authoring; part of the fixed pipeline (ADR-018 §3), not posture-gated"
     }
   },
   "fix": {
@@ -104,12 +111,23 @@
     "rule": "different-provider-than-fix",
     "why": "re-verify replays the producing finder's own template against the fixed tree, routed to a different provider than whichever lane produced the fix — the adversarial-verify doctrine applied to remediation (ADR-018, SKILL.md 'Patterns ported from the native Workflow tool')"
   },
+  "providers": {
+    "glm": "zai",
+    "codex": "openai",
+    "grok": "xai",
+    "pi": "pi",
+    "sonnet": "anthropic",
+    "opus": "anthropic",
+    "haiku": "anthropic",
+    "fable": "anthropic"
+  },
   "always_escalate": [
-    "auth",
-    "crypto",
-    "permissions",
-    "schema",
-    "deps",
-    "public-api"
+    {"name": "auth", "pattern": "auth"},
+    {"name": "crypto", "pattern": "crypto"},
+    {"name": "permissions", "pattern": "permission"},
+    {"name": "schema", "pattern": "schema|migrat"},
+    {"name": "deps", "pattern": "deps|dependenc|package\\.json|requirements\\.txt|cargo\\.toml|go\\.mod|poetry\\.lock"},
+    {"name": "public-api", "pattern": "public.?api"},
+    {"name": "wire-format", "pattern": "wire|protocol|serial"}
   ]
 }

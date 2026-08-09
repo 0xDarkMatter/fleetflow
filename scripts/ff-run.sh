@@ -98,17 +98,26 @@ subst_template() {
 wave_main() {
 RUN="" REPO="" POSTURE="" ATTEND="none" DRYRUN=0 CONTINUE=0
 FIX_ROUNDS=2 SEV_FLOOR="medium" GATES="" WAVEADJ=""
-FIX_ROUNDS_SET=0 SEV_FLOOR_SET=0
+FIX_ROUNDS_SET=0 SEV_FLOOR_SET=0 POSTURE_SET=0
 while [ $# -gt 0 ]; do
+  # flags that take a value: fail loudly instead of leaving $1 unconsumed - a
+  # bare `shift 2` with only one argument left silently no-ops (shift errors
+  # but the loop doesn't check it), which spins forever re-matching the same
+  # flag. Guard every value-taking flag before the dispatch below.
   case "$1" in
-    --run) RUN="${2:-}"; shift 2 ;;
-    --repo) REPO="${2:-}"; shift 2 ;;
-    --posture) POSTURE="${2:-}"; shift 2 ;;
-    --attend) ATTEND="${2:-}"; shift 2 ;;
-    --gate) GATES="${GATES}${GATES:+,}${2:-}"; shift 2 ;;
-    --wave) WAVEADJ="${2:-}"; shift 2 ;;
-    --fix-rounds) FIX_ROUNDS="${2:-}"; FIX_ROUNDS_SET=1; shift 2 ;;
-    --severity-floor) SEV_FLOOR="${2:-}"; SEV_FLOOR_SET=1; shift 2 ;;
+    --run|--repo|--posture|--attend|--gate|--wave|--fix-rounds|--severity-floor)
+      [ $# -ge 2 ] || { err "missing value for $1"; usage >&2; exit 2; }
+      ;;
+  esac
+  case "$1" in
+    --run) RUN="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --posture) POSTURE="$2"; POSTURE_SET=1; shift 2 ;;
+    --attend) ATTEND="$2"; shift 2 ;;
+    --gate) GATES="${GATES}${GATES:+,}$2"; shift 2 ;;
+    --wave) WAVEADJ="$2"; shift 2 ;;
+    --fix-rounds) FIX_ROUNDS="$2"; FIX_ROUNDS_SET=1; shift 2 ;;
+    --severity-floor) SEV_FLOOR="$2"; SEV_FLOOR_SET=1; shift 2 ;;
     --dry-run) DRYRUN=1; shift ;;
     --continue) CONTINUE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -158,8 +167,15 @@ mkdir -p "$RUNDIR/packets"
 MANIFEST="$RUNDIR/manifest.json"
 if [ ! -f "$MANIFEST" ]; then
   jq -nc --arg run "$RUN" --arg by "ff-run/$FF_VERSION" \
-    '{run:$run,base:"main",created_by:$by,phases:[],packets:[]}' > "$MANIFEST"
+    '{run:$run,base:"main",created_by:$by,phases:[],packets:[]}' > "$MANIFEST.tmp" \
+    && mv -f "$MANIFEST.tmp" "$MANIFEST"
 fi
+
+# provenance for finder/fix/regression packets' %%BASE_SHA%% - a pure function
+# of the recorded run base (never a timestamp, never round-dependent), so it
+# stays ADR-012-clean while telling a lane which tree it's auditing.
+REPO_BASE_REF="$(jqr '.base // "main"' "$MANIFEST" 2>/dev/null)"; [ -n "$REPO_BASE_REF" ] || REPO_BASE_REF="main"
+REPO_BASE_SHA="$(git -C "$REPO" rev-parse "$REPO_BASE_REF" 2>/dev/null || git -C "$REPO" rev-parse HEAD 2>/dev/null || echo "")"
 
 if [ -z "$POSTURE" ]; then
   POSTURE="$(jqr '.posture // empty' "$MANIFEST")"
@@ -169,9 +185,19 @@ case "$POSTURE" in baseline|tested|hardened|complete) ;; *) err "invalid or miss
 
 # Manifest is truth on ANY resume (a waves key exists), not only --continue:
 # a re-invocation without explicit --fix-rounds/--severity-floor keeps the
-# recorded values instead of silently resetting them to CLI defaults.
+# recorded values instead of silently resetting them to CLI defaults. An
+# explicit --posture that CONTRADICTS the posture already recorded for a
+# resolved wave set is rejected outright - the wave set was frozen for the
+# OLD posture, so silently relabeling it misrepresents which finders ran.
 HAS_WAVES="$(jq '(.waves // []) | length' "$MANIFEST" 2>/dev/null || echo 0)"
 if [ "$CONTINUE" = 1 ] || [ "${HAS_WAVES:-0}" -gt 0 ]; then
+  if [ "${HAS_WAVES:-0}" -gt 0 ] && [ "$POSTURE_SET" = 1 ]; then
+    RECORDED_POSTURE="$(jqr '.posture // empty' "$MANIFEST")"
+    if [ -n "$RECORDED_POSTURE" ] && [ "$RECORDED_POSTURE" != "$POSTURE" ]; then
+      err "--posture '$POSTURE' contradicts the posture already resolved for run '$RUN' ('$RECORDED_POSTURE') - the wave set was frozen for '$RECORDED_POSTURE'; start a new --run to change posture"
+      exit 2
+    fi
+  fi
   if [ "$FIX_ROUNDS_SET" = 0 ]; then
     mfr="$(jqr '.fix_rounds // empty' "$MANIFEST")"; [ -n "$mfr" ] && FIX_ROUNDS="$mfr"
   fi
@@ -205,9 +231,11 @@ if [ "$EXISTING_COUNT" -gt 0 ]; then
   while IFS= read -r n; do ALL_WAVES+=("$n"); done < <(jqr '.[].name' <<<"$EXISTING_WAVES")
   while IFS= read -r n; do FINDERS+=("$n"); done < <(jqr '.[] | select(.kind=="finder") | .name' <<<"$EXISTING_WAVES")
   WAVES_JSON="$EXISTING_WAVES"
-  jq --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-    '.posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
-    "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
+  if [ "$DRYRUN" != 1 ]; then
+    jq --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
+      '.posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
+      "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
+  fi
 else
   # Fresh resolution: finder waves are every catalogue entry whose `postures`
   # array names the chosen posture (cumulative membership is catalogue DATA,
@@ -218,6 +246,15 @@ else
   FINDERS=()
   while IFS= read -r w; do [ -n "$w" ] && FINDERS+=("$w"); done <<<"$FINDER_NAMES"
 
+  # regression-family waves: catalogue entries with kind=="fix" (a mutation
+  # wave, not a plain finder) whose postures name the chosen posture -
+  # scheduled after fix/re-verify, before docs-sync (below).
+  REGRESSION_NAMES="$(jqr --arg p "$POSTURE" \
+    '.waves | to_entries[] | select(.value.kind=="fix") | select((.value.postures // []) | index($p)) | .key' \
+    "$CATALOGUE")"
+  REGRESSIONS=()
+  while IFS= read -r w; do [ -n "$w" ] && REGRESSIONS+=("$w"); done <<<"$REGRESSION_NAMES"
+
   if [ -n "$WAVEADJ" ]; then
     IFS=',' read -ra ADJS <<< "$WAVEADJ"
     for adj in "${ADJS[@]}"; do
@@ -226,19 +263,29 @@ else
       case "$op" in
         +)
           jq -e --arg w "$name" '.waves[$w]' "$CATALOGUE" >/dev/null 2>&1 || { err "unknown wave in --wave: $name"; exit 2; }
-          case " ${FINDERS[*]:-} " in *" $name "*) ;; *) FINDERS+=("$name") ;; esac
+          case " ${FINDERS[*]} " in *" $name "*) ;; *) FINDERS+=("$name") ;; esac
           ;;
         -)
           NEWF=()
-          for f in "${FINDERS[@]:-}"; do [ -n "$f" ] && [ "$f" != "$name" ] && NEWF+=("$f"); done
-          FINDERS=("${NEWF[@]:-}")
+          for f in "${FINDERS[@]}"; do [ -n "$f" ] && [ "$f" != "$name" ] && NEWF+=("$f"); done
+          FINDERS=()
+          [ "${#NEWF[@]}" -gt 0 ] && FINDERS=("${NEWF[@]}")
           ;;
         *) err "invalid --wave entry '$adj' (must start with + or -)"; exit 2 ;;
       esac
     done
   fi
 
-  ALL_WAVES=("${FINDERS[@]:-}" triage fix docs-sync)
+  # An empty finder set is a real config error, not a valid "nothing to run"
+  # plan - a mis-adjusted --wave that strips every finder must fail loudly
+  # here rather than injecting an unnamed wave into the pipeline downstream.
+  [ "${#FINDERS[@]}" -gt 0 ] || { err "no finder waves selected for posture '$POSTURE' after --wave adjustments - nothing to run"; exit 2; }
+
+  ALL_WAVES=()
+  [ "${#FINDERS[@]}" -gt 0 ] && ALL_WAVES+=("${FINDERS[@]}")
+  ALL_WAVES+=(triage fix)
+  [ "${#REGRESSIONS[@]}" -gt 0 ] && ALL_WAVES+=("${REGRESSIONS[@]}")
+  ALL_WAVES+=(docs-sync land)
 
   declare -A GATE_MAP=()
   if [ -n "$GATES" ]; then
@@ -268,37 +315,60 @@ else
     WAVES_JSON="$(jq -nc --argjson arr "$WAVES_JSON" --arg n "$name" --arg k "$kind" --arg g "$gate" \
       '$arr + [{name:$n,kind:$k,gate:$g,status:"pending",round:0}]')"
   }
-  for f in "${FINDERS[@]:-}"; do [ -n "$f" ] && add_wave "$f" finder; done
+  for f in "${FINDERS[@]}"; do [ -n "$f" ] && add_wave "$f" finder; done
   add_wave triage barrier
   add_wave fix fix
+  for r in "${REGRESSIONS[@]:-}"; do [ -n "$r" ] && add_wave "$r" regression; done
   add_wave docs-sync docs
+  add_wave land land
 
-  # sibling-key upsert (ADR-017 pattern): `phases`/`packets` untouched.
-  jq --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-    '.waves = $waves | .posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
-    "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
+  if [ "$DRYRUN" != 1 ]; then
+    # sibling-key upsert (ADR-017 pattern): `phases`/`packets` untouched.
+    jq --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
+      '.waves = $waves | .posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
+      "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
+  else
+    # dry-run must not freeze the RESOLVED plan (that's the side effect that
+    # made a throwaway --dry-run permanently ignore --wave/--gate on the real
+    # run afterward) - but it DOES stamp an empty `waves` sibling key onto a
+    # legacy manifest, so tooling that only checks "is this run wave-aware"
+    # sees the shape immediately. An empty array keeps EXISTING_COUNT at 0,
+    # so the next real invocation still resolves fresh.
+    jq 'if has("waves") then . else .waves = [] end' "$MANIFEST" > "$MANIFEST.tmp" \
+      && mv -f "$MANIFEST.tmp" "$MANIFEST"
+  fi
 fi
 
 # --- dry-run: resolve + generate finder packets, spawn nothing --------------
+# No manifest write happens on this path (both branches above are guarded by
+# DRYRUN above) - a throwaway --dry-run must not freeze the wave plan for the
+# real run that follows.
 if [ "$DRYRUN" = 1 ]; then
   mkdir -p "$RUNDIR/dryrun"
+  DRYRUN_FAIL=0
   for f in "${FINDERS[@]:-}"; do
     [ -n "$f" ] || continue
     tmpl="$(jqr --arg w "$f" '.waves[$w].template // empty' "$CATALOGUE")"
     if [ -z "$tmpl" ] || [ ! -f "$WAVE_ROOT/$tmpl" ]; then
-      err "dry-run: template missing for wave '$f' ($tmpl)"; continue
+      err "dry-run: template missing for wave '$f' ($tmpl)"; DRYRUN_FAIL=1; continue
     fi
     lanes="$(jqr --arg w "$f" '.waves[$w].lanes // 1' "$CATALOGUE")"
     n=1
     while [ "$n" -le "$lanes" ]; do
-      subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "" \
+      subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
         FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$RUNDIR/dryrun/${f}-${n}.task.md"
       n=$((n+1))
     done
   done
+  if [ "$DRYRUN_FAIL" = 1 ]; then
+    err "dry-run: plan is INVALID - one or more selected waves have no template; nothing spawned, packets partial/absent under $RUNDIR/dryrun/"
+    jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
+      '{dry_run:true,valid:false,posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves}'
+    return 2
+  fi
   err "dry-run: resolved $(jq 'length' <<<"$WAVES_JSON") wave(s) for posture '$POSTURE', packets under $RUNDIR/dryrun/"
   jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-    '{dry_run:true,posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves}'
+    '{dry_run:true,valid:true,posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves}'
   return 0
 fi
 
@@ -313,8 +383,13 @@ FLOOR_RANK="$(sev_rank "$SEV_FLOOR")"
 # category keywords the catalogue's always_escalate list names). Deliberately
 # permissive (false positives just escalate a finding a human can waive/clear;
 # false negatives would silently auto-fix something that should not be).
+# The regex is BUILT FROM the catalogue's always_escalate array (catalogue
+# DATA, not a hardcoded literal here) - each entry is {name,pattern}; edit the
+# catalogue to add/adjust a category, never this function.
+ESCALATE_RE="$(jqr '[.always_escalate[]?.pattern] | join("|")' "$CATALOGUE")"
 always_escalate_kw() {
-  printf '%s' "$1" | grep -qiE 'auth|crypto|permission|schema|migrat|dependenc|public.?api|package\.json|requirements\.txt|cargo\.toml|go\.mod|poetry\.lock'
+  [ -n "$ESCALATE_RE" ] || return 1
+  printf '%s' "$1" | grep -qiE "$ESCALATE_RE"
 }
 ADR_TOOL=""
 for cand in "$HOME/.claude/skills/adr-ops/scripts/adr-touching.py" "$(command -v adr-touching.py 2>/dev/null || true)"; do
@@ -327,6 +402,32 @@ fi
 
 # --- per-wave runners ---------------------------------------------------------
 
+# spawn_finder_lane WAVE LANE_ID MODEL TEMPLATE MAX_TURNS EFFORT - one finder
+# lane, gated and its findings appended. Echoes "1" on failure (caller ORs
+# into lane_fail) so both the primary-lane loop and the cross-provider lane
+# below share the exact same spawn/collect/append path.
+spawn_finder_lane() {
+  local name="$1" lid="$2" model="$3" tmpl="$4" maxturns="$5" effort="$6" pf rc=0
+  pf="$RUNDIR/packets/${lid}.task.md"
+  subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
+    FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
+  bash "$SPAWN" --run "$RUN" --id "$lid" --model "$model" --phase "$name" \
+    --prompt-file "$pf" --max-turns "$maxturns" --repo "$REPO" --worktree \
+    ${effort:+--effort "$effort"} --schema "$SCHEMA" >/dev/null 2>>"$RUNDIR/$lid.spawn.err" || rc=$?
+  case "$rc" in
+    0|3)
+      local out
+      out="$(bash "$COLLECT" --run "$RUN" --id "$lid" --repo "$REPO" --schema 2>>"$RUNDIR/$lid.collect.err")" \
+        && printf '%s' "$out" | jq -c --arg wave "$name" --arg lane "$lid" \
+             '(if type=="array" then . else (.findings // []) end)[] | . + {wave:$wave,lane:$lane}' 2>/dev/null \
+           | bash "$FINDINGS" append --run "$RUN" --repo "$REPO" 2>>"$RUNDIR/$lid.findings.err" \
+        || { err "finder lane $lid: collect/schema gate failed"; return 1; }
+      ;;
+    *) err "finder lane $lid failed (rc=$rc)"; return 1 ;;
+  esac
+  return 0
+}
+
 run_finder_wave() {
   local name="$1" model effort maxturns lanes tmpl n=1 lane_fail=0
   model="$(jqr --arg w "$name" '.waves[$w].model // "sonnet"' "$CATALOGUE")"
@@ -336,26 +437,24 @@ run_finder_wave() {
   tmpl="$(jqr --arg w "$name" '.waves[$w].template // empty' "$CATALOGUE")"
   [ -n "$tmpl" ] && [ -f "$WAVE_ROOT/$tmpl" ] || { err "finder wave '$name': template missing ($tmpl)"; return 10; }
   while [ "$n" -le "$lanes" ]; do
-    local lid="${name}-${n}" pf art rc=0
-    pf="$RUNDIR/packets/${lid}.task.md"
-    subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "" \
-      FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
-    art="$(bash "$SPAWN" --run "$RUN" --id "$lid" --model "$model" --phase "$name" \
-      --prompt-file "$pf" --max-turns "$maxturns" --repo "$REPO" --worktree \
-      ${effort:+--effort "$effort"} --schema "$SCHEMA" 2>>"$RUNDIR/$lid.spawn.err")" || rc=$?
-    case "$rc" in
-      0|3)
-        local out
-        out="$(bash "$COLLECT" --run "$RUN" --id "$lid" --repo "$REPO" --schema 2>>"$RUNDIR/$lid.collect.err")" \
-          && printf '%s' "$out" | jq -c --arg wave "$name" --arg lane "$lid" \
-               '(if type=="array" then . else (.findings // []) end)[] | . + {wave:$wave,lane:$lane}' 2>/dev/null \
-             | bash "$FINDINGS" append --run "$RUN" --repo "$REPO" 2>>"$RUNDIR/$lid.findings.err" \
-          || { err "finder lane $lid: collect/schema gate failed"; lane_fail=1; }
-        ;;
-      *) err "finder lane $lid failed (rc=$rc)"; lane_fail=1 ;;
-    esac
+    spawn_finder_lane "$name" "${name}-${n}" "$model" "$tmpl" "$maxturns" "$effort" || lane_fail=1
     n=$((n+1))
   done
+
+  # cross-provider lane (ADR-018 "security cross-provider" routing): a
+  # SEPARATE lane on a DIFFERENT model AND a different template, so its
+  # packet is never byte-identical to the primary lane's - no cache-key
+  # collision possible, by construction, without touching ff-spawn's key.
+  local cross_model cross_tmpl
+  cross_model="$(jqr --arg w "$name" '.waves[$w].cross // empty' "$CATALOGUE")"
+  cross_tmpl="$(jqr --arg w "$name" '.waves[$w].cross_template // empty' "$CATALOGUE")"
+  if [ -n "$cross_model" ] && [ -n "$cross_tmpl" ]; then
+    if [ -f "$WAVE_ROOT/$cross_tmpl" ]; then
+      spawn_finder_lane "$name" "${name}-cross" "$cross_model" "$cross_tmpl" "$maxturns" "$effort" || lane_fail=1
+    else
+      err "finder wave '$name': cross template missing ($cross_tmpl)"; lane_fail=1
+    fi
+  fi
   [ "$lane_fail" = 0 ]
 }
 
@@ -431,22 +530,46 @@ run_fix_wave() {
   local groups; groups="$(cat "$RUNDIR/triage-groups.json")"
   [ "$(jq 'keys|length' <<<"$groups")" -gt 0 ] || { err "fix: no groups to fix"; return 0; }
 
-  local fix_model; fix_model="$(jqr '.fix.model // "sonnet"' "$CATALOGUE")"
+  local fix_model fix_tmpl fix_provider
+  fix_model="$(jqr '.fix.model // "sonnet"' "$CATALOGUE")"
+  fix_tmpl="$(jqr '.fix.template // empty' "$CATALOGUE")"
+  [ -n "$fix_tmpl" ] && [ -f "$WAVE_ROOT/$fix_tmpl" ] || { err "fix: template missing ($fix_tmpl)"; return 10; }
+  fix_provider="$(jqr --arg m "$fix_model" '.providers[$m] // "anthropic"' "$CATALOGUE")"
+
   local round=0 any_open=1
   while [ "$round" -lt "$FIX_ROUNDS" ] && [ "$any_open" = 1 ]; do
     round=$((round+1))
     set_wave_round fix "$round"
     any_open=0
+
+    # Recomputed EVERY round from currently-open findings only: a finding a
+    # prior round already confirmed fixed (status stays "fixed" for good) or
+    # escalated must never be re-spawned into another fix lane - group
+    # membership (which files are file-disjoint) is fixed at triage, but
+    # which of a group's findings still need work shrinks round over round.
+    local open_findings; open_findings="$(bash "$FINDINGS" list --run "$RUN" --repo "$REPO" --status open 2>/dev/null)"
+    [ -n "$open_findings" ] || open_findings="[]"
+
+    declare -A FP_TO_GID=()
     local i=0
     for key in $(jqr 'keys[]' <<<"$groups"); do
+      local group_fps gfindings gid pf rc=0
+      group_fps="$(jq -c --arg k "$key" '.[$k] | map(.fp)' <<<"$groups")"
+      gfindings="$(jq -c --argjson fps "$group_fps" '[.[] | select(.fp as $f | $fps | index($f) != null)]' <<<"$open_findings")"
+      [ "$(jq 'length' <<<"$gfindings")" -gt 0 ] || continue
+
       i=$((i+1))
-      local gfindings gid pf rc=0 do_not_commit=""
-      gfindings="$(jq -c --arg k "$key" '.[$k]' <<<"$groups")"
+      any_open=1
       gid="fix-${round}-${i}"
       pf="$RUNDIR/packets/${gid}.task.md"
-      [ "$fix_model" = "codex" ] && do_not_commit="DO NOT COMMIT - leave changes in the working tree, report FILES_CHANGED (ADR-006).
-"
-      { printf '%s' "$do_not_commit"; echo "Fix the following findings (JSON array):"; jq -c . <<<"$gfindings"; } > "$pf"
+      while IFS= read -r fp; do [ -n "$fp" ] && FP_TO_GID["$fp"]="$gid"; done < <(jqr '.[].fp' <<<"$gfindings")
+
+      # ADR-012 cache-key purity: strip ledger-only fields (ts/id/lane/status/
+      # round) before a finding record is embedded in a packet body - fp
+      # stays (content-pure), the rest is manifest/journal metadata only.
+      subst_template "$WAVE_ROOT/$fix_tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
+        FINDINGS_JSON "$(jq -c '[.[] | del(.ts,.id,.lane,.status,.round)]' <<<"$gfindings")" \
+        SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
       bash "$SPAWN" --run "$RUN" --id "$gid" --model "$fix_model" --phase fix \
         --prompt-file "$pf" --max-turns 100 --repo "$REPO" --worktree \
         >/dev/null 2>>"$RUNDIR/$gid.spawn.err" || rc=$?
@@ -465,41 +588,83 @@ run_fix_wave() {
       esac
     done
 
-    # re-verify: replay the producing finder's template on a DIFFERENT provider
-    # than the fix lane, with BASE_SHA of that fix round substituted (ADR-012
-    # corollary - `round` itself never enters the packet/key, only BASE_SHA does).
-    local base_sha=""
-    base_sha="$(git -C "$RUNDIR/wt-fix-${round}-1" rev-parse HEAD 2>/dev/null || echo "")"
-    local fixed_findings; fixed_findings="$(bash "$FINDINGS" list --run "$RUN" --repo "$REPO" --status fixed 2>/dev/null)"
-    [ -n "$fixed_findings" ] || fixed_findings="[]"
+    # re-verify: ONLY findings THIS round's fix loop marked fixed - the
+    # global `--status fixed` list also holds prior rounds' already-confirmed
+    # findings, which must never be re-verified again (budget-burn ADR-018's
+    # anti-oscillation rule exists to prevent, arriving by a different door).
+    local round_fixed round_fps_json
+    round_fixed="$(bash "$FINDINGS" list --run "$RUN" --repo "$REPO" --status fixed 2>/dev/null)"
+    [ -n "$round_fixed" ] || round_fixed="[]"
+    round_fps_json="$(printf '%s\n' "${!FP_TO_GID[@]}" | jq -R 'select(length>0)' | jq -sc .)"
+    round_fixed="$(jq -c --argjson fps "$round_fps_json" '[.[] | select(.fp as $f | $fps | index($f) != null)]' <<<"$round_fixed")"
+
     local j=0
     while IFS= read -r finding; do
       [ -n "$finding" ] || continue
       j=$((j+1))
-      local fp wv tmpl rv_model rvid rvpf rvrc=0 still_open=0 prior_round
+      local fp wv gid branch base_sha rvid rvpf rvrc=0 still_open=0 prior_round
       fp="$(jqr '.fp' <<<"$finding")"
       wv="$(jqr '.wave' <<<"$finding")"
-      tmpl="$(jqr --arg w "$wv" '.waves[$w].template // empty' "$CATALOGUE")"
-      [ -n "$tmpl" ] && [ -f "$WAVE_ROOT/$tmpl" ] || { err "re-verify: no template for wave '$wv', leaving fp $fp fixed"; continue; }
-      rv_model="$(jqr --arg w "$wv" '.waves[$w].model // "sonnet"' "$CATALOGUE")"
-      # "different provider than fix" - no formal model->provider table exists
-      # yet, so same-model-as-fix is the one case forced off it (opus fallback).
-      [ "$rv_model" = "$fix_model" ] && rv_model="opus"
+      gid="${FP_TO_GID[$fp]:-}"
       rvid="reverify-${round}-${j}"
-      rvpf="$RUNDIR/packets/${rvid}.task.md"
-      subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$base_sha" \
-        FINDINGS_JSON "$(jq -c '[.]' <<<"$finding")" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$rvpf"
-      bash "$SPAWN" --run "$RUN" --id "$rvid" --model "$rv_model" --phase reverify \
-        --prompt-file "$rvpf" --max-turns 60 --repo "$REPO" --worktree --schema "$SCHEMA" \
-        >/dev/null 2>>"$RUNDIR/$rvid.spawn.err" || rvrc=$?
-      if [ "$rvrc" = 0 ] || [ "$rvrc" = 3 ]; then
-        local rvout rvcount
-        rvout="$(bash "$COLLECT" --run "$RUN" --id "$rvid" --repo "$REPO" --schema 2>>"$RUNDIR/$rvid.collect.err")" || rvout="[]"
-        rvcount="$(jq '(if type=="array" then . else (.findings // []) end) | length' <<<"${rvout:-[]}" 2>/dev/null)"
-        [ "${rvcount:-1}" != "0" ] && still_open=1
-      else
-        still_open=1
+
+      # base-SHA-per-group (ADR-018's "Consequence for ADR-012"): the SPECIFIC
+      # fix lane's own committed branch for THIS finding's group, never an
+      # arbitrary lane's. A missing branch means the fix never landed a
+      # commit for that group - fail loudly and re-open the finding rather
+      # than silently falling through to ff-spawn's `main` default, which
+      # would re-verify the UNFIXED tree and always refute a real fix.
+      branch=""; base_sha=""
+      if [ -n "$gid" ]; then
+        branch="fleetflow/$RUN/$gid"
+        base_sha="$(git -C "$REPO" rev-parse --verify -q "refs/heads/$branch" 2>/dev/null || echo "")"
       fi
+      if [ -z "$base_sha" ]; then
+        err "re-verify: FIX BRANCH MISSING for fp $fp (expected refs/heads/fleetflow/$RUN/${gid:-<unknown>}) - cannot verify against a fixed tree, re-opening finding"
+        still_open=1
+      else
+        local tmpl rv_model rv_provider
+        tmpl="$(jqr --arg w "$wv" '.waves[$w].template // empty' "$CATALOGUE")"
+        if [ -z "$tmpl" ] || [ ! -f "$WAVE_ROOT/$tmpl" ]; then
+          err "re-verify: no template for wave '$wv', leaving fp $fp fixed"
+        else
+          rv_model="$(jqr --arg w "$wv" '.waves[$w].model // "sonnet"' "$CATALOGUE")"
+          rv_provider="$(jqr --arg m "$rv_model" '.providers[$m] // "anthropic"' "$CATALOGUE")"
+          # "different provider than fix" - enforced via the catalogue's
+          # providers map, not a model-NAME comparison (haiku/opus/sonnet all
+          # resolve to "anthropic" and would otherwise pass as "different").
+          # Fallback order codex -> glm -> opus: health can't be probed here
+          # (ff-doctor gates actual spawnability), so codex is picked first
+          # deterministically as the cheapest genuinely-different provider.
+          if [ "$rv_provider" = "$fix_provider" ]; then
+            local cand cand_provider
+            for cand in codex glm opus; do
+              cand_provider="$(jqr --arg m "$cand" '.providers[$m] // "anthropic"' "$CATALOGUE")"
+              if [ "$cand_provider" != "$fix_provider" ]; then rv_model="$cand"; break; fi
+            done
+          fi
+          rvpf="$RUNDIR/packets/${rvid}.task.md"
+          # ADR-012 purity: strip ledger-only fields before embedding, same
+          # as the fix packet above; fp stays.
+          subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$base_sha" \
+            FINDINGS_JSON "$(jq -c '[. | del(.ts,.id,.lane,.status,.round)]' <<<"$finding")" \
+            SEVERITY_RUBRIC "$SEV_RUBRIC" > "$rvpf"
+          # --base pins the re-verify worktree to the FIXED tree (this
+          # finding's group's committed branch), not ff-spawn's `main` default.
+          bash "$SPAWN" --run "$RUN" --id "$rvid" --model "$rv_model" --phase reverify \
+            --prompt-file "$rvpf" --max-turns 60 --repo "$REPO" --base "$branch" --worktree --schema "$SCHEMA" \
+            >/dev/null 2>>"$RUNDIR/$rvid.spawn.err" || rvrc=$?
+          if [ "$rvrc" = 0 ] || [ "$rvrc" = 3 ]; then
+            local rvout rvcount
+            rvout="$(bash "$COLLECT" --run "$RUN" --id "$rvid" --repo "$REPO" --schema 2>>"$RUNDIR/$rvid.collect.err")" || rvout="[]"
+            rvcount="$(jq '(if type=="array" then . else (.findings // []) end) | length' <<<"${rvout:-[]}" 2>/dev/null)"
+            [ "${rvcount:-1}" != "0" ] && still_open=1
+          else
+            still_open=1
+          fi
+        fi
+      fi
+
       if [ "$still_open" = 1 ]; then
         prior_round="$(jqr '.round // 0' <<<"$finding")"
         if [ "${prior_round:-0}" -ge 1 ]; then
@@ -513,7 +678,7 @@ run_fix_wave() {
           any_open=1
         fi
       fi
-    done < <(printf '%s' "$fixed_findings" | jq -c '.[]')
+    done < <(printf '%s' "$round_fixed" | jq -c '.[]')
   done
   return 0
 }
@@ -526,13 +691,20 @@ run_docs_wave() {
     set_wave_status docs-sync skipped
     return 0
   fi
+  # docs-sync is catalogue data like every other wave - it lives in
+  # .waves["docs-sync"] (kind:"docs"), read via the same `.waves[$w]`
+  # accessor as finder waves, not a top-level per-run hardcoded fallback.
   local model tmpl pf rc=0
-  model="$(jqr '.["docs-sync"].model // "haiku"' "$CATALOGUE")"
-  tmpl="$(jqr '.["docs-sync"].template // "assets/wave-packets/docs-sync.tmpl.md"' "$CATALOGUE")"
-  [ -f "$WAVE_ROOT/$tmpl" ] || { err "docs-sync: template missing ($tmpl)"; return 10; }
+  model="$(jqr --arg w "docs-sync" '.waves[$w].model // "haiku"' "$CATALOGUE")"
+  tmpl="$(jqr --arg w "docs-sync" '.waves[$w].template // empty' "$CATALOGUE")"
+  [ -n "$tmpl" ] && [ -f "$WAVE_ROOT/$tmpl" ] || { err "docs-sync: template missing ($tmpl)"; return 10; }
+  local fixed_findings stripped
+  fixed_findings="$(bash "$FINDINGS" list --run "$RUN" --repo "$REPO" --status fixed 2>/dev/null)"
+  [ -n "$fixed_findings" ] || fixed_findings="[]"
+  stripped="$(jq -c '[.[] | del(.ts,.id,.lane,.status,.round)]' <<<"$fixed_findings")"
   pf="$RUNDIR/packets/docs-sync-1.task.md"
-  subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "" \
-    FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
+  subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
+    FINDINGS_JSON "$stripped" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
   bash "$SPAWN" --run "$RUN" --id docs-sync-1 --model "$model" --phase docs-sync \
     --prompt-file "$pf" --max-turns 60 --repo "$REPO" --worktree \
     >/dev/null 2>>"$RUNDIR/docs-sync-1.spawn.err" || rc=$?
@@ -541,6 +713,53 @@ run_docs_wave() {
            >/dev/null 2>>"$RUNDIR/docs-sync-1.collect.err" || return 10 ;;
     *) return 10 ;;
   esac
+  return 0
+}
+
+run_regression_wave() {
+  local name="$1" model tmpl pf rc=0
+  model="$(jqr --arg w "$name" '.waves[$w].model // "sonnet"' "$CATALOGUE")"
+  tmpl="$(jqr --arg w "$name" '.waves[$w].template // empty' "$CATALOGUE")"
+  [ -n "$tmpl" ] && [ -f "$WAVE_ROOT/$tmpl" ] || { err "regression wave '$name': template missing ($tmpl)"; return 10; }
+  local fixed_findings stripped
+  fixed_findings="$(bash "$FINDINGS" list --run "$RUN" --repo "$REPO" --status fixed 2>/dev/null)"
+  [ -n "$fixed_findings" ] || fixed_findings="[]"
+  stripped="$(jq -c '[.[] | del(.ts,.id,.lane,.status,.round)]' <<<"$fixed_findings")"
+  pf="$RUNDIR/packets/${name}-1.task.md"
+  subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
+    FINDINGS_JSON "$stripped" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
+  bash "$SPAWN" --run "$RUN" --id "${name}-1" --model "$model" --phase "$name" \
+    --prompt-file "$pf" --max-turns 60 --repo "$REPO" --worktree \
+    >/dev/null 2>>"$RUNDIR/${name}-1.spawn.err" || rc=$?
+  case "$rc" in
+    0|3) bash "$COLLECT" --run "$RUN" --id "${name}-1" --repo "$REPO" --auto-commit \
+           >/dev/null 2>>"$RUNDIR/${name}-1.collect.err" || return 10 ;;
+    *) return 10 ;;
+  esac
+  return 0
+}
+
+# run_land_wave: the fixed pipeline's terminal stage (ADR-018 §3 "... ->
+# docs-sync -> land"). Prints the fleet-ops handoff summary - branches ready
+# to land, their diffstat, the test command to run first - and NEVER merges
+# or pushes. Landing and deploy stay human/fleet-ops-gated; this wave is
+# report-only by design (see docs/adr/ADR-018 "Non-goals: No posture deploys").
+run_land_wave() {
+  local branches
+  branches="$(git -C "$REPO" for-each-ref --format='%(refname:short)' "refs/heads/fleetflow/$RUN/*" 2>/dev/null)"
+  err "land: fleet-ops handoff for run '$RUN' - review and land these branches yourself; this wave never merges or pushes:"
+  if [ -n "$branches" ]; then
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      local diffstat
+      diffstat="$(git -C "$REPO" diff --shortstat "${REPO_BASE_REF}...${b}" 2>/dev/null)"
+      err "  - $b${diffstat:+  ($diffstat)}"
+    done <<<"$branches"
+  else
+    err "  (no fleetflow/$RUN/* branches found under $REPO)"
+  fi
+  err "land: run the repo's test/check command on each branch before merging"
+  err "land: deploy remains maintainer-gated from an interactive session regardless (ADR-018 non-goals)"
   return 0
 }
 
@@ -566,12 +785,26 @@ print_summary() {
       findings:$findings,waived:$waived,cost_by_wave:$costs}'
 }
 
-# --- pipeline execution: finders -> triage -> fix -> docs-sync ---------------
+# --- pipeline execution: finders -> triage -> fix -> regression -> docs-sync
+#     -> land -------------------------------------------------------------
 for wave_name in "${ALL_WAVES[@]}"; do
   st="$(wave_status "$wave_name")"
   if [ "$st" = "done" ] || [ "$st" = "skipped" ]; then
     err "wave $wave_name: already $st, skipping"
     continue
+  fi
+  if [ "$st" = "failed" ]; then
+    # A failed wave is NEVER silently converted to done - --continue means
+    # "retry it" (fall through to the normal execution path below), not
+    # "pretend it passed". Without --continue, re-encountering it re-reports
+    # the failure and exits 10 again (idempotent, like the gated branch below).
+    if [ "$CONTINUE" = 1 ]; then
+      err "wave $wave_name: retrying previously failed wave (--continue)"
+    else
+      err "wave $wave_name: previously failed, awaiting --continue to retry"
+      print_summary
+      exit 10
+    fi
   fi
   if [ "$st" = "gated" ]; then
     if [ "$CONTINUE" = 1 ]; then
@@ -580,8 +813,10 @@ for wave_name in "${ALL_WAVES[@]}"; do
       continue
     else
       # Idempotent gate signal: re-encountering a stop gate without --continue
-      # exits 14 again (a watchdog reading 0 here would call a gated run green).
-      # review gates stay exit 0 - they are informational, not semaphores.
+      # exits 14 again (a watchdog reading 0 here would call a gated run
+      # green). A review gate halts the pipeline exactly like a stop gate -
+      # the ONLY difference is the exit code (0 vs 14) - both require
+      # --continue to proceed; review is not merely informational.
       policy="$(jqr --arg n "$wave_name" '(.waves[] | select(.name==$n) | .gate)' "$MANIFEST")"
       err "wave $wave_name: still gated, awaiting --continue"
       print_summary
@@ -593,21 +828,26 @@ for wave_name in "${ALL_WAVES[@]}"; do
   kind="$(jqr --arg n "$wave_name" '(.waves[] | select(.name==$n) | .kind)' "$MANIFEST")"
   rc=0
   case "$kind" in
-    finder) run_finder_wave "$wave_name" || rc=$? ;;
-    barrier) run_triage_wave || rc=$? ;;
-    fix) run_fix_wave || rc=$? ;;
-    docs) run_docs_wave || rc=$? ;;
+    finder)     run_finder_wave "$wave_name" || rc=$? ;;
+    barrier)    run_triage_wave || rc=$? ;;
+    fix)        run_fix_wave || rc=$? ;;
+    regression) run_regression_wave "$wave_name" || rc=$? ;;
+    docs)       run_docs_wave || rc=$? ;;
+    land)       run_land_wave || rc=$? ;;
     *) err "wave $wave_name: unknown kind '$kind'"; rc=2 ;;
   esac
   if [ "$rc" != 0 ]; then
     err "wave $wave_name failed (rc=$rc)"
-    set_wave_status "$wave_name" gated
+    set_wave_status "$wave_name" failed
     print_summary
     exit 10
   fi
   st="$(wave_status "$wave_name")"
-  [ "$st" = "skipped" ] && continue
-  set_wave_status "$wave_name" done
+  # A skipped wave is still REPORTED (no silent caps) but a review/stop gate
+  # on it must halt exactly as it would for a wave that actually ran - a
+  # gate is a request to look before proceeding, and "there was nothing to
+  # do" is itself something the operator asked to be told before continuing.
+  [ "$st" = "skipped" ] || set_wave_status "$wave_name" done
   policy="$(jqr --arg n "$wave_name" '(.waves[] | select(.name==$n) | .gate)' "$MANIFEST")"
   case "$policy" in
     review) set_wave_status "$wave_name" gated; print_summary; exit 0 ;;
@@ -641,8 +881,11 @@ case "$1" in
 esac
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:-}"; shift 2 ;;
-    --repo) REPO="${2:-}"; shift 2 ;;
+    --run|--repo) [ $# -ge 2 ] || { err "missing value for $1"; usage >&2; exit 2; } ;;
+  esac
+  case "$1" in
+    --run) RUN="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage >&2; exit 2 ;;
   esac
