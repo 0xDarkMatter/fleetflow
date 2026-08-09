@@ -93,3 +93,10 @@ operational playbook — read it first; this file only carries repo mechanics.
   Compose service holds this dir as CWD. All development happens in worktree
   lanes; `main` stays parked on `main`. See [Landmines](AGENTS.md#landmines)
   incident notes (junctions, service CWD-lock).
+- **Windows `jq.exe` emits CRLF — strip `\r` on EVERY `jq -r` capture.**
+  A raw `$(jq -r …)` or `< <(jq -r …)` carries a trailing `\r` that silently
+  breaks `=` comparisons, `[ -f ]` checks, `case` matches, and `--fp` lookups.
+  Four independent victims in one run (2026-08-10, run `waves`): ff-widget,
+  ff-run wave, the tests lane's assertions, and the orchestrator itself. Use
+  the scripts' `jqr()` helper (`jq -r … | tr -d '\r'`) or append
+  `| tr -d '\r'` — there is no safe raw capture on this platform.
