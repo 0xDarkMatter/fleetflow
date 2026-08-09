@@ -42,9 +42,15 @@ anything else.** Two steps, both cheap:
    default, so the lane grid is what you actually see. Do not fight it with a
    wider layout.
 
-Skip this silently when there is no Browser pane (headless `claude -p`, CI, a
-non-desktop host) — the skill's value does not depend on it. Do not narrate the
-step; just have the dashboard there.
+3. In chat-capable sessions (not headless runs), emit the inline snapshot card at
+   phase boundaries (spawn, phase change, all-done) via `bash scripts/ff-widget.sh
+   --run <name> [--repo P]` piped into the chat widget surface. It is a moment-
+   in-time render by design (chat sandbox cannot poll), re-emitted rather than
+   self-updating. Sand-box isolation rationale: [ADR-003](docs/adr/ADR-003-dashboard-zero-external-references.md) / [ADR-004](docs/adr/ADR-004-live-probes-click-gated-never-timed.md).
+
+Skip dashboard and widget silently when there is no Browser pane (headless `claude -p`,
+CI, a non-desktop host) — the skill's value does not depend on it. Do not narrate
+the steps; just have the dashboard there and the card in chat when available.
 
 If the health check fails, say so and offer the one-liner rather than opening a
 pane onto nothing:
@@ -355,6 +361,53 @@ default the script-author follows, not an option — and real runs routinely hit
 - **No silent caps** (native rule, verbatim): if you sample, top-N, or skip,
   say so in the run summary.
 
+## Post-build waves
+
+Post-build work (QA, security, a11y, supply-chain, perf, docs, polish) runs as a
+fixed pipeline — `build → verify → finders → triage → fix → re-verify → docs-sync
+→ land` — sequenced by `ff-run wave` rather than by the orchestrator, where
+`--posture` selects *which finder waves run* and an orthogonal attendance policy
+selects *who is watching*. Every finder emits **findings as ledger records**
+(`.fleetflow/<run>/findings.jsonl`, one JSON record per finding) that triage, fix,
+re-verify, gates, and dashboards all consume — remediation is structural to the
+pipeline, not a property of the deepest tier ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
+
+| Posture | Finder waves |
+|---|---|
+| `baseline` | docs-parity, regression |
+| `tested` | +qa, visual-qa |
+| `hardened` | +security, supply-chain, a11y |
+| `complete` | +polish, perf |
+
+**Attendance is a macro; gates are the single source of truth** ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)):
+`--attend none|land|each` only *sets the default* gate on each wave; an explicit
+`--gate <wave>=<policy>` overrides per-wave. The manifest's gates are the only record.
+
+**Severity floor and always-escalate**
+([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)):
+findings at or below `--severity-floor S=medium` auto-fix; above the floor *or* touching
+`auth`, `crypto`, `permissions`, `schema`, `deps`, `public-api`, or ADR-covered paths
+escalate to a human gate. **Anti-oscillation:** a finding refuted twice by re-verify
+escalates, never retried ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
+
+```
+ff-run.sh wave --run NAME --posture baseline|tested|hardened|complete \
+               [--attend none|land|each] [--gate WAVE=auto|review|stop]... \
+               [--fix-rounds N=2] [--severity-floor S=medium] [--dry-run|--continue]
+```
+
+**Example 1** — tested posture, fully attended:
+```bash
+ff-run.sh wave --run v0.2 --posture tested --attend each
+```
+
+**Example 2** — hardened, gated only at landing, per-wave costs visible:
+```bash
+ff-run.sh wave --run v0.2 --posture hardened --attend land --dry-run
+```
+
+Per-wave cost roll-ups aggregate from `ff-status`, visible in `--dry-run` and the run summary. **No posture deploys:** the pipeline terminates at land; deploying remains maintainer-gated from an interactive session ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
+
 ## Safety — the cage, not the model
 
 - **Isolation:** every mutating worker gets its own worktree lane *and* (GLM)
@@ -453,7 +506,9 @@ default the script-author follows, not an option — and real runs routinely hit
 | [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-model launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
 | [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-model result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
 | [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
-| [scripts/ff-run.sh](scripts/ff-run.sh) | `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
+| [scripts/ff-run.sh](scripts/ff-run.sh) | `wave --run NAME --posture P [--attend none\|land\|each] [--gate WAVE=POLICY]... [--fix-rounds N] [--severity-floor S]` sequences post-build waves (QA, security, a11y, supply-chain, perf, docs, polish) — findings ledger, triage, fix-loop, re-verify, docs-sync. `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
+| [scripts/ff-findings.sh](scripts/ff-findings.sh) | findings ledger CLI: `append [--json '...']` dedupes by fingerprint, `list [--status S] [--severity S] [--wave W]`, `count`, `set-status --fp F --status S`, `waive --fp F --reason R`, `apply-waivers` (marks open findings whose fp appears in `docs/waivers.json` as waived); all take `--run NAME [--repo P]` |
+| [scripts/ff-widget.sh](scripts/ff-widget.sh) | HTML fragment for chat sandbox: wave bar, metric cells (lanes/tokens/cost/findings/elapsed), lane grid (capped at `--max-lanes N=10`), findings strip (severity chips when >0), buttons (refresh, triage failed, review gate when gated); stateless, zero external refs, CSS variables only |
 | [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps committed lanes, removes the run's cache dirs; reports locked ACL-litter dirs. **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
 | [scripts/ff-archive.sh](scripts/ff-archive.sh) | `--run NAME` appends a compact run summary to `~/.fleetflow/history.jsonl` so the run outlives its own directory; `--dry-run` prints without appending |
 | [scripts/ff-aggregate.py](scripts/ff-aggregate.py) | discovers every run under the configured roots and emits ONE aggregate JSON (all repos, all runs, roll-ups, history); `--init-roots PATH...` writes the roots file |
