@@ -91,6 +91,64 @@ STATUS_ENUM="open fixed escalated waived"
 
 is_in() { local x="$1"; shift; for w in "$@"; do [ "$x" = "$w" ] && return 0; done; return 1; }
 
+# reqval N FLAG - guards the flag-parse loop's "${2:-}; shift 2" idiom
+# (finding 8d368218ec13): a flag as the LAST argument leaves $2 empty and
+# `shift 2` a no-op, so $1 never advances and the loop spins forever. Call
+# with the loop's own $# (BEFORE consuming the value) so a missing value
+# errors out instead of re-presenting the same flag.
+reqval() { [ "$1" -ge 2 ] || { err "$2 requires a value"; usage >&2; exit 2; }; }
+
+# validate_ledger - abort (exit 10) if $LEDGER exists but any line fails jq
+# parse; the ledger is NEVER rewritten in that state (append/list/count all
+# route through this before deriving output from ledger contents).
+validate_ledger() {
+  [ -f "$LEDGER" ] || return 0
+  local jq_err
+  jq_err="$(jq -c -s '.' "$LEDGER" 2>&1 >/dev/null)"
+  if [ $? -ne 0 ]; then
+    err "ledger is malformed, not modified: $jq_err"
+    exit 10
+  fi
+}
+
+# validate_waivers_file - abort (exit 10) if $WAIVERS exists but is not valid
+# JSON, or is valid JSON that is not an array; docs/waivers.json is NEVER
+# overwritten in that state. Sets WAIVERS_JSON to "[]" when absent, else the
+# parsed array. Called before ANY read or write of the waivers file (waive
+# upserts it, apply-waivers only reads it).
+validate_waivers_file() {
+  WAIVERS_JSON="[]"
+  [ -f "$WAIVERS" ] || return 0
+  local perr wtype
+  perr="$(jq -c '.' "$WAIVERS" 2>&1 >/dev/null)"
+  if [ $? -ne 0 ]; then
+    err "waivers file is not valid JSON, not modified: $perr"
+    exit 10
+  fi
+  wtype="$(jq -r 'type' "$WAIVERS" 2>/dev/null)"
+  if [ "$wtype" != "array" ]; then
+    err "waivers file is not a JSON array (type: $wtype), not modified"
+    exit 10
+  fi
+  WAIVERS_JSON="$(jq -c '.' "$WAIVERS" 2>/dev/null)"
+}
+
+# acquire_lock - portable mkdir-spinlock around the ledger read-modify-write
+# (finding 182717958712): two concurrent appends/mutations both loading the
+# whole ledger then mv-replacing it is last-writer-wins. mkdir is atomic
+# even on Windows Git Bash, unlike flock. Bounded wait ~10s, then exit 10.
+# Released by an EXIT trap so it clears on any exit path (success or error).
+acquire_lock() {
+  LOCKDIR="$RUNDIR/.findings.lock"
+  local waited=0
+  until mkdir "$LOCKDIR" 2>/dev/null; do
+    waited=$((waited+1))
+    [ "$waited" -lt 100 ] || { err "timed out waiting for findings lock: $LOCKDIR"; exit 10; }
+    sleep 0.1
+  done
+  trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+}
+
 # write_ledger ARRAY_JSON - one record per line, temp+mv (see header comment).
 write_ledger() {
   local arr="$1" tmp
@@ -103,6 +161,7 @@ write_ledger() {
 
 # load_ledger - EXISTING = ledger contents as a JSON array ("[]" if absent/empty).
 load_ledger() {
+  validate_ledger
   EXISTING="$(jq -c -s '.' "$LEDGER" 2>/dev/null)"
   [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ] || EXISTING="[]"
 }
@@ -126,18 +185,18 @@ FILTER_STATUS="" FILTER_SEVERITY="" FILTER_WAVE="" FILTER_MINSEV=""
 FP="" NEW_STATUS="" REASON="" EXPIRES=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:-}"; shift 2 ;;
-    --repo) REPO="${2:-}"; shift 2 ;;
-    --json) JSON_ARG="${2:-}"; shift 2 ;;
-    --round) ROUND_FLAG="${2:-}"; shift 2 ;;
-    --lane) LANE_FLAG="${2:-}"; shift 2 ;;
-    --status) FILTER_STATUS="${2:-}"; NEW_STATUS="${2:-}"; shift 2 ;;
-    --severity) FILTER_SEVERITY="${2:-}"; shift 2 ;;
-    --wave) FILTER_WAVE="${2:-}"; shift 2 ;;
-    --min-severity) FILTER_MINSEV="${2:-}"; shift 2 ;;
-    --fp) FP="${2:-}"; shift 2 ;;
-    --reason) REASON="${2:-}"; shift 2 ;;
-    --expires) EXPIRES="${2:-}"; shift 2 ;;
+    --run) reqval $# --run; RUN="$2"; shift 2 ;;
+    --repo) reqval $# --repo; REPO="$2"; shift 2 ;;
+    --json) reqval $# --json; JSON_ARG="$2"; shift 2 ;;
+    --round) reqval $# --round; ROUND_FLAG="$2"; shift 2 ;;
+    --lane) reqval $# --lane; LANE_FLAG="$2"; shift 2 ;;
+    --status) reqval $# --status; FILTER_STATUS="$2"; NEW_STATUS="$2"; shift 2 ;;
+    --severity) reqval $# --severity; FILTER_SEVERITY="$2"; shift 2 ;;
+    --wave) reqval $# --wave; FILTER_WAVE="$2"; shift 2 ;;
+    --min-severity) reqval $# --min-severity; FILTER_MINSEV="$2"; shift 2 ;;
+    --fp) reqval $# --fp; FP="$2"; shift 2 ;;
+    --reason) reqval $# --reason; REASON="$2"; shift 2 ;;
+    --expires) reqval $# --expires; EXPIRES="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage >&2; exit 2 ;;
   esac
@@ -145,6 +204,9 @@ done
 
 command -v jq >/dev/null || { err "jq required"; exit 2; }
 [ -n "$RUN" ] || { err "--run required"; usage >&2; exit 2; }
+case "$RUN" in
+  *[!a-z0-9-]*|'') err "invalid --run '$RUN' (must match ^[a-z0-9-]+\$)"; exit 2 ;;
+esac
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
 
@@ -174,6 +236,7 @@ case "$CMD" in
 # --- append ------------------------------------------------------------------
 append)
   mkdir -p "$RUNDIR" 2>/dev/null || { err "cannot create $RUNDIR"; exit 3; }
+  acquire_lock
 
   if [ -n "$JSON_ARG" ]; then RAW="$JSON_ARG"; else RAW="$(cat)"; fi
   [ -n "$RAW" ] || { err "no input (stdin empty and --json not given)"; exit 2; }
@@ -224,7 +287,8 @@ append)
     # constructed here because this is the only place a finding's identity is
     # ever computed; triage/fix/re-verify all key off the result, never
     # re-derive it.
-    FILES_SORTED="$(printf '%s' "$FILES" | jq -r 'sort | join(",")')"
+    FILES_SORTED_JSON="$(printf '%s' "$FILES" | jq -c 'sort')"
+    FILES_SORTED="$(printf '%s' "$FILES_SORTED_JSON" | jq -r 'join(",")')"
     CLAIM_NORM="$(printf '%s' "$CLAIM" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')"
     FP="$(printf '%s\n%s\n%s' "$WAVE" "$FILES_SORTED" "$CLAIM_NORM" | sha256sum | cut -c1-12)"
 
@@ -248,7 +312,7 @@ append)
       SEQ=$((SEQ+1))
       ID="$(printf '%s-%03d' "$WAVE" "$SEQ")"
       NEWREC="$(jq -nc --arg id "$ID" --arg fp "$FP" --arg wave "$WAVE" --arg sev "$SEV" \
-        --argjson files "$FILES" --arg claim "$CLAIM" --arg evid "$EVID" --arg status "$STATUS" \
+        --argjson files "$FILES_SORTED_JSON" --arg claim "$CLAIM" --arg evid "$EVID" --arg status "$STATUS" \
         --argjson round "$ROUND" --arg lane "$LANE" --argjson ts "$NOW" \
         '{id:$id,fp:$fp,wave:$wave,severity:$sev,files:$files,claim:$claim,evidence:$evid,
           status:$status,round:$round,lane:$lane,ts:$ts}')"
@@ -268,6 +332,7 @@ append)
 # --- list ----------------------------------------------------------------
 list)
   [ -f "$LEDGER" ] || { printf '[]\n'; exit 0; }
+  validate_ledger
   jq -c -s "$SEVRANK_DEF"'
     map(select(
       ($status == "" or .status == $status) and
@@ -284,6 +349,7 @@ list)
 # --- count -----------------------------------------------------------------
 count)
   [ -f "$LEDGER" ] || { printf '{"open":0,"fixed":0,"escalated":0,"waived":0}\n'; exit 0; }
+  validate_ledger
   jq -c -s "$SEVRANK_DEF"'
     ( map(select(
         ($status == "" or .status == $status) and
@@ -307,6 +373,7 @@ set-status)
   is_in "$NEW_STATUS" $STATUS_ENUM || { err "bad --status '$NEW_STATUS' (want: $STATUS_ENUM)"; exit 2; }
   [ -f "$LEDGER" ] || { err "no ledger for run '$RUN'"; exit 3; }
 
+  acquire_lock
   load_ledger
   MATCH_IDX="$(printf '%s' "$EXISTING" | jq -r --arg fp "$FP" '[.[] | .fp] | index($fp) // -1')"
   [ "$MATCH_IDX" != "-1" ] && [ "$MATCH_IDX" != "null" ] || { err "no finding with fp '$FP'"; exit 2; }
@@ -324,11 +391,11 @@ waive)
   [ -n "$REASON" ] || { err "--reason required"; usage >&2; exit 2; }
   [ -f "$LEDGER" ] || { err "no ledger for run '$RUN'"; exit 3; }
 
+  acquire_lock
+  validate_waivers_file
+  WEXISTING="$WAIVERS_JSON"
   TODAY="$(date +%F)"
   mkdir -p "$(dirname "$WAIVERS")" 2>/dev/null || true
-  WEXISTING="[]"
-  [ -f "$WAIVERS" ] && WEXISTING="$(jq -c '.' "$WAIVERS" 2>/dev/null)"
-  [ -n "$WEXISTING" ] && [ "$WEXISTING" != "null" ] || WEXISTING="[]"
 
   EXPJSON="null"
   [ -n "$EXPIRES" ] && EXPJSON="\"$EXPIRES\""
@@ -357,9 +424,10 @@ apply-waivers)
   [ -f "$WAIVERS" ] || { err "no waivers file at $WAIVERS - nothing to apply"; printf '{"applied":0,"expired":0}\n'; exit 0; }
   [ -f "$LEDGER" ] || { err "no ledger for run '$RUN'"; exit 3; }
 
+  acquire_lock
+  validate_waivers_file
+  WLIST="$WAIVERS_JSON"
   TODAY="$(date +%F)"
-  WLIST="$(jq -c '.' "$WAIVERS" 2>/dev/null)"
-  [ -n "$WLIST" ] && [ "$WLIST" != "null" ] || WLIST="[]"
 
   load_ledger
   APPLIED=0; EXPIRED=0

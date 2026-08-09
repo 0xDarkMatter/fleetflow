@@ -46,6 +46,13 @@ EOF
 
 err() { echo "ff-widget: $*" >&2; }
 
+# reqval N FLAG - guards the flag-parse loop's "${2:-}; shift 2" idiom
+# (finding 8d368218ec13): a flag as the LAST argument leaves $2 empty and
+# `shift 2` a no-op, so $1 never advances and the loop spins forever. Call
+# with the loop's own $# (BEFORE consuming the value) so a missing value
+# errors out instead of re-presenting the same flag.
+reqval() { [ "$1" -ge 2 ] || { err "$2 requires a value"; usage >&2; exit 2; }; }
+
 # escape a raw string for HTML text/attribute context (jq's @html covers
 # < > & ' " - safe inside both double- and single-quoted attributes).
 html_esc() { printf '%s' "$1" | jq -Rr '@html'; }
@@ -102,9 +109,9 @@ FINDINGS_BIN="${FLEETFLOW_FINDINGS_BIN:-$HERE/ff-findings.sh}"
 RUN="" REPO="" MAX_LANES=10
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:-}"; shift 2 ;;
-    --repo) REPO="${2:-}"; shift 2 ;;
-    --max-lanes) MAX_LANES="${2:-}"; shift 2 ;;
+    --run) reqval $# --run; RUN="$2"; shift 2 ;;
+    --repo) reqval $# --repo; REPO="$2"; shift 2 ;;
+    --max-lanes) reqval $# --max-lanes; MAX_LANES="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown argument: $1"; usage >&2; exit 2 ;;
   esac
@@ -135,14 +142,20 @@ if [ -f "$MANIFEST" ]; then
 fi
 
 # normalize to [{name,status}] regardless of source: real waves keep their
-# status; a legacy manifest (no .waves) falls back to .manifest.phases with
-# every segment neutral ("pending" - no status data exists to colour it).
+# status; a legacy manifest (no .waves key at all) falls back to
+# .manifest.phases with every segment neutral ("pending" - no status data
+# exists to colour it). A manifest with an explicitly resolved EMPTY waves
+# array (finding 4ed6b5add2f7) is a different state than "legacy" - it must
+# not masquerade as one, so it renders a single neutral "no waves resolved"
+# segment instead of falling back to phases.
 WAVE_ROWS="$(printf '%s' "$STATUS_JSON" | jq -c --argjson w "$WAVES_JSON" '
   (.manifest.phases // []) as $ph
-  | if ($w != null and ($w|length) > 0) then
+  | if ($w == null) then
+      [$ph[] | {name: ., status: "pending"}]
+    elif ($w|length) > 0 then
       [$w[] | {name: (.name // "?"), status: (.status // "pending")}]
     else
-      [$ph[] | {name: ., status: "pending"}]
+      [{name: "no waves resolved", status: "pending"}]
     end')"
 WAVE_COUNT="$(printf '%s' "$WAVE_ROWS" | jq -r 'length')"
 DROP_PENDING_LABELS=0
