@@ -18,13 +18,19 @@ usage() {
 Usage: ff-spawn.sh --run NAME --id ID --model MODEL --prompt-file FILE
                    [--worktree] [--base BRANCH] [--repo PATH] [--max-turns N]
                    [--effort low|medium|high|max] [--schema FILE] [--no-guard]
-                   [--force] [--dry-run]
+                   [--force] [--dry-run] [--round N]
 
   --run NAME       run name (groups lanes; [a-z0-9-]+)
   --id ID          lane id within the run ([a-z0-9-]+)
   --model MODEL    glm | codex | grok | pi | sonnet | opus | haiku | fable
   --prompt-file F  packet file (guard preamble is prepended unless --no-guard)
   --phase NAME     progress-group label (default: build) - display only
+  --round N        fix-loop round - metadata only (integer >=0, default: 0).
+                   NOT part of the cache key (see ADR-018's "Consequence for
+                   ADR-012" - a round counter in the key would re-run
+                   verification an unchanged tree does not need; the
+                   sanctioned re-verify invalidator is BASE_SHA in the packet
+                   body, not a round number in the key).
   --orchestrator M which model is DRIVING this fleet (e.g. fable, opus). Nothing
                    in the environment exposes it - a Claude Code session gives its
                    children CLAUDE_EFFORT and a session id but NOT its model - so
@@ -100,11 +106,12 @@ main() {
 
 RUN="" ID="" MODEL="" PROMPT_FILE="" WORKTREE=0 BASE="main" REPO=""
 MAX_TURNS=100 SCHEMA="" GUARD=1 FORCE=0 DRYRUN=0 PHASE="build" EFFORT=""
-ORCHESTRATOR=""
+ORCHESTRATOR="" ROUND=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
     --phase) PHASE="${2:-}"; shift 2 ;;
+    --round) ROUND="${2:-}"; shift 2 ;;
     --orchestrator) ORCHESTRATOR="${2:-}"; shift 2 ;;
     --id) ID="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
@@ -128,6 +135,7 @@ done
 
 case "$MODEL" in glm|codex|grok|pi|sonnet|opus|haiku|fable) ;; *) err "invalid --model '$MODEL'"; exit 2 ;; esac
 case "$EFFORT" in ""|low|medium|high|max) ;; *) err "invalid --effort '$EFFORT' (low|medium|high|max)"; exit 2 ;; esac
+case "$ROUND" in ''|*[!0-9]*) err "invalid --round '$ROUND' (integer >=0)"; exit 2 ;; esac
 
 # --- Windows/Codex elevation trap (incident 2026-07-27, run bkv2p2) ------------
 # codex-cli's `elevated` Windows sandbox mode provisions its AppContainer through
@@ -262,7 +270,8 @@ prompt_abs() { abspath "$PROMPT_FILE"; }
 WT_JSON="false"; [ "$WORKTREE" = 1 ] && WT_JSON="true"
 MENTRY="$(jq -nc --arg id "$ID" --arg b "$MODEL" --arg p "$PHASE" --arg pf "$(prompt_abs)" \
   --argjson wt "$WT_JSON" --argjson mt "$MAX_TURNS" --arg e "$EFFORT" --arg s "${SCHEMA:-}" --arg k "$KEY" \
-  '{id:$id,model:$b,phase:$p,prompt_file:$pf,worktree:$wt,max_turns:$mt,effort:$e,schema:$s,key:$k}')"
+  --argjson round "$ROUND" \
+  '{id:$id,model:$b,phase:$p,prompt_file:$pf,worktree:$wt,max_turns:$mt,effort:$e,schema:$s,key:$k,round:$round}')"
 if [ ! -s "$MANIFEST" ]; then
   jq -nc --arg run "$RUN" --arg base "$BASE" --arg by "ff-spawn/$FF_VERSION" \
     --argjson entry "$MENTRY" --arg phase "$PHASE" --arg o "$ORCHESTRATOR" \
@@ -298,6 +307,12 @@ if [ "$WORKTREE" = 1 ]; then
 fi
 
 # phase is display metadata only - deliberately NOT part of the cache key.
+# round: NOT in key - same deal, and the reason is spelled out in ADR-018's
+# "Consequence for ADR-012": a round counter in the key would re-run
+# verification an unchanged tree does not need. The sanctioned re-verify
+# invalidator is BASE_SHA in the packet body (a pure function of the work
+# under test), not a round number here. round joins phase as manifest/journal
+# metadata only - display and audit, never identity.
 #
 # The exact model is journalled because for codex and grok it is otherwise
 # UNRECOVERABLE after the fact: their event streams carry no model field, so the
@@ -325,8 +340,8 @@ case "$MODEL" in
   *)     SPAWN_MODEL="$MODEL" ;;
 esac
 jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$MODEL" --arg p "$PHASE" --arg v "$FF_VERSION" \
-  --arg m "$SPAWN_MODEL" --arg o "$ORCHESTRATOR" \
-  '{type:"started",key:$k,id:$id,model:$b,phase:$p,v:$v,
+  --arg m "$SPAWN_MODEL" --arg o "$ORCHESTRATOR" --argjson round "$ROUND" \
+  '{type:"started",key:$k,id:$id,model:$b,phase:$p,v:$v,round:$round,
     model_id:(if $m=="" then null else $m end),
     orchestrator:(if $o=="" then null else $o end)}' >> "$JOURNAL"
 
