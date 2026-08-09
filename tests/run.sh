@@ -800,6 +800,203 @@ else
   echo "  SKIP  adr-lint unavailable (adr-ops skill or python missing)"
 fi
 
+# === waves (ADR-018) ===
+FINDINGS="$S/ff-findings.sh"
+WIDGET="$S/ff-widget.sh"
+CATALOGUE="$HERE/../assets/wave-catalogue.json"
+WREPO="$TMP/waves-repo"
+mkdir -p "$WREPO"
+git -C "$WREPO" init -q -b main
+git -C "$WREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+# --- findings ledger: dedup, waiver persistence, convergence, expiry ---------
+if [ -f "$FINDINGS" ]; then
+  FP1="111111111111"; FP2="222222222222"
+  F1="$(jq -nc --arg fp "$FP1" '{fp:$fp,wave:"qa",severity:"medium",files:["src/a.ts"],claim:"Save loses edits",evidence:"first repro",status:"open",round:0,lane:"qa-1"}')"
+  F1_DUP="$(jq -nc --arg fp "$FP1" '{fp:$fp,wave:"qa",severity:"medium",files:["src/a.ts"],claim:"Save loses edits",evidence:"newer repro",status:"open",round:1,lane:"qa-2"}')"
+  F2="$(jq -nc --arg fp "$FP2" '{fp:$fp,wave:"security",severity:"high",files:["src/b.ts"],claim:"Input reaches shell",evidence:"metacharacters execute",status:"open",round:0,lane:"security-1"}')"
+  printf '%s\n%s\n%s\n' "$F1" "$F1_DUP" "$F2" \
+    | bash "$FINDINGS" append --run wledger --repo "$WREPO" >/dev/null 2>&1
+  LRC=$?
+  [ "$LRC" = "0" ] && ok "waves ledger: append accepts three findings" \
+    || bad "waves ledger: append rc=$LRC"
+  LC="$(bash "$FINDINGS" count --run wledger --repo "$WREPO" 2>/dev/null)"; LCRC=$?
+  { [ "$LCRC" = "0" ] && printf '%s' "$LC" | jq -e '.open==2' >/dev/null; } \
+    && ok "waves ledger: duplicate fp leaves two open findings" \
+    || bad "waves ledger: duplicate fp count wrong (rc=$LCRC out=$LC)"
+  jq -s -e 'length==2 and ([.[].fp]|unique|length)==2' "$WREPO/.fleetflow/wledger/findings.jsonl" >/dev/null 2>&1 \
+    && ok "waves ledger: duplicate fp is upserted, not appended" \
+    || bad "waves ledger: duplicate fp produced a third ledger record"
+
+  bash "$FINDINGS" waive --run wledger --repo "$WREPO" --fp "$FP1" \
+    --reason "accepted compatibility trade-off" >/dev/null 2>&1; LWRC=$?
+  { [ "$LWRC" = "0" ] \
+    && jq -e --arg fp "$FP1" 'any(.[]; .fp==$fp and .reason=="accepted compatibility trade-off")' "$WREPO/docs/waivers.json" >/dev/null \
+    && jq -s -e --arg fp "$FP1" 'any(.[]; .fp==$fp and .status=="waived")' "$WREPO/.fleetflow/wledger/findings.jsonl" >/dev/null; } \
+    && ok "waves ledger: waive upserts repo waiver and marks finding waived" \
+    || bad "waves ledger: waive did not persist both states"
+
+  printf '%s\n' "$F1" | bash "$FINDINGS" append --run wfresh --repo "$WREPO" >/dev/null 2>&1
+  bash "$FINDINGS" apply-waivers --run wfresh --repo "$WREPO" >/dev/null 2>&1; LARC=$?
+  { [ "$LARC" = "0" ] \
+    && jq -s -e --arg fp "$FP1" 'any(.[]; .fp==$fp and .status=="waived")' "$WREPO/.fleetflow/wfresh/findings.jsonl" >/dev/null; } \
+    && ok "waves ledger: repo waiver converges a fresh ledger to waived" \
+    || bad "waves ledger: apply-waivers missed matching fp"
+
+  WTMP="$TMP/waivers-expired.json"
+  jq --arg fp "$FP2" '. + [{fp:$fp,reason:"time-limited",waived:"2000-01-01",expires:"2000-01-02"}]' \
+    "$WREPO/docs/waivers.json" > "$WTMP" && mv "$WTMP" "$WREPO/docs/waivers.json"
+  printf '%s\n' "$F2" | bash "$FINDINGS" append --run wexpired --repo "$WREPO" >/dev/null 2>&1
+  bash "$FINDINGS" apply-waivers --run wexpired --repo "$WREPO" \
+    >/dev/null 2>"$TMP/wexpired.err"; LERC=$?
+  { [ "$LERC" = "0" ] \
+    && jq -s -e --arg fp "$FP2" 'any(.[]; .fp==$fp and .status=="open")' "$WREPO/.fleetflow/wexpired/findings.jsonl" >/dev/null \
+    && grep -qi 'expired' "$TMP/wexpired.err"; } \
+    && ok "waves ledger: expired waiver ignored with stderr warning" \
+    || bad "waves ledger: expired waiver was silent or applied"
+else
+  echo "  SKIP  waves ledger (ff-findings.sh absent)"
+fi
+
+# --- manifest compatibility + dry-run sibling state ---------------------------
+HAS_WAVE=0
+grep -qE '(^|[[:space:]])wave\)' "$S/ff-run.sh" 2>/dev/null && HAS_WAVE=1
+WLEG="$WREPO/.fleetflow/wlegacy"; mkdir -p "$WLEG"
+jq -nc '{run:"wlegacy",base:"main",created_by:"fixture",phases:["build","verify"],packets:[]}' \
+  > "$WLEG/manifest.json"
+: > "$WLEG/journal.jsonl"
+WSTATUS="$(bash "$S/ff-run.sh" status --run wlegacy --repo "$WREPO" 2>/dev/null)"; WSRC=$?
+{ [ "$WSRC" = "0" ] && printf '%s' "$WSTATUS" | jq -e '.run=="wlegacy"' >/dev/null; } \
+  && ok "waves manifest: legacy strings-only manifest still parses" \
+  || bad "waves manifest: legacy status failed (rc=$WSRC)"
+if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ]; then
+  PHASES_BEFORE="$(jq -c '.phases' "$WLEG/manifest.json")"
+  bash "$S/ff-run.sh" wave --run wlegacy --repo "$WREPO" --posture baseline --dry-run \
+    >/dev/null 2>"$TMP/wlegacy-wave.err"; WDRC=$?
+  PHASES_AFTER="$(jq -c '.phases' "$WLEG/manifest.json" 2>/dev/null)"
+  [ "$WDRC" = "0" ] && ok "waves manifest: wave --dry-run accepts fixture run" \
+    || bad "waves manifest: wave --dry-run rc=$WDRC"
+  [ "$PHASES_BEFORE" = "$PHASES_AFTER" ] \
+    && ok "waves manifest: phases array byte-identical after wave --dry-run" \
+    || bad "waves manifest: frozen phases array changed"
+  jq -e 'has("waves") and (.waves|type=="array")' "$WLEG/manifest.json" >/dev/null 2>&1 \
+    && ok "waves manifest: waves state is a sibling key" \
+    || bad "waves manifest: waves sibling missing after dry-run"
+else
+  echo "  SKIP  waves manifest dry-run sibling state (sequencer or catalogue absent)"
+fi
+
+# --- round is metadata, never cache identity ----------------------------------
+if grep -q -- '--round)' "$S/ff-spawn.sh" 2>/dev/null; then
+  RPKT="$TMP/round-packet.txt"; echo "round key test. FINAL REPLY: r" > "$RPKT"
+  bash "$S/ff-spawn.sh" --run wround --id rk --model sonnet --prompt-file "$RPKT" \
+    --repo "$WREPO" --dry-run --force --round 1 >/dev/null 2>&1; RR1=$?
+  bash "$S/ff-spawn.sh" --run wround --id rk --model sonnet --prompt-file "$RPKT" \
+    --repo "$WREPO" --dry-run --force --round 2 >/dev/null 2>&1; RR2=$?
+  RKEYS="$(grep '"type":"started"' "$WREPO/.fleetflow/wround/journal.jsonl" 2>/dev/null \
+    | jq -r 'select(.id=="rk")|.key')"
+  { [ "$RR1" = "0" ] && [ "$RR2" = "0" ] \
+    && [ "$(printf '%s\n' "$RKEYS" | sed '/^$/d' | wc -l | tr -d ' ')" = "2" ] \
+    && [ "$(printf '%s\n' "$RKEYS" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')" = "1" ]; } \
+    && ok "waves spawn: two rounds journal the same cache key" \
+    || bad "waves spawn: round leaked into cache identity"
+  grep -q '# round: NOT in key' "$S/ff-spawn.sh" \
+    && ok "waves spawn: round-not-in-key guard marker present" \
+    || bad "waves spawn: round-not-in-key guard marker missing"
+else
+  echo "  SKIP  waves spawn round key (round feature absent)"
+fi
+
+# --- chat widget output contract ----------------------------------------------
+if [ -f "$WIDGET" ]; then
+  WP1="$TMP/widget-a.txt"; WP2="$TMP/widget-b.txt"
+  echo "widget A. FINAL REPLY: a" > "$WP1"; echo "widget B. FINAL REPLY: b" > "$WP2"
+  bash "$S/ff-spawn.sh" --run wwidget --id wa --model sonnet --phase finder-alpha \
+    --prompt-file "$WP1" --repo "$WREPO" --dry-run >/dev/null 2>&1
+  bash "$S/ff-spawn.sh" --run wwidget --id wb --model codex --phase triage-beta \
+    --prompt-file "$WP2" --repo "$WREPO" --dry-run >/dev/null 2>&1
+  WM="$WREPO/.fleetflow/wwidget/manifest.json"; WMM="$TMP/widget-manifest.json"
+  jq '. + {posture:"tested",fix_rounds:2,severity_floor:"medium",waves:[
+      {name:"finder-alpha",kind:"finder",gate:"auto",status:"done",round:0},
+      {name:"triage-beta",kind:"barrier",gate:"review",status:"gated",round:0},
+      {name:"docs-gamma",kind:"docs",gate:"auto",status:"pending",round:0}
+    ]}' "$WM" > "$WMM" && mv "$WMM" "$WM"
+  : > "$WREPO/.fleetflow/wwidget/findings.jsonl"
+  WHTML="$(bash "$WIDGET" --run wwidget --repo "$WREPO" 2>"$TMP/widget.err")"; WHRC=$?
+  [ "$WHRC" = "0" ] && [ -n "$WHTML" ] \
+    && ok "waves widget: fixture renders an HTML fragment" \
+    || bad "waves widget: render failed (rc=$WHRC)"
+  HTTPS_N="$(printf '%s' "$WHTML" | grep -o 'https://' | wc -l | tr -d ' ')"
+  { [ "$HTTPS_N" = "1" ] && printf '%s' "$WHTML" | grep -q 'href="https://fleetflow\.lab/'; } \
+    && ok "waves widget: sole https occurrence is fleetflow.lab anchor" \
+    || bad "waves widget: expected one fleetflow.lab https anchor (got $HTTPS_N)"
+  printf '%s' "$WHTML" | grep -q 'http://' \
+    && bad "waves widget: http URL emitted" || ok "waves widget: zero http occurrences"
+  printf '%s' "$WHTML" | grep -qE '(^|[^[:alnum:]_.])(alert|confirm|prompt)[[:space:]]*\(' \
+    && bad "waves widget: native browser dialog call emitted" \
+    || ok "waves widget: no alert/confirm/prompt calls"
+  printf '%s' "$WHTML" | grep -q 'sendPrompt(' \
+    && ok "waves widget: footer uses sendPrompt actions" \
+    || bad "waves widget: sendPrompt action missing"
+  WAVE_EXPECT="$(jq -r '.waves|length' "$WM")"; WAVE_RENDERED=0
+  while IFS= read -r wave_name; do
+    printf '%s' "$WHTML" | grep -q "$wave_name" && WAVE_RENDERED=$((WAVE_RENDERED+1))
+  done < <(jq -r '.waves[].name' "$WM")
+  [ "$WAVE_RENDERED" = "$WAVE_EXPECT" ] \
+    && ok "waves widget: wave-bar segment count matches fixture waves" \
+    || bad "waves widget: rendered $WAVE_RENDERED/$WAVE_EXPECT wave segments"
+  printf '%s' "$WHTML" | grep -qE '#[0-9a-fA-F]{6}' \
+    && bad "waves widget: raw hex colour emitted" || ok "waves widget: no raw hex colours"
+else
+  echo "  SKIP  waves widget (ff-widget.sh absent)"
+fi
+
+# --- catalogue and finder packet contracts ------------------------------------
+if [ -f "$CATALOGUE" ]; then
+  jq empty "$CATALOGUE" >/dev/null 2>&1 \
+    && ok "waves catalogue: JSON parses" || bad "waves catalogue: invalid JSON"
+  CAT_ROOT="$HERE/.."; TEMPLATE_PATHS_OK=1
+  while IFS= read -r template_path; do
+    [ -f "$CAT_ROOT/$template_path" ] || TEMPLATE_PATHS_OK=0
+  done < <(jq -r '.. | objects | .template? // empty' "$CATALOGUE" 2>/dev/null)
+  [ "$TEMPLATE_PATHS_OK" = "1" ] \
+    && ok "waves catalogue: every template path exists" \
+    || bad "waves catalogue: missing template path"
+  FINDER_TEMPLATES_OK=1
+  while IFS= read -r template_path; do
+    [ -f "$CAT_ROOT/$template_path" ] \
+      && grep -q 'FINAL REPLY' "$CAT_ROOT/$template_path" \
+      && grep -qi 'read-only' "$CAT_ROOT/$template_path" \
+      || FINDER_TEMPLATES_OK=0
+  done < <(jq -r '.waves[] | select(.kind=="finder") | .template' "$CATALOGUE" 2>/dev/null)
+  [ "$FINDER_TEMPLATES_OK" = "1" ] \
+    && ok "waves catalogue: finder templates declare read-only FINAL REPLY contract" \
+    || bad "waves catalogue: finder template missing role or FINAL REPLY"
+  jq -e '[.waves[].model] | all(.=="glm" or .=="codex" or .=="grok" or .=="pi" or .=="sonnet" or .=="opus" or .=="haiku" or .=="fable")' \
+    "$CATALOGUE" >/dev/null 2>&1 \
+    && ok "waves catalogue: every wave model is spawnable" \
+    || bad "waves catalogue: unspawnable or missing wave model"
+  jq -e '.waves.perf.postures==[]' "$CATALOGUE" >/dev/null 2>&1 \
+    && ok "waves catalogue: perf is opt-in (empty postures)" \
+    || bad "waves catalogue: perf unexpectedly belongs to a posture"
+else
+  echo "  SKIP  waves catalogue (wave-catalogue.json absent)"
+fi
+
+# --- stop gate has the watchdog/stall semantic exit code ----------------------
+if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ]; then
+  WGATE="$WREPO/.fleetflow/wgate"; mkdir -p "$WGATE"
+  jq -nc '{run:"wgate",base:"main",created_by:"fixture",phases:["build"],packets:[],
+    posture:"baseline",fix_rounds:0,severity_floor:"medium",
+    waves:[{name:"docs-parity",kind:"finder",gate:"stop",status:"gated",round:0}]}' \
+    > "$WGATE/manifest.json"
+  : > "$WGATE/journal.jsonl"
+  check "waves gate: stop-gated fixture" 14 \
+    bash "$S/ff-run.sh" wave --run wgate --repo "$WREPO" --continue
+else
+  echo "  SKIP  waves stop gate (sequencer absent)"
+fi
+
 echo "=== $PASS passed, $FAILN failed ==="
 [ "$FAILN" = 0 ] || exit 1
 exit 0
