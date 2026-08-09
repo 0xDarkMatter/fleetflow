@@ -21,7 +21,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | Path | What lives there |
 |---|---|
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
-| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-import` (bash, Skill Resource Protocol) + `ff-serve.py` (dashboard server) |
+| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-serve.py` (dashboard server) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
@@ -87,3 +87,9 @@ operational playbook — read it first; this file only carries repo mechanics.
   the pages can share one origin and `ff.sort` means different things to
   each; the split is load-bearing, not cosmetic.
   See [docs/adr/ADR-013](docs/adr/ADR-013-localstorage-namespace-split.md).
+- **Never `git switch` / checkout a branch in the repo root.** The junction
+  `C:\Users\Mack\.claude\skills\fleetflow` → this repo means the checked-out
+  branch IS the live skill every session loads, and the `fleetflow` Process
+  Compose service holds this dir as CWD. All development happens in worktree
+  lanes; `main` stays parked on `main`. See [Landmines](AGENTS.md#landmines)
+  incident notes (junctions, service CWD-lock).
