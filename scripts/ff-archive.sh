@@ -79,12 +79,31 @@ FF_HOME="${FLEETFLOW_HOME:-$HOME/.fleetflow}"
 STATUS="$(bash "$HERE/ff-status.sh" --run "$RUN" --repo "$REPO" 2>/dev/null)"
 [ -n "$STATUS" ] || { err "ff-status produced nothing for '$RUN'"; exit 3; }
 
+# ADR-011 archive-before-remove must also capture the findings ledger (ADR-018
+# §1) - otherwise ff-clean's directory removal takes the run's only record of
+# what was found/fixed/waived/escalated with it. Absent when the run never
+# produced a ledger (a plain resume/status run, not a `wave` run) - the
+# `findings` key is simply omitted, not written as null, so legacy readers
+# see exactly the shape they always did.
+FINDINGS_JSONL="$RUNDIR/findings.jsonl"
+FINDINGS_BLOCK="null"
+if [ -f "$FINDINGS_JSONL" ]; then
+  FINDINGS_BLOCK="$(jq -s -c '{
+    total: length,
+    by_status: (group_by(.status) | map({key:.[0].status, value: length}) | from_entries),
+    by_severity: (group_by(.severity) | map({key:.[0].severity, value: length}) | from_entries),
+    waived: [.[] | select(.status=="waived") | .fp],
+    escalated: [.[] | select(.status=="escalated") | .fp]
+  }' "$FINDINGS_JSONL" 2>/dev/null)"
+  [ -n "$FINDINGS_BLOCK" ] || FINDINGS_BLOCK="null"
+fi
+
 NOW="$(date +%s)"
 # Roll-up rules mirror ff-aggregate.py's roll_up() exactly - the dashboard shows
 # live and archived runs side by side, so a run must not change shape or verdict
 # the moment it moves from one section to the other.
 REC="$(printf '%s' "$STATUS" | jq -c \
-  --arg v "$FF_VERSION" --argjson now "$NOW" --arg label "$(basename "$REPO")" '
+  --arg v "$FF_VERSION" --argjson now "$NOW" --arg label "$(basename "$REPO")" --argjson findings "$FINDINGS_BLOCK" '
   . as $s
   | (.lanes // []) as $L
   | ($L | map(select(.cost_usd != null))) as $costed
@@ -110,7 +129,8 @@ REC="$(printf '%s' "$STATUS" | jq -c \
       phases: ([$L[].phase // "build"] | unique),
       lanes: [$L[] | {id, model: (.model // .brain), phase, state, elapsed_s, commits,
                       tokens_total, tokens_out, cost_usd}]
-    }')"
+    }
+    + (if $findings != null then {findings: $findings} else {} end)')"
 
 [ -n "$REC" ] || { err "could not build a record for '$RUN'"; exit 3; }
 
