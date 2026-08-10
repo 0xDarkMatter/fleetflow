@@ -44,7 +44,7 @@
                                     // honesty markers, any currency
                                     // conversion — the module never touches
                                     // money, only prints what it is given).
-                                    // Omit to render "—" with no title.
+                                    // The cost stat ALWAYS renders; absent -> "—".
    }
 
    opts: { surface: "dashboard" | "chat" }
@@ -170,7 +170,7 @@ var ffRunCard, FF_RUNCARD_CSS;
     for (i = 0; i < items.length; i++) {
       item = items[i];
       var h = item.value > 0 ? Math.max(3, Math.round(item.value / max * 72)) : 2;
-      bars += '<div class="ffrc-bar ' + (item.state || "") + '" style="height:' + h + 'px;background:' + item.color + ';'
+      bars += '<div class="ffrc-bar ' + esc(item.state || "") + '" style="height:' + h + 'px;background:' + item.color + ';'
         + (item.value ? "" : "opacity:.25;") + '" title="' + esc(item.name) + ' — ' + tok(item.value) + ' tokens · ' + esc(item.state || "") + '"></div>';
     }
     var xs = "";
@@ -217,9 +217,8 @@ var ffRunCard, FF_RUNCARD_CSS;
       ? '<div class="ffrc-path ffrc-mono">' + ico("cpu") + 'lanes ran ' + esc(modelIds.join(", ")) + '</div>'
       : "";
 
-    var costCell = runDoc.cost
-      ? '<div class="ffrc-stat" title="' + esc(runDoc.cost.title || "") + '"><b>' + esc(runDoc.cost.display || "—") + '</b><span>cost</span></div>'
-      : "";
+    var costCell = '<div class="ffrc-stat" title="' + esc((runDoc.cost && runDoc.cost.title) || "") + '"><b>'
+      + esc((runDoc.cost && runDoc.cost.display) || "—") + '</b><span>cost</span></div>';
 
     return '<div class="ffrc" data-surface="' + esc(surface) + '">'
       + orchBadge(runDoc.orchestrator)
@@ -271,7 +270,7 @@ var ffRunCard, FF_RUNCARD_CSS;
     ".ffrc-rhead-r h2{font-size:19px;font-weight:600;letter-spacing:-.02em;color:var(--ffc-text-primary);margin:0;}" +
     ".ffrc-path{color:var(--ffc-text-muted);font-size:11px;word-break:break-all;display:flex;align-items:center;gap:5px;margin-top:5px;}" +
     ".ffrc-chart{margin:13px 0 3px;}" +
-    ".ffrc-chart-h{display:flex;align-items:baseline;gap:8px;font-size:10px;color:var(--ffc-text-muted);" +
+    ".ffrc-chart-h{display:flex;align-items:baseline;gap:8px;font-size:var(--ffc-label-size,10px);color:var(--ffc-text-muted);" +
     "text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;}" +
     ".ffrc-chart-pk{margin-left:auto;text-transform:none;letter-spacing:0;font-family:var(--ffc-font-mono);}" +
     ".ffrc-cols-chart{display:flex;align-items:flex-end;gap:3px;height:74px;border-bottom:1px solid var(--ffc-border);padding-bottom:1px;}" +
@@ -280,19 +279,19 @@ var ffRunCard, FF_RUNCARD_CSS;
     ".ffrc-bar.failed{outline:1.5px solid var(--ffc-bad);outline-offset:-1.5px;}" +
     ".ffrc-bar.stalled{outline:1.5px solid var(--ffc-warn);outline-offset:-1.5px;}" +
     ".ffrc-bar.running{animation:ffrcPulse 1.4s ease-in-out infinite;}" +
-    ".ffrc-chart-x{display:flex;gap:3px;margin-top:4px;font-size:9px;color:var(--ffc-text-muted);font-family:var(--ffc-font-mono);}" +
+    ".ffrc-chart-x{display:flex;gap:3px;margin-top:4px;font-size:var(--ffc-xlabel-size,9px);color:var(--ffc-text-muted);font-family:var(--ffc-font-mono);}" +
     ".ffrc-chart-x span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}" +
     ".ffrc-stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;}" +
     ".ffrc-stat b{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;color:var(--ffc-text-primary);}" +
-    ".ffrc-stat span{font-size:10px;color:var(--ffc-text-muted);text-transform:uppercase;letter-spacing:.06em;}" +
+    ".ffrc-stat span{font-size:var(--ffc-label-size,10px);color:var(--ffc-text-muted);text-transform:uppercase;letter-spacing:.06em;}" +
     ".ffrc-stat-warn b{color:var(--ffc-warn);}.ffrc-stat-bad b{color:var(--ffc-bad);}.ffrc-stat-ok b{color:var(--ffc-ok);}" +
     ".ffrc-legend{display:flex;gap:11px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--ffc-text-muted);align-items:center;}" +
     ".ffrc-legend span{display:inline-flex;align-items:center;gap:5px;}" +
     ".ffrc-legend-name{color:var(--ffc-text-secondary);}" +
     ".ffrc-mark{width:15px;height:15px;flex:none;fill:currentColor;}" +
     ".ffrc-mark-letter{width:15px;height:15px;border-radius:var(--ffc-r-sm);display:inline-flex;align-items:center;justify-content:center;" +
-    "color:#fff;font-size:9px;font-weight:700;font-family:var(--ffc-font-mono);}" +
-    ".ffrc-tag{font-size:10px;border-radius:var(--ffc-r-sm);padding:0 5px;border:1px solid var(--ffc-border);" +
+    "color:var(--ffc-on-solid,#fff);font-size:var(--ffc-xlabel-size,9px);font-weight:700;font-family:var(--ffc-font-mono);}" +
+    ".ffrc-tag{font-size:var(--ffc-label-size,10px);border-radius:var(--ffc-r-sm);padding:0 5px;border:1px solid var(--ffc-border);" +
     "color:var(--ffc-text-muted);flex:none;display:inline-flex;align-items:center;}" +
     ".ffrc-brand-tag{gap:4px;padding:1px 6px;}" +
     ".ffrc-tag-run{background:var(--ffc-bg-success);color:var(--ffc-text-success);border:0;font-weight:600;}" +
