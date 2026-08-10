@@ -2,19 +2,33 @@
 # ff-widget.sh - renders an inline chat-card HTML FRAGMENT for a fleetflow run,
 # for the claude.ai chat sandbox's `show_widget` (ADR-018 §5).
 #
+# Per ADR-019, the run header (title/badges, orch badge, path, lanes-ran line,
+# pip strip, tokens-per-lane chart+legend, stat row) is NOT built here — it is
+# rendered by the ONE canonical module `assets/ff-runcard.js`
+# (`ffRunCard(runDoc, {surface:"chat"})` -> HTML string) that this script reads
+# at runtime and inlines VERBATIM between `/* ff-runcard:begin */` /
+# `/* ff-runcard:end */` markers, so a parity test can byte-compare the
+# embedded copy against the source module (assets/ff-dashboard.html embeds the
+# same module for its own run-detail header). This script's job shrinks to:
+# gather data, build the `runDoc` wire format (ADR-019/RUNCARD-2026-08 §1),
+# and render the chat-only controls BENEATH the card (wave bar, findings
+# strip, sendPrompt buttons) that stay outside the shared module by design.
+#
 # Self-containment (mirrors ADR-003's zero-external-references doctrine): the
 # ONLY external reference this fragment ever emits is the literal
 # "https://fleetflow.lab" anchor href in the footer. Tabler icon classes
-# (`ti ti-...`) are NOT a fetch here - the host page loads the Tabler font,
-# this fragment only references its CSS classes. `tests/run.sh` greps this
-# script's output for http(s) occurrences and expects exactly that one hit.
+# (`ti ti-...`) on the chat-only controls are NOT a fetch here - the host page
+# loads the Tabler font, this fragment only references its CSS classes.
+# `tests/run.sh` greps this script's output for http(s) occurrences and
+# expects exactly that one hit.
 #
 # Data sources, all optional-degrading per the ADR:
 #   ff-status.sh --run   (required - no run, no fragment)
+#   assets/ff-runcard.js (required - no module, no fragment; ADR-019)
 #   manifest.json .waves + .posture (sibling key, ADR-018 §2; absent/empty ->
 #     wave bar falls back to manifest.phases, all segments neutral)
 #   ff-findings.sh count (absent script, or a failed/empty call -> findings
-#     metric shows "-" and the findings strip is omitted entirely)
+#     strip omitted entirely)
 #
 # stdout: HTML fragment (no doctype/html/head/body). stderr: chatter.
 # Exit codes: 0 ok | 2 usage | 3 run missing
@@ -29,13 +43,16 @@ Usage: ff-widget.sh --run NAME [--repo PATH] [--max-lanes N]
 
   --run NAME       run name under <repo>/.fleetflow/ (required)
   --repo PATH      repo root (default: git toplevel of cwd)
-  --max-lanes N    lane cells to render before a "+N more" cell (default: 10)
+  --max-lanes N    cap on lanes fed to the run-card's chart/pip-strip - the
+                   stat row still reports the true totals across ALL lanes
+                   (default: 10)
 
 Renders an HTML fragment (no doctype/html/head/body) on stdout, for the
-claude.ai chat sandbox's `show_widget`. Reads ff-status.sh for lane data,
-the run's manifest.json for wave/posture state, and ff-findings.sh (if
-present) for open-findings counts - every data source degrades gracefully
-when absent rather than failing the render.
+claude.ai chat sandbox's `show_widget`. The run-card header is rendered by
+the shared assets/ff-runcard.js module (ADR-019); this script gathers data
+from ff-status.sh, the run's manifest.json (wave/posture state), and
+ff-findings.sh (if present) for open-findings counts - every data source
+except the module itself degrades gracefully when absent.
 
 EXAMPLES
   ff-widget.sh --run currency
@@ -65,6 +82,12 @@ js_call_attr() {
   jq -nr --arg fn "$1" --arg t "$2" '($fn + "(" + ($t|@json) + ")") | @html'
 }
 
+# jqr FILTER [ARGS...] - jq -r piped through CRLF strip. jq.exe on Windows
+# emits CRLF; a lone trailing \r on a captured value silently breaks `case`/
+# `[` comparisons downstream (ff-status.sh/ff-run.sh hit this same trap on
+# their own reads - see ff-status.sh's journal-parsing comment).
+jqr() { jq -r "$@" | tr -d '\r'; }
+
 humanize_secs() {
   local s="${1:-0}"
   case "$s" in ''|*[!0-9]*) s=0 ;; esac
@@ -87,14 +110,6 @@ humanize_tokens() {
     end'
 }
 
-metric_cell() {
-  # $1 icon suffix (ti-...), $2 label, $3 value - label/value are our own
-  # literal strings or pre-formatted numbers, never raw run data, so no
-  # per-call escaping here.
-  printf '<div class="ffw-cell"><div class="ffw-cell-head"><i class="ti %s" aria-hidden="true"></i><span>%s</span></div><div class="ffw-cell-value">%s</div></div>' \
-    "$1" "$2" "$3"
-}
-
 # main() wrapper - parse-before-execute guard (see ff-run.sh:38 / ff-spawn.sh
 # for the incident this defends against). Body deliberately NOT re-indented.
 main() {
@@ -105,6 +120,10 @@ STATUS_BIN="$HERE/ff-status.sh"
 # may not exist yet in a repo mid-build (its lane owns it, ADR-018 §1); this
 # script never assumes it is present.
 FINDINGS_BIN="${FLEETFLOW_FINDINGS_BIN:-$HERE/ff-findings.sh}"
+# ADR-019: the shared run-card module, same resolution convention as
+# ff-run.sh's wave-catalogue lookup - resolved from THIS repo's assets/, not
+# the run's own repo (--repo may point anywhere).
+RUNCARD_JS="$HERE/../assets/ff-runcard.js"
 
 RUN="" REPO="" MAX_LANES=10
 while [ $# -gt 0 ]; do
@@ -124,6 +143,7 @@ case "$MAX_LANES" in ''|*[!0-9]*) err "--max-lanes must be a positive integer"; 
 [ "$MAX_LANES" -gt 0 ] || { err "--max-lanes must be a positive integer"; exit 2; }
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
+[ -f "$RUNCARD_JS" ] || { err "run-card module not found: $RUNCARD_JS (assets/ff-runcard.js not landed yet - ADR-019)"; exit 2; }
 
 RUNDIR="$REPO/.fleetflow/$RUN"
 [ -f "$RUNDIR/journal.jsonl" ] || { err "no run at $RUNDIR (run ff-spawn first)"; exit 3; }
@@ -185,73 +205,82 @@ if [ "$WAVE_COUNT" -gt 0 ]; then
   done < <(printf '%s' "$WAVE_ROWS" | jq -r '.[] | [.name, .status] | @tsv' | tr -d '\r')
 fi
 
-# --- metric cell grid -------------------------------------------------------
-LANES_TOTAL="$(printf '%s' "$STATUS_JSON" | jq -r '.lanes | length')"
-LANES_DONE="$(printf '%s' "$STATUS_JSON" | jq -r '[.lanes[] | select(.state=="done")] | length')"
-TOKENS_TOTAL="$(printf '%s' "$STATUS_JSON" | jq -r '[.lanes[].tokens_total] | add // 0')"
-ELAPSED_MAX="$(printf '%s' "$STATUS_JSON" | jq -r '[.lanes[].elapsed_s] | if length>0 then max else 0 end')"
+# --- cost roll-up (feeds runDoc.cost; ≈/* semantics preserved from the old
+# metric-cell rendering, now surfaced via the module's stat row) -------------
 COST_SUM="$(printf '%s' "$STATUS_JSON" | jq -r '[.lanes[].cost_usd | select(. != null)] | add // 0')"
 COST_REPORTED="$(printf '%s' "$STATUS_JSON" | jq -r '[.lanes[] | select(.cost_usd != null)] | length')"
+LANES_TOTAL="$(printf '%s' "$STATUS_JSON" | jq -r '.lanes | length')"
 COST_UNCOSTED=$((LANES_TOTAL - COST_REPORTED))
-
 if [ "$COST_REPORTED" -eq 0 ]; then
-  COST_H="-"
+  COST_USD_JSON="null"; COST_PARTIAL_JSON="false"
 else
-  COST_FMT="$(jq -nr --argjson a "$COST_SUM" '($a*100|round)/100|tostring')"
-  if [ "$COST_UNCOSTED" -gt 0 ]; then COST_H="≈\$${COST_FMT}*"; else COST_H="\$${COST_FMT}"; fi
+  COST_USD_JSON="$(jq -nr --argjson a "$COST_SUM" '($a*100|round)/100')"
+  if [ "$COST_UNCOSTED" -gt 0 ]; then COST_PARTIAL_JSON="true"; else COST_PARTIAL_JSON="false"; fi
 fi
 
+# repo_label: short human-scannable name. The dashboard's ff-aggregate.py
+# does multi-root worktree-collapsing (repo_label()); irrelevant here since
+# --repo names exactly one repo, so a basename is the whole job.
+REPO_LABEL="$(basename "$REPO")"
+
+# --- runDoc: the ADR-019/RUNCARD-2026-08 §1 wire format the module renders --
+# state precedence mirrors ff-aggregate.py's STATE_RANK - first non-empty
+# bucket, in order, wins the run-level state tag.
+DATA_JSON="$(printf '%s' "$STATUS_JSON" | jq -c \
+  --arg repo_label "$REPO_LABEL" \
+  --argjson waves "$WAVES_JSON" \
+  --argjson cost_usd "$COST_USD_JSON" \
+  --argjson cost_partial "$COST_PARTIAL_JSON" \
+  --argjson max "$MAX_LANES" \
+  '
+  def rank: ["stalled","running","failed","done"];
+  (.lanes // []) as $lanes
+  | (reduce $lanes[] as $l ({}; .[$l.state] = ((.[$l.state] // 0) + 1))) as $counts
+  | ((rank | map(select($counts[.] != null)) | .[0]) // "unknown") as $state
+  | {
+      run: .run,
+      repo: .repo,
+      repo_label: $repo_label,
+      orchestrator: .orchestrator,
+      summary: {
+        state: $state,
+        counts: $counts,
+        lane_count: ($lanes | length),
+        elapsed_s: ([$lanes[].elapsed_s] | if length > 0 then max else 0 end),
+        tokens_total: ([$lanes[].tokens_total] | add // 0),
+        tokens_out: ([$lanes[].tokens_out] | add // 0),
+        models: ([$lanes[].model] | map(select(. != null)) | unique | sort),
+        model_ids: ([$lanes[].model_id] | map(select(. != null)) | unique | sort)
+      },
+      lanes: ([$lanes[] | {id, model, model_id, state, tokens_total: (.tokens_total // 0)}] | .[0:$max]),
+      waves: $waves,
+      cost: {usd: $cost_usd, partial: $cost_partial, estimated: $cost_partial}
+    }
+    | if .waves == null then del(.waves) else . end
+  ')"
+# a run/repo name containing a literal "</script" would otherwise close the
+# embedding <script> tag early - JSON has no such sequence naturally, so this
+# only ever fires on adversarial input, but it is cheap insurance.
+DATA_JS="$(printf '%s' "$DATA_JSON" | sed 's#</#<\\/#g')"
+
+# --- findings strip (only when findings exist at all) ------------------------
+FINDINGS_BIN_RESOLVED="$FINDINGS_BIN"
 FINDINGS_AVAILABLE=0
 FIND_OPEN=0 FIND_TOTAL=0
-if [ -f "$FINDINGS_BIN" ]; then
-  FCOUNT_JSON="$(bash "$FINDINGS_BIN" count --run "$RUN" --repo "$REPO" 2>/dev/null)"
+if [ -f "$FINDINGS_BIN_RESOLVED" ]; then
+  FCOUNT_JSON="$(bash "$FINDINGS_BIN_RESOLVED" count --run "$RUN" --repo "$REPO" 2>/dev/null)"
   if [ -n "$FCOUNT_JSON" ] && printf '%s' "$FCOUNT_JSON" | jq -e . >/dev/null 2>&1; then
     FINDINGS_AVAILABLE=1
     FIND_OPEN="$(printf '%s' "$FCOUNT_JSON" | jq -r '.open // 0')"
     FIND_TOTAL="$(printf '%s' "$FCOUNT_JSON" | jq -r '[.[]] | add // 0')"
   fi
 fi
-if [ "$FINDINGS_AVAILABLE" = 1 ]; then FINDINGS_H="$FIND_OPEN/$FIND_TOTAL"; else FINDINGS_H="-"; fi
 
-TOKENS_H="$(humanize_tokens "$TOKENS_TOTAL")"
-ELAPSED_H="$(humanize_secs "$ELAPSED_MAX")"
-
-METRICS_HTML="$(metric_cell ti-layout-grid lanes "$LANES_DONE/$LANES_TOTAL")"
-METRICS_HTML="$METRICS_HTML$(metric_cell ti-coins tokens "$TOKENS_H")"
-METRICS_HTML="$METRICS_HTML$(metric_cell ti-report-money cost "$COST_H")"
-METRICS_HTML="$METRICS_HTML$(metric_cell ti-bug findings "$FINDINGS_H")"
-METRICS_HTML="$METRICS_HTML$(metric_cell ti-clock elapsed "$ELAPSED_H")"
-
-# --- lane cell grid ----------------------------------------------------------
-LANES_EXTRA="$(printf '%s' "$STATUS_JSON" | jq -r --argjson max "$MAX_LANES" '((.lanes|length) - $max) as $n | if $n > 0 then $n else 0 end')"
-
-LANE_CELLS_HTML=""
-while IFS=$'\t' read -r lid lstate lmodel lphase ltok lelapsed; do
-  [ -n "$lid" ] || continue
-  case "$lstate" in
-    done) icon="ti-check"; fg="var(--text-success)" ;;
-    running) icon="ti-loader-2"; fg="var(--text-accent)" ;;
-    failed) icon="ti-x"; fg="var(--text-danger)" ;;
-    stalled) icon="ti-alert-triangle"; fg="var(--text-warning)" ;;
-    *) icon="ti-loader-2"; fg="var(--text-muted)" ;;
-  esac
-  id_esc="$(html_esc "$lid")"
-  meta_esc="$(html_esc "${lmodel:-?} · ${lphase:-build}")"
-  sub_esc="$(html_esc "$(humanize_tokens "$ltok") tok · $(humanize_secs "$lelapsed")")"
-  LANE_CELLS_HTML="$LANE_CELLS_HTML<div class=\"ffw-lane\"><div class=\"ffw-lane-top\"><i class=\"ti $icon\" aria-hidden=\"true\" style=\"color:$fg;\"></i><span class=\"ffw-lane-id\">$id_esc</span></div><div class=\"ffw-lane-meta\">$meta_esc</div><div class=\"ffw-lane-sub\">$sub_esc</div></div>"
-done < <(printf '%s' "$STATUS_JSON" | jq -r --argjson max "$MAX_LANES" '
-  .lanes[0:$max][] | [.id, .state, ((.model_id // .model) // ""), (.phase // ""), (.tokens_total // 0), (.elapsed_s // 0)] | @tsv' | tr -d '\r')
-
-if [ "$LANES_EXTRA" -gt 0 ]; then
-  LANE_CELLS_HTML="$LANE_CELLS_HTML<div class=\"ffw-lane ffw-lane-more\">+$LANES_EXTRA more</div>"
-fi
-
-# --- findings strip (only when findings exist at all) ------------------------
 FINDINGS_BLOCK=""
 if [ "$FINDINGS_AVAILABLE" = 1 ] && [ "$FIND_TOTAL" -gt 0 ]; then
   SEV_CHIPS_HTML=""
   for sev in critical high medium low; do
-    SJSON="$(bash "$FINDINGS_BIN" count --run "$RUN" --repo "$REPO" --severity "$sev" 2>/dev/null)"
+    SJSON="$(bash "$FINDINGS_BIN_RESOLVED" count --run "$RUN" --repo "$REPO" --severity "$sev" 2>/dev/null)"
     n=0
     if [ -n "$SJSON" ] && printf '%s' "$SJSON" | jq -e . >/dev/null 2>&1; then
       n="$(printf '%s' "$SJSON" | jq -r '.open // 0')"
@@ -280,38 +309,54 @@ REPO_ENC="$(jq -nr --arg r "$REPO" '$r|@uri')"
 RUN_ENC="$(jq -nr --arg r "$RUN" '$r|@uri')"
 DASHBOARD_URL="https://fleetflow.lab/?repo=${REPO_ENC}&run=${RUN_ENC}"
 
+# --- emit: ffrc-host + style + marker-delimited module + beneath-card controls
 cat <<HTMLEOF
-<div class="ffw">
+<div class="ffrc-host"></div>
 <style>
-.ffw-wavebar{display:flex;gap:1px;border-radius:var(--radius);overflow:hidden;height:26px;}
+/* chat-surface mapping: the module's --ffc-* custom properties (ADR-019 §1)
+   fall back onto claude.ai's own vars here, so the SAME module renders
+   correctly in both light and dark without any chat-specific code inside it. */
+.ffrc-host{
+  --ffc-surface-1:var(--surface-1);
+  --ffc-surface-2:var(--surface-2,var(--surface-1));
+  --ffc-text-primary:var(--text-primary);
+  --ffc-text-secondary:var(--text-secondary);
+  --ffc-text-muted:var(--text-muted);
+  --ffc-border:var(--border);
+  --ffc-radius:var(--radius);
+  --ffc-font-mono:var(--font-mono);
+}
+.ffw-wavebar{display:flex;gap:1px;border-radius:var(--radius);overflow:hidden;height:26px;margin-top:12px;}
 .ffw-seg{display:flex;align-items:center;justify-content:center;min-width:0;flex:1 1 0;padding:0 4px;}
 .ffw-seg-label{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ffw-metrics,.ffw-lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px;}
-.ffw-cell,.ffw-lane{background:var(--surface-1);border-radius:var(--radius);padding:10px;display:flex;flex-direction:column;gap:4px;}
-.ffw-cell-head{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:11px;}
-.ffw-cell-head i{font-size:16px;}
-.ffw-cell-value{font-size:16px;font-weight:500;color:var(--text-primary);font-family:var(--font-mono);}
-.ffw-lane-top{display:flex;align-items:center;gap:6px;}
-.ffw-lane-id{font-family:var(--font-mono);font-size:12px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ffw-lane-meta{font-size:11px;color:var(--text-secondary);}
-.ffw-lane-sub{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);}
-.ffw-lane-more{align-items:center;justify-content:center;color:var(--text-muted);font-size:12px;}
 .ffw-findings{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
 .ffw-chip{font-size:11px;font-weight:500;padding:3px 8px;border-radius:var(--radius);}
 .ffw-footer{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}
 .ffw-btn{font-size:12px;font-weight:500;padding:5px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);cursor:pointer;}
 .ffw-link{margin-left:auto;font-size:11px;color:var(--text-muted);text-decoration:none;}
 </style>
+<script>
+/* ff-runcard:begin */
+HTMLEOF
+cat "$RUNCARD_JS"
+cat <<HTMLEOF
+
+/* ff-runcard:end */
+(function(){
+  var s = document.createElement('style');
+  s.textContent = FF_RUNCARD_CSS;
+  document.currentScript.insertAdjacentElement('beforebegin', s);
+  var DATA = $DATA_JS;
+  document.querySelector('.ffrc-host').innerHTML = ffRunCard(DATA, {surface:"chat"});
+})();
+</script>
 <div class="ffw-wavebar" role="list" aria-label="wave pipeline">$SEGMENTS_HTML</div>
-<div class="ffw-metrics">$METRICS_HTML</div>
-<div class="ffw-lanes">$LANE_CELLS_HTML</div>
 $FINDINGS_BLOCK
 <div class="ffw-footer">
 $REFRESH_BTN
 $TRIAGE_BTN
 $GATE_BTN
 <a class="ffw-link" href="$DASHBOARD_URL">full dashboard <i class="ti ti-external-link" aria-hidden="true"></i></a>
-</div>
 </div>
 HTMLEOF
 
