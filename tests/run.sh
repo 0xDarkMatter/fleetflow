@@ -928,8 +928,10 @@ if [ -f "$WIDGET" ]; then
       {name:"docs-gamma",kind:"docs",gate:"auto",status:"pending",round:0}
     ]}' "$WM" > "$WMM" && mv "$WMM" "$WM"
   : > "$WREPO/.fleetflow/wwidget/findings.jsonl"
-  WHTML="$(bash "$WIDGET" --run wwidget --repo "$WREPO" 2>"$TMP/widget.err")"; WHRC=$?
-  [ "$WHRC" = "0" ] && [ -n "$WHTML" ] \
+  WHTML_FILE="$TMP/widget.html"
+  bash "$WIDGET" --run wwidget --repo "$WREPO" > "$WHTML_FILE" 2>"$TMP/widget.err"; WHRC=$?
+  WHTML="$(<"$WHTML_FILE")"
+  [ "$WHRC" = "0" ] && [ -s "$WHTML_FILE" ] \
     && ok "waves widget: fixture renders an HTML fragment" \
     || bad "waves widget: render failed (rc=$WHRC)"
   HTTPS_N="$(printf '%s' "$WHTML" | grep -o 'https://' | wc -l | tr -d ' ')"
@@ -938,23 +940,179 @@ if [ -f "$WIDGET" ]; then
     || bad "waves widget: expected one fleetflow.lab https anchor (got $HTTPS_N)"
   printf '%s' "$WHTML" | grep -q 'http://' \
     && bad "waves widget: http URL emitted" || ok "waves widget: zero http occurrences"
-  printf '%s' "$WHTML" | grep -qE '(^|[^[:alnum:]_.])(alert|confirm|prompt)[[:space:]]*\(' \
+  printf '%s' "$WHTML" | grep -qE '(alert|confirm|prompt)[[:space:]]*\(' \
     && bad "waves widget: native browser dialog call emitted" \
     || ok "waves widget: no alert/confirm/prompt calls"
   printf '%s' "$WHTML" | grep -q 'sendPrompt(' \
     && ok "waves widget: footer uses sendPrompt actions" \
     || bad "waves widget: sendPrompt action missing"
-  WAVE_EXPECT="$(jq -r '.waves|length' "$WM" | tr -d '\r')"; WAVE_RENDERED=0
-  while IFS= read -r wave_name; do
-    printf '%s' "$WHTML" | grep -q "$wave_name" && WAVE_RENDERED=$((WAVE_RENDERED+1))
-  done < <(jq -r '.waves[].name' "$WM" | tr -d '\r')
+  WAVE_EXPECT="$(jq -r '.waves|length' "$WM" | tr -d '\r')"
+  WAVE_RENDERED="$(grep -o 'class="ffw-seg"' "$WHTML_FILE" | wc -l | tr -d ' ')"
   [ "$WAVE_RENDERED" = "$WAVE_EXPECT" ] \
     && ok "waves widget: wave-bar segment count matches fixture waves" \
     || bad "waves widget: rendered $WAVE_RENDERED/$WAVE_EXPECT wave segments"
-  printf '%s' "$WHTML" | grep -qE '#[0-9a-fA-F]{6}' \
-    && bad "waves widget: raw hex colour emitted" || ok "waves widget: no raw hex colours"
+  WIDGET_HOST="$TMP/widget-host.html"
+  sed '/\/\* ff-runcard:begin \*\//,/\/\* ff-runcard:end \*\//d' "$WHTML_FILE" > "$WIDGET_HOST"
+  grep -qE '#[0-9a-fA-F]{6}' "$WIDGET_HOST" \
+    && bad "waves widget: raw hex colour emitted outside runcard module" \
+    || ok "waves widget: no non-module raw hex colours"
 else
   echo "  SKIP  waves widget (ff-widget.sh absent)"
+fi
+
+# === runcard (ADR-019) ===
+RUNCARD="$HERE/../assets/ff-runcard.js"
+if [ ! -f "$RUNCARD" ]; then
+  echo "  SKIP  runcard parity/hygiene/structure (ff-runcard.js absent)"
+elif [ ! -f "$DASH" ]; then
+  echo "  SKIP  runcard parity/hygiene/structure (ff-dashboard.html absent)"
+elif [ ! -f "$WIDGET" ]; then
+  echo "  SKIP  runcard parity/hygiene/structure (ff-widget.sh absent)"
+elif [ ! -s "$WHTML_FILE" ]; then
+  echo "  SKIP  runcard widget parity/structure (fixture output absent)"
+else
+  # Extract marker-delimited bytes without decoding or newline conversion. The
+  # marker LINES are removed; every byte between them is preserved for cmp.
+  extract_runcard_body() {
+    python - "$1" "$2" <<'PY'
+import pathlib
+import sys
+
+data = pathlib.Path(sys.argv[1]).read_bytes()
+begin = b"/* ff-runcard:begin */"
+end = b"/* ff-runcard:end */"
+if data.count(begin) != 1 or data.count(end) != 1:
+    raise SystemExit(1)
+
+begin_at = data.index(begin)
+begin_line = data.rfind(b"\n", 0, begin_at) + 1
+begin_eol = data.find(b"\n", begin_at + len(begin))
+if begin_eol < 0:
+    raise SystemExit(1)
+if data[begin_line:begin_at].strip(b" \t\r"):
+    raise SystemExit(1)
+if data[begin_at + len(begin):begin_eol].strip(b" \t\r"):
+    raise SystemExit(1)
+
+body_at = begin_eol + 1
+end_at = data.index(end, body_at)
+end_line = data.rfind(b"\n", body_at, end_at) + 1
+if data[end_line:end_at].strip(b" \t\r"):
+    raise SystemExit(1)
+pathlib.Path(sys.argv[2]).write_bytes(data[body_at:end_line])
+PY
+  }
+
+  DASH_BEGIN_N="$(grep -Fo '/* ff-runcard:begin */' "$DASH" | wc -l | tr -d ' ')"
+  DASH_END_N="$(grep -Fo '/* ff-runcard:end */' "$DASH" | wc -l | tr -d ' ')"
+  { [ "$DASH_BEGIN_N" = "1" ] && [ "$DASH_END_N" = "1" ]; } \
+    && ok "runcard dashboard: markers occur exactly once" \
+    || bad "runcard dashboard: marker counts begin=$DASH_BEGIN_N end=$DASH_END_N"
+
+  WIDGET_BEGIN_N="$(grep -Fo '/* ff-runcard:begin */' "$WHTML_FILE" | wc -l | tr -d ' ')"
+  WIDGET_END_N="$(grep -Fo '/* ff-runcard:end */' "$WHTML_FILE" | wc -l | tr -d ' ')"
+  { [ "$WIDGET_BEGIN_N" = "1" ] && [ "$WIDGET_END_N" = "1" ]; } \
+    && ok "runcard widget: markers occur exactly once" \
+    || bad "runcard widget: marker counts begin=$WIDGET_BEGIN_N end=$WIDGET_END_N"
+
+  DASH_RUNCARD="$TMP/dashboard-runcard.js"
+  if extract_runcard_body "$DASH" "$DASH_RUNCARD" \
+      && cmp -s "$RUNCARD" "$DASH_RUNCARD"; then
+    ok "runcard parity: dashboard copy is byte-identical"
+  else
+    bad "runcard parity: dashboard copy differs from ff-runcard.js"
+  fi
+
+  WIDGET_RUNCARD="$TMP/widget-runcard.js"
+  if extract_runcard_body "$WHTML_FILE" "$WIDGET_RUNCARD" \
+      && cmp -s "$RUNCARD" "$WIDGET_RUNCARD"; then
+    ok "runcard parity: widget copy is byte-identical"
+  else
+    bad "runcard parity: widget copy differs from ff-runcard.js"
+  fi
+
+  grep -Fq 'fetch(' "$RUNCARD" \
+    && bad "runcard hygiene: fetch present" || ok "runcard hygiene: no fetch"
+  # Match CALLS, not words - the module's contract comment names the banned
+  # APIs ("no localStorage, no Date.now"), and a bare -F grep trips on the ban
+  # itself (found at first integration, 2026-08-10).
+  grep -qE 'localStorage[.[]' "$RUNCARD" \
+    && bad "runcard hygiene: localStorage present" || ok "runcard hygiene: no localStorage"
+  grep -qE 'Date\.now[[:space:]]*\(' "$RUNCARD" \
+    && bad "runcard hygiene: Date.now present" || ok "runcard hygiene: no Date.now"
+  grep -qE 'addEventListener[[:space:]]*\(' "$RUNCARD" \
+    && bad "runcard hygiene: addEventListener present" || ok "runcard hygiene: no addEventListener"
+  # Both declaration styles are legal: `function ffRunCard(` and
+  # `var ffRunCard; ... ffRunCard = function (`.
+  grep -qE '(function[[:space:]]+ffRunCard[[:space:]]*\(|ffRunCard[[:space:]]*=[[:space:]]*function)' "$RUNCARD" \
+    && ok "runcard module: defines ffRunCard" || bad "runcard module: ffRunCard missing"
+  grep -qE 'FF_RUNCARD_CSS[[:space:]]*=' "$RUNCARD" \
+    && ok "runcard module: defines FF_RUNCARD_CSS" || bad "runcard module: FF_RUNCARD_CSS missing"
+
+  # DATA is emitted as JSON assigned to a JS variable. Extract a balanced object
+  # so nested counts/lanes do not fool a regex, then let jq enforce the wire shape.
+  RUNCARD_DATA="$TMP/runcard-data.json"
+  if python - "$WHTML_FILE" "$RUNCARD_DATA" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"\b(?:const|let|var)\s+DATA\s*=\s*", text)
+if not match:
+    raise SystemExit(1)
+i = match.end()
+while i < len(text) and text[i].isspace():
+    i += 1
+if i == len(text) or text[i] != "{":
+    raise SystemExit(1)
+start = i
+depth = 0
+quoted = False
+escaped = False
+for i in range(start, len(text)):
+    char = text[i]
+    if quoted:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = False
+    elif char == '"':
+        quoted = True
+    elif char == "{":
+        depth += 1
+    elif char == "}":
+        depth -= 1
+        if depth == 0:
+            pathlib.Path(sys.argv[2]).write_text(text[start:i + 1], encoding="utf-8")
+            break
+else:
+    raise SystemExit(1)
+PY
+  then
+    jq -e 'type=="object" and (.run|type=="string") and (.summary|type=="object") and (.lanes|type=="array")' \
+      "$RUNCARD_DATA" >/dev/null 2>&1 \
+      && ok "runcard widget: DATA runDoc jq-parses" \
+      || bad "runcard widget: DATA is not the runDoc object"
+  else
+    bad "runcard widget: DATA object missing or malformed"
+  fi
+
+  python - "$WHTML_FILE" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+host = text.find('<div class="ffrc-host"')
+wave = text.find('<div class="ffw-wavebar"')
+raise SystemExit(0 if host >= 0 and wave > host else 1)
+PY
+  RUNCARD_POS_RC=$?
+  [ "$RUNCARD_POS_RC" = "0" ] \
+    && ok "runcard widget: wave bar is beneath the shared card" \
+    || bad "runcard widget: wave bar is not beneath the shared card"
 fi
 
 # --- catalogue and finder packet contracts ------------------------------------
