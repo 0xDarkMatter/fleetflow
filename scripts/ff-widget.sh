@@ -340,7 +340,6 @@ cat <<HTMLEOF
 HTMLEOF
 cat "$RUNCARD_JS"
 cat <<HTMLEOF
-
 /* ff-runcard:end */
 (function(){
   var s = document.createElement('style');
