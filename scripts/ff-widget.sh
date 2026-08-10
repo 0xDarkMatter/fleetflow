@@ -244,6 +244,7 @@ DATA_JSON="$(printf '%s' "$STATUS_JSON" | jq -c \
       orchestrator: .orchestrator,
       summary: {
         state: $state,
+        idle_s: ([$lanes[] | select(.state=="stalled") | .last_activity_s] | max // 0),
         counts: $counts,
         lane_count: ($lanes | length),
         elapsed_s: ([$lanes[].elapsed_s] | if length > 0 then max else 0 end),
@@ -323,7 +324,7 @@ cat <<HTMLEOF
 /* chat-surface mapping: the module's --ffc-* custom properties (ADR-019 §1)
    fall back onto claude.ai's own vars here, so the SAME module renders
    correctly in both light and dark without any chat-specific code inside it. */
-.ffrc-host{
+.ffrc[data-surface="chat"]{
   --ffc-surface-1:var(--surface-1);
   --ffc-surface-2:var(--surface-2,var(--surface-1));
   --ffc-text-primary:var(--text-primary);
@@ -332,6 +333,8 @@ cat <<HTMLEOF
   --ffc-border:var(--border);
   --ffc-radius:var(--radius);
   --ffc-font-mono:var(--font-mono);
+  --ffc-label-size:11px;
+  --ffc-xlabel-size:11px;
 }
 .ffw-wavebar{display:flex;gap:1px;border-radius:var(--radius);overflow:hidden;height:26px;margin-top:12px;}
 .ffw-seg{display:flex;align-items:center;justify-content:center;min-width:0;flex:1 1 0;padding:0 4px;}
