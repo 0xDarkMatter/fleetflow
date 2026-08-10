@@ -254,9 +254,16 @@ DATA_JSON="$(printf '%s' "$STATUS_JSON" | jq -c \
       },
       lanes: ([$lanes[] | {id, model, model_id, state, tokens_total: (.tokens_total // 0)}] | .[0:$max]),
       waves: $waves,
-      cost: {usd: $cost_usd, partial: $cost_partial, estimated: $cost_partial}
+      # cost is PRE-FORMATTED here (module wire format wants {display,title} -
+      # the module never touches money, ADR-019 §1). ≈ = contains estimates,
+      # * = uncosted lanes remain - same honesty markers as the dashboard.
+      cost: (if $cost_usd == null then null else {
+        display: ("≈$" + ($cost_usd | tostring) + (if $cost_partial then "*" else "" end)),
+        title: (if $cost_partial then "estimate; some lanes report no cost" else "estimate from lane-reported costs" end)
+      } end)
     }
     | if .waves == null then del(.waves) else . end
+    | if .cost == null then del(.cost) else . end
   ')"
 # a run/repo name containing a literal "</script" would otherwise close the
 # embedding <script> tag early - JSON has no such sequence naturally, so this
