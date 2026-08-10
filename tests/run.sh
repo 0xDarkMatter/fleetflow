@@ -1033,15 +1033,20 @@ PY
 
   grep -Fq 'fetch(' "$RUNCARD" \
     && bad "runcard hygiene: fetch present" || ok "runcard hygiene: no fetch"
-  grep -Fq 'localStorage' "$RUNCARD" \
+  # Match CALLS, not words - the module's contract comment names the banned
+  # APIs ("no localStorage, no Date.now"), and a bare -F grep trips on the ban
+  # itself (found at first integration, 2026-08-10).
+  grep -qE 'localStorage[.[]' "$RUNCARD" \
     && bad "runcard hygiene: localStorage present" || ok "runcard hygiene: no localStorage"
-  grep -Fq 'Date.now' "$RUNCARD" \
+  grep -qE 'Date\.now[[:space:]]*\(' "$RUNCARD" \
     && bad "runcard hygiene: Date.now present" || ok "runcard hygiene: no Date.now"
-  grep -Fq 'addEventListener' "$RUNCARD" \
+  grep -qE 'addEventListener[[:space:]]*\(' "$RUNCARD" \
     && bad "runcard hygiene: addEventListener present" || ok "runcard hygiene: no addEventListener"
-  grep -qE 'function[[:space:]]+ffRunCard[[:space:]]*\(' "$RUNCARD" \
+  # Both declaration styles are legal: `function ffRunCard(` and
+  # `var ffRunCard; ... ffRunCard = function (`.
+  grep -qE '(function[[:space:]]+ffRunCard[[:space:]]*\(|ffRunCard[[:space:]]*=[[:space:]]*function)' "$RUNCARD" \
     && ok "runcard module: defines ffRunCard" || bad "runcard module: ffRunCard missing"
-  grep -qE '(var|const|let)[[:space:]]+FF_RUNCARD_CSS[[:space:]]*=' "$RUNCARD" \
+  grep -qE 'FF_RUNCARD_CSS[[:space:]]*=' "$RUNCARD" \
     && ok "runcard module: defines FF_RUNCARD_CSS" || bad "runcard module: FF_RUNCARD_CSS missing"
 
   # DATA is emitted as JSON assigned to a JS variable. Extract a balanced object
