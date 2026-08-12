@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (278 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (293 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -21,7 +21,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | Path | What lives there |
 |---|---|
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
-| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
+| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-sweep` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
@@ -53,6 +53,22 @@ operational playbook — read it first; this file only carries repo mechanics.
   re-verifying the streaming envelope against `ff-collect`'s gate; grok
   WORKTREE lanes are stall-covered by the `.ff-heartbeat` file instead.
   See [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **`ff-sweep` owns `.fleetflow/` and NOTHING else — never point it at
+  `.claude/worktrees/`.** Those are Claude Code session state, not fleetflow's
+  to reap, and one that looks abandoned may be a live session (see
+  `~/.claude/rules/worktree-boundaries.md`). The discovery walk deliberately
+  descends *through* `.claude/worktrees/` — runs hosted inside a session's
+  worktree are real runs — but only ever acts on the `.fleetflow` dir it finds
+  there. Equally load-bearing: the tracked-vs-untracked check lives in
+  **ff-sweep**, NOT in `ff-clean --force` — `--force` is meant to discard a
+  failed lane's dirty tree and must keep doing so; ff-sweep passes it only for
+  runs it has proven carry zero tracked modifications.
+  See [docs/adr/ADR-020](docs/adr/ADR-020-sweep-reclaims-only-archived-and-landed.md).
+- **Do not add a `--landed` flag to `ff-clean` — it was built and deleted.**
+  `git rev-list --count $BASE..HEAD` is already 0 once a lane is merged (the
+  same question as `merge-base --is-ancestor`), so the existing "zero commits +
+  clean" row reclaims landed lanes today. A test pins that equivalence. The
+  disk that accumulated was ff-clean never being *run*, not ff-clean refusing.
 - **`tests/run.sh` exports its own `FLEETFLOW_HOME` — never remove that line.**
   `ff-clean` archives before it removes (ADR-011), so every ff-clean exercise
   appends a throwaway `rc` run to the machine-level history the dashboard

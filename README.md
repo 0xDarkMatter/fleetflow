@@ -40,7 +40,7 @@ Serve `scripts/ff-serve.py` under a process supervisor with a readiness probe on
 bash tests/run.sh
 ```
 
-278 assertions over the scripts, monitor, dashboard wiring, and import/resume
+293 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 
