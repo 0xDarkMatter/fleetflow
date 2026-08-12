@@ -208,6 +208,17 @@ bus is for.) One sanctioned sideband exists — **opt-in raven-bus telemetry**
 instructions, and the `.ff-heartbeat` file stays the canonical stall signal.
 See [docs/adr/ADR-022](docs/adr/ADR-022-raven-bus-optin-telemetry.md).
 
+The exception, opt-in per lane: **`ff-spawn --acp`** runs a *claude* lane
+under the raven-bus ACP harness (`raven acp` driving zed's `claude-code-acp`),
+making it **steerable mid-run** — it watches `run/<run>/lane/<id>` +
+`run/<run>/control`, posts replies to `run/<run>/telemetry`, and its task
+packet goes in as the harness's trusted boundary-0 prompt (bus messages stay
+data-framed). An ACP lane is a persistent process: it ends by being reaped,
+and its verdict is distilled from telemetry into the normal claude-style
+envelope, so collect/status are unchanged. Permission mode defaults to
+`dontAsk` (`FLEETFLOW_PERMISSION_MODE` opts up); `--effort` is refused.
+See [docs/adr/ADR-023](docs/adr/ADR-023-acp-lanes-packet-trusted-verdict-from-telemetry.md).
+
 **Why not Claude Desktop's `ccd_session_mgmt` messaging here** (asked and settled
 2026-08-03): it addresses Desktop sessions, and a fleetflow worker is an OS
 process with no address in that system — hub-and-spoke is the only topology

@@ -177,6 +177,34 @@ check "collect: codex schema-invalid fails" 10 bash "$S/ff-collect.sh" --run r1 
 
 # --- grok model (non-Anthropic worker: grok -p envelope, no is_error) ----------
 GKP="$TMP/grok-packet.txt"; echo "grok task. FINAL REPLY: one line." > "$GKP"
+# --- ff-spawn --acp (P4b: lanes under the raven-bus ACP harness) -------------
+check "spawn: --acp rejects non-claude model" 2 \
+  bash "$S/ff-spawn.sh" --run racp --id a1 --model glm --prompt-file "$PKT" --repo "$REPO" --dry-run --acp
+check "spawn: --acp rejects --effort" 2 \
+  bash "$S/ff-spawn.sh" --run racp --id a1 --model sonnet --effort high --prompt-file "$PKT" --repo "$REPO" --dry-run --acp
+check "spawn: --acp dry-run ok" 0 \
+  bash "$S/ff-spawn.sh" --run racp --id a1 --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --acp --worktree
+# the clause check must precede the non-acp respawn below: every spawn
+# REWRITES <id>.prompt.txt, so the respawn wipes the clause from disk
+grep -q 'STEERING:' "$REPO/.fleetflow/racp/a1.prompt.txt" \
+  && ok "spawn: --acp lane keeps the steering clause in the effective prompt" \
+  || bad "spawn: acp steering clause missing"
+# acp is its own cache key: the same packet without --acp must MISS (run live),
+# and a repeat with --acp must HIT - and vice versa
+check "spawn: --acp repeat is a cache hit" 3 \
+  bash "$S/ff-spawn.sh" --run racp --id a1 --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --acp --worktree
+check "spawn: same packet without --acp misses the acp cache" 0 \
+  bash "$S/ff-spawn.sh" --run racp --id a1 --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run --worktree
+jq -e '.packets[]|select(.id=="a1")|.acp==false' "$REPO/.fleetflow/racp/manifest.json" >/dev/null \
+  && ok "manifest upsert records acp=false after the non-acp respawn" || bad "manifest acp flag wrong"
+# non-acp claude lanes must never gain the acp key suffix or the clause
+bash "$S/ff-spawn.sh" --run racp --id plain --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run >/dev/null 2>&1
+grep -q 'STEERING:' "$REPO/.fleetflow/racp/plain.prompt.txt" \
+  && bad "spawn: steering clause leaked into a non-acp lane" \
+  || ok "spawn: steering clause stays acp-only"
+jq -r '.packets[]|select(.id=="plain")|.key' "$REPO/.fleetflow/racp/manifest.json" | grep -q . \
+  && ok "spawn: non-acp lane still journals a key" || bad "spawn: non-acp key missing"
+
 check "spawn: grok model accepted (dry-run)" 0 bash "$S/ff-spawn.sh" --run rg --id g --model grok --prompt-file "$GKP" --repo "$REPO" --dry-run
 jq -e '.text=="DRYRUN" and .stopReason=="EndTurn" and (has("is_error")|not)' "$REPO/.fleetflow/rg/g.result.json" >/dev/null \
   && ok "spawn: grok dry-run stub is a grok envelope (text+stopReason, no is_error)" || bad "spawn: grok stub shape wrong"
