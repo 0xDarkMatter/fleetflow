@@ -317,7 +317,8 @@ bash "$S/ff-status.sh" --run rlegacy --repo "$REPO" 2>/dev/null \
 grep -q '"v":"1.2.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.2.0" || bad "journal missing FF_VERSION"
 # every operational script pins the same version (version-skew spine)
 VS=0
-for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.sh ff-import.sh; do
+for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.sh \
+         ff-import.sh ff-archive.sh ff-sweep.sh ff-chip.sh; do
   grep -q '^FF_VERSION="1.2.0"$' "$S/$s" || VS=1
 done
 [ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.2.0" || bad "version skew across scripts"
@@ -1313,6 +1314,76 @@ bash "$S/ff-sweep.sh" --repo "$SWL" --include-untracked --json 2>/dev/null \
   | jq -e '.[0].eligible==true' >/dev/null \
   && ok "ff-sweep: --include-untracked opts it in" \
   || bad "ff-sweep: --include-untracked had no effect"
+
+# --- ff-chip: manually spawned chips as first-class lanes -----------------------
+bash -n "$S/ff-chip.sh" 2>/dev/null && ok "syntax ff-chip.sh" || bad "syntax ff-chip.sh"
+bash "$S/ff-chip.sh" --help 2>/dev/null | grep -q "EXAMPLES" \
+  && ok "ff-chip.sh --help has EXAMPLES" || bad "ff-chip.sh --help lacks EXAMPLES"
+check "ff-chip: no subcommand -> 2" 2 bash "$S/ff-chip.sh"
+check "ff-chip: bad subcommand -> 2" 2 bash "$S/ff-chip.sh" frobnicate --run r --id a
+check "ff-chip: open without a task -> 2" 2 bash "$S/ff-chip.sh" open --run r --id a --repo "$REPO"
+check "ff-chip: close an unknown lane -> 3" 3 bash "$S/ff-chip.sh" close --run r1 --id ghost --repo "$REPO"
+# "chip" must stay UNSPAWNABLE - a chip is launched by a human click, so a
+# process that tries to spawn one is a bug, not a feature (mirrors "native").
+check "ff-chip: chip is not a spawnable model" 2 \
+  bash "$S/ff-spawn.sh" --run r1 --id c --model chip --prompt-file "$PKT" --repo "$REPO"
+
+CHR="$TMP/chiprepo"; mkdir -p "$CHR" && git -C "$CHR" init -q -b main
+git -C "$CHR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+CHOUT="$(bash "$S/ff-chip.sh" open --run ch --id lane1 --repo "$CHR" --task "Do the thing." 2>/dev/null)"
+[ -d "$CHR/.fleetflow/ch/wt-lane1" ] \
+  && ok "ff-chip open: creates the lane worktree (chip never touches the primary checkout)" \
+  || bad "ff-chip open: no worktree lane"
+git -C "$CHR" show-ref --verify --quiet refs/heads/fleetflow/ch/lane1 \
+  && ok "ff-chip open: lane branch created" || bad "ff-chip open: no lane branch"
+printf '%s' "$CHOUT" | grep -q 'cd "'"$CHR"'/.fleetflow/ch/wt-lane1"' \
+  && ok "ff-chip open: seed prompt sends the chip into its lane first" \
+  || bad "ff-chip open: seed prompt lacks the cd into the lane"
+printf '%s' "$CHOUT" | grep -q "HARD CONSTRAINTS" \
+  && ok "ff-chip open: seed prompt carries the guard preamble" \
+  || bad "ff-chip open: guard preamble missing (chip would be unguarded)"
+jq -e 'select(.type=="started" and .id=="lane1") | .model=="chip"' \
+  "$CHR/.fleetflow/ch/journal.jsonl" >/dev/null 2>&1 \
+  && ok "ff-chip open: journals a started record (model chip)" \
+  || bad "ff-chip open: no started record"
+jq -e '.packets[] | select(.id=="lane1") | .model=="chip" and .worktree==true' \
+  "$CHR/.fleetflow/ch/manifest.json" >/dev/null 2>&1 \
+  && ok "ff-chip open: manifest packet upserted" || bad "ff-chip open: no manifest packet"
+# The heartbeat seed: without it a fresh lane reads `stalled` on the first poll
+# (no transcript -> garbage last_activity), which is wrong for a chip nobody has
+# clicked yet. Regression-guarded because the file looks like litter.
+bash "$S/ff-status.sh" --run ch --repo "$CHR" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="lane1")|.state=="running" and .stalled==false' >/dev/null \
+  && ok "ff-chip open: fresh lane reads running, not stalled (heartbeat seeded)" \
+  || bad "ff-chip open: fresh lane misreported as stalled"
+bash "$S/ff-status.sh" --run ch --repo "$CHR" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="lane1")|.live_signal==true' >/dev/null \
+  && ok "ff-chip: lane carries live_signal (transcript introspection applies)" \
+  || bad "ff-chip: no live_signal - chip lane would be invisible while running"
+
+# close measures the lane rather than trusting a self-report
+echo x > "$CHR/.fleetflow/ch/wt-lane1/x.txt"
+git -C "$CHR/.fleetflow/ch/wt-lane1" add x.txt
+git -C "$CHR/.fleetflow/ch/wt-lane1" -c user.email=t@t -c user.name=t commit -q -m "chip work"
+bash "$S/ff-chip.sh" close --run ch --id lane1 --repo "$CHR" --note "did it" >/dev/null 2>&1
+jq -e '.chip.commits==1 and .is_error==false' "$CHR/.fleetflow/ch/lane1.result.json" >/dev/null 2>&1 \
+  && ok "ff-chip close: commits MEASURED from the lane, not self-reported" \
+  || bad "ff-chip close: result envelope wrong"
+bash "$S/ff-status.sh" --run ch --repo "$CHR" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="lane1")|.state=="done"' >/dev/null \
+  && ok "ff-chip close: lane flips to done" || bad "ff-chip close: lane not done"
+bash "$S/ff-collect.sh" --run ch --id lane1 --repo "$CHR" >/dev/null 2>&1 \
+  && ok "ff-chip: closed lane gates through ff-collect unchanged" \
+  || bad "ff-chip: ff-collect cannot read a chip lane"
+# a failed chip closes nonzero and says so
+bash "$S/ff-chip.sh" open --run ch --id lane2 --repo "$CHR" --task "abandoned" >/dev/null 2>&1
+check "ff-chip close --rc 10 exits 10" 10 \
+  bash "$S/ff-chip.sh" close --run ch --id lane2 --repo "$CHR" --rc 10 --note "wrong approach"
+# resume reports chip packets as skipped - never silently dropped
+bash "$S/ff-run.sh" resume --run ch --repo "$CHR" 2>/dev/null \
+  | jq -e '[.[]|select(.status=="chip")] | length == 2' >/dev/null \
+  && ok "ff-run resume: chip packets reported skipped (not replayed, not dropped)" \
+  || bad "ff-run resume: chip packets mishandled"
 
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
