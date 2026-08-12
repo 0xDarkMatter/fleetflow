@@ -1221,6 +1221,99 @@ printf '%s' "$ARC2" | jq -e '.repo_label=="repo"' >/dev/null \
   && ok "ff-archive: --dry-run appends nothing" \
   || bad "ff-archive: --dry-run appended to the store"
 
+# --- ff-clean --landed / ff-sweep (ADR-020) -----------------------------------
+# The safety-critical predicate on this repo: everything below asserts what must
+# NOT be deleted. A regression here destroys a lane's only copy of real work.
+bash -n "$S/ff-sweep.sh" 2>/dev/null && ok "syntax ff-sweep.sh" || bad "syntax ff-sweep.sh"
+bash "$S/ff-sweep.sh" --help 2>/dev/null | grep -q "EXAMPLES" \
+  && ok "ff-sweep.sh --help has EXAMPLES" || bad "ff-sweep.sh --help lacks EXAMPLES"
+check "ff-sweep: bad flag -> 2" 2 bash "$S/ff-sweep.sh" --frobnicate
+
+SWR="$TMP/swrepo"
+mkdir -p "$SWR" && git -C "$SWR" init -q -b main
+git -C "$SWR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+SWD="$SWR/.fleetflow/sw"; mkdir -p "$SWD"
+jq -nc '{run:"sw",base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$SWD/manifest.json"
+: > "$SWD/journal.jsonl"
+mklane() { # id, then commit-and-merge?  builds a worktree lane with one commit
+  git -C "$SWR" worktree add -q -b "fleetflow/sw/$1" "$SWD/wt-$1" main 2>/dev/null
+  echo "$1" > "$SWD/wt-$1/$1.txt"
+  git -C "$SWD/wt-$1" add -A
+  git -C "$SWD/wt-$1" -c user.email=t@t -c user.name=t commit -q -m "lane $1"
+}
+mklane landed  && git -C "$SWR" merge -q --no-ff -m "land" "fleetflow/sw/landed"
+mklane unmerged
+mklane tracked && git -C "$SWR" merge -q --no-ff -m "land2" "fleetflow/sw/tracked"
+echo "EDITED" >> "$SWD/wt-tracked/tracked.txt"        # tracked modification
+mklane litter  && git -C "$SWR" merge -q --no-ff -m "land3" "fleetflow/sw/litter"
+echo "scratch" > "$SWD/wt-litter/untracked-note.md"   # untracked leftover only
+
+# THE LOAD-BEARING EQUIVALENCE (ADR-020): for a landed lane, `rev-list --count
+# BASE..HEAD` is 0 and `merge-base --is-ancestor` is true - the SAME question.
+# A `--landed` flag was built on the assumption they differed, and deleted when
+# this fixture proved they do not. Pinning it here so nobody rebuilds it.
+LHEAD="$(git -C "$SWD/wt-landed" rev-parse HEAD)"
+[ "$(git -C "$SWR" rev-list --count "main..$LHEAD")" = "0" ] \
+  && git -C "$SWR" merge-base --is-ancestor "$LHEAD" main \
+  && ok "landed lane: rev-list==0 AND is-ancestor (ff-clean needs no --landed flag)" \
+  || bad "landed-lane equivalence broken - ff-clean's zero-commit row no longer covers landed lanes"
+
+# Plain ff-clean therefore already reclaims a landed+clean lane, and still keeps
+# the unmerged one. This is the pre-existing contract, asserted because ff-sweep
+# now depends on it.
+CL1="$(bash "$S/ff-clean.sh" --run sw --repo "$SWR" --no-archive 2>/dev/null)"
+printf '%s' "$CL1" | awk -F'\t' '$1=="landed"&&$2=="removed"{f=1} END{exit !f}' \
+  && ok "ff-clean: landed+clean lane reclaimed with no new flag" \
+  || bad "ff-clean: landed lane not reclaimed"
+printf '%s' "$CL1" | awk -F'\t' '$1=="unmerged"&&$2=="kept"{f=1} END{exit !f}' \
+  && ok "ff-clean: UNMERGED lane kept (work preserved)" \
+  || bad "ff-clean: DELETED AN UNMERGED LANE"
+[ -d "$SWD/wt-unmerged" ] && ok "ff-clean: unmerged worktree still on disk" \
+  || bad "ff-clean: unmerged worktree gone"
+
+# ff-sweep classifies read-only, and a tracked modification is never eligible -
+# THIS is where the protection lives, because ff-clean --force is documented to
+# discard a failed lane's dirty tree and must keep doing so.
+SW="$(bash "$S/ff-sweep.sh" --repo "$SWR" --json 2>/dev/null)"
+printf '%s' "$SW" | jq -e '.[0].verdict=="holds-work"' >/dev/null \
+  && ok "ff-sweep: unmerged/tracked-modified lanes read holds-work" \
+  || bad "ff-sweep: verdict wrong ($(printf '%s' "$SW" | jq -r '.[0].verdict'))"
+printf '%s' "$SW" | jq -e '.[0].eligible==false' >/dev/null \
+  && ok "ff-sweep: holds-work run is never eligible for reclaim" \
+  || bad "ff-sweep: holds-work run marked ELIGIBLE (would destroy work)"
+printf '%s' "$SW" | jq -e '.[0].archived==false' >/dev/null \
+  && ok "ff-sweep: unarchived run reported as such" || bad "ff-sweep: archived flag wrong"
+[ -d "$SWD/wt-unmerged" ] && [ -d "$SWD/wt-tracked" ] \
+  && ok "ff-sweep --json: read-only, lanes untouched" \
+  || bad "ff-sweep --json: mutated the tree"
+
+# A run whose only blocker is untracked litter gets its own verdict, and is
+# eligible ONLY with --include-untracked.
+SWL="$TMP/swlit"; mkdir -p "$SWL" && git -C "$SWL" init -q -b main
+git -C "$SWL" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+SWLD="$SWL/.fleetflow/lit"; mkdir -p "$SWLD"
+jq -nc '{run:"lit",base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$SWLD/manifest.json"
+: > "$SWLD/journal.jsonl"
+git -C "$SWL" worktree add -q -b fleetflow/lit/a "$SWLD/wt-a" main 2>/dev/null
+echo a > "$SWLD/wt-a/a.txt"; git -C "$SWLD/wt-a" add -A
+git -C "$SWLD/wt-a" -c user.email=t@t -c user.name=t commit -q -m a
+git -C "$SWL" merge -q --no-ff -m land fleetflow/lit/a
+echo scratch > "$SWLD/wt-a/leftover.md"          # untracked ONLY
+SWL1="$(bash "$S/ff-sweep.sh" --repo "$SWL" --json 2>/dev/null)"
+printf '%s' "$SWL1" | jq -e '.[0].verdict=="landed-untracked"' >/dev/null \
+  && ok "ff-sweep: untracked-only leftovers get their own verdict" \
+  || bad "ff-sweep: untracked verdict wrong ($(printf '%s' "$SWL1" | jq -r '.[0].verdict'))"
+printf '%s' "$SWL1" | jq -e '.[0].detail | test("leftover.md")' >/dev/null \
+  && ok "ff-sweep: untracked paths are listed, never swept silently" \
+  || bad "ff-sweep: untracked paths not disclosed"
+printf '%s' "$SWL1" | jq -e '.[0].eligible==false' >/dev/null \
+  && ok "ff-sweep: landed-untracked NOT eligible by default" \
+  || bad "ff-sweep: landed-untracked eligible without opt-in"
+bash "$S/ff-sweep.sh" --repo "$SWL" --include-untracked --json 2>/dev/null \
+  | jq -e '.[0].eligible==true' >/dev/null \
+  && ok "ff-sweep: --include-untracked opts it in" \
+  || bad "ff-sweep: --include-untracked had no effect"
+
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
 # archive-before-remove (ADR-011) writes throwaway `rc` runs into the history
