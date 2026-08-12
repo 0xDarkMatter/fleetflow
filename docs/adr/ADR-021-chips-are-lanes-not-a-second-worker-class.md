@@ -26,12 +26,22 @@ itself from. Two distinct problems, and the second is the dangerous one.
 `ff-status`, the dashboard, cost roll-ups, teardown, or the sweep. Work happened
 on the machine that no fleetflow surface could account for.
 
-**It was hostile.** Per [claude-code#64605](https://github.com/anthropics/claude-code/issues/64605)
-a chip session starts in the **primary checkout on whatever branch is currently
-out** — it does not get a worktree. So a chip dirties the exact tree
-`ff-collect --check-main-clean` watches ([ADR-009](ADR-009-escape-guard-and-baseline.md)),
-making the escape guard fire on friendly work; and two chips on one repo share a
-single index, which is the write-time clash worktrees exist to prevent.
+**It could land in the primary checkout.** Historically
+([claude-code#64605](https://github.com/anthropics/claude-code/issues/64605)) a
+chip session always started in the **primary checkout on whatever branch was
+currently out**, dirtying the exact tree `ff-collect --check-main-clean` watches
+([ADR-009](ADR-009-escape-guard-and-baseline.md)) and sharing one index with any
+sibling chip. **Corrected 2026-08-12: that is fixed — the chip UI now offers to
+start the session in a fresh worktree at click time.** The harm is therefore
+opt-out rather than guaranteed, and this ADR is not justified by it alone.
+
+What the fix does *not* do is make a chip a fleetflow lane, and that distinction
+is the durable reason for this decision. Claude Code's worktree lives under
+`.claude/worktrees/<slug>` — a tree fleetflow deliberately never manages
+([ADR-020](ADR-020-sweep-reclaims-only-archived-and-landed.md)), whose branch
+naming fleetflow does not own, and which `ff-status`, `ff-clean`, `ff-archive`
+and `ff-sweep` all decline to touch. An isolated chip is safe; it is still
+invisible, still outside teardown, and still absent from every roll-up.
 
 The fix is not a new worker class with its own telemetry, launcher, and
 collector. It is giving the chip the lane a spawned worker already gets, and
@@ -44,7 +54,16 @@ telemetry in `ff-status` is gated on `state=="running"` and the worktree path,
 not on the model.** A chip working in `.fleetflow/<run>/wt-<id>` writes its
 session transcript to `~/.claude/projects/<encoded-workdir>/`, which is exactly
 where `ff-status` already looks — so tokens, tools, density, `model_id` and
-stall detection all arrive for free. The only thing a chip lacks is a wrapper
+stall detection all arrive for free.
+
+That link is the reason a chip must **not** be double-isolated. The encoding
+keys on the **session's cwd**, so a chip started in its own fresh worktree
+writes its transcript under *that* path, not the lane's — `ff-status` then finds
+nothing, and the `./.ff-heartbeat` the guard asks for lands in the wrong tree
+too, so the lane goes dark and eventually reads stalled while the chip works
+normally. When a lane already exists, start the chip **without** the
+fresh-worktree option, with its cwd set to the lane: `ff-chip open` has already
+done the isolating. The only thing a chip lacks is a wrapper
 process to journal its exit, which is precisely what `ff-chip close` supplies.
 `started` with no `result` is what makes the lane read running; that single
 asymmetry is the whole mechanism.
@@ -74,6 +93,13 @@ acted on.
   on one index and the branch under the orchestrator's feet changes. The lane
   must be a separate working tree, which is the same conclusion
   `worktree-boundaries` reaches for every other parallel writer.
+- **Rely on the chip UI's own fresh-worktree option and adopt that tree.**
+  Rejected once the option existed (2026-08-12). It isolates correctly, but the
+  tree is `.claude/worktrees/<slug>`: fleetflow refuses to manage that namespace
+  (ADR-020), does not own its branch naming, and `ff-status`'s transcript lookup
+  keys on the lane path — so adopting it would mean either teaching every
+  surface a second lane location or giving up live telemetry and teardown.
+  Creating the lane first costs one command and keeps one namespace.
 - **A `chip` worker that fleetflow launches itself.** Rejected: it would be a
   headless `claude -p`, i.e. exactly `ff-spawn --model sonnet`. The point of a
   chip is that a human drives it; automating it deletes the thing being adopted.
@@ -106,6 +132,11 @@ acted on.
   session transcript reports, like any claude-family lane.
 - Two ways to create a lane now exist (`ff-spawn`, `ff-chip open`), so lane
   creation logic lives in two places and must stay in step.
+- The telemetry depends on the chip's cwd being the lane, which is a **click-time
+  choice this repo cannot enforce**. Choosing the fresh-worktree option on a chip
+  that already has a lane silently costs live status and the heartbeat. The seed
+  prompt asks the chip to verify its cwd and report a mismatch; that is a
+  detection, not a guarantee.
 
 ### Non-goals
 - Does not make chips replayable, schedulable, or spawnable.
