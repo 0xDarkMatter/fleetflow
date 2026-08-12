@@ -23,6 +23,20 @@ command -v git >/dev/null 2>&1 || { echo "SKIP: git unavailable"; exit 0; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# THE SUITE MUST NEVER TOUCH THE REAL MACHINE-LEVEL STORE. ff-clean archives
+# before it removes (ADR-011), so every ff-clean exercise below appends a
+# throwaway `rc` run to $FLEETFLOW_HOME/history.jsonl. Left unset that is
+# ~/.fleetflow/history.jsonl - the file the machine-wide dashboard renders as
+# its history section. Measured 2026-08-12 before this line existed: 81 of 120
+# unique runs on the box were test fixtures, and it grew every suite run,
+# multiplied by lane count whenever a fleetflow run ran the suite inside its
+# own workers. The guard assertion at the end of the file keeps it that way.
+export FLEETFLOW_HOME="$TMP/ffhome"
+REAL_STORE="${HOME:-}/.fleetflow/history.jsonl"
+real_store_size() { [ -f "$REAL_STORE" ] && wc -c < "$REAL_STORE" | tr -d ' \r' || echo 0; }
+REAL_STORE_BEFORE="$(real_store_size)"
+
 REPO="$TMP/repo"
 mkdir -p "$REPO" && git -C "$REPO" init -q -b main
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -1164,6 +1178,57 @@ if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ]; then
 else
   echo "  SKIP  waves stop gate (sequencer absent)"
 fi
+
+# --- ff-archive: label parity, orchestrator carry-through ---------------------
+# The dashboard renders live and archived runs side by side, so an archived
+# record must not change identity or lose facts the live half shows.
+bash -n "$S/ff-archive.sh" 2>/dev/null && ok "syntax ff-archive.sh" || bad "syntax ff-archive.sh"
+bash "$S/ff-archive.sh" --help 2>/dev/null | grep -q "EXAMPLES" \
+  && ok "ff-archive.sh --help has EXAMPLES" || bad "ff-archive.sh --help lacks EXAMPLES"
+
+# A run driven from inside a Claude Code worktree session: toplevel is
+# <repo>/.claude/worktrees/<slug>. basename() would label it with the slug
+# alone, silently orphaning it from its repo's dashboard group forever.
+WTREPO="$TMP/hostrepo/.claude/worktrees/zesty-lane-abc123"
+mkdir -p "$WTREPO" && git -C "$WTREPO" init -q -b main
+git -C "$WTREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+RDA="$WTREPO/.fleetflow/arch1"; mkdir -p "$RDA"
+: > "$RDA/w.prompt.txt"
+printf '%s\n' \
+  '{"type":"started","key":"v2:w","id":"w","model":"sonnet","phase":"build","orchestrator":"fable","v":"1.2.0"}' \
+  '{"type":"result","key":"v2:w","id":"w","model":"sonnet","rc":0,"artifact":"x"}' \
+  > "$RDA/journal.jsonl"
+
+# size, not existence: the isolated store already holds the ff-clean fixtures
+ISO_STORE="$FLEETFLOW_HOME/history.jsonl"
+iso_size() { [ -f "$ISO_STORE" ] && wc -c < "$ISO_STORE" | tr -d ' \r' || echo 0; }
+ISO_BEFORE="$(iso_size)"
+
+ARC="$(bash "$S/ff-archive.sh" --run arch1 --repo "$WTREPO" --dry-run 2>/dev/null)"
+printf '%s' "$ARC" | jq -e '.repo_label=="hostrepo@zesty-lane-abc123"' >/dev/null \
+  && ok "ff-archive: worktree run keeps its repo (repo@slug, matches aggregate)" \
+  || bad "ff-archive: worktree run labelled '$(printf '%s' "$ARC" | jq -r '.repo_label')' (orphaned from its repo)"
+printf '%s' "$ARC" | jq -e '.orchestrator=="fable"' >/dev/null \
+  && ok "ff-archive: carries orchestrator (badge never guesses, so a dropped field is unrecoverable)" \
+  || bad "ff-archive: dropped orchestrator - archived run reads 'unrecorded' forever"
+# plain repos keep the basename they have always had
+ARC2="$(bash "$S/ff-archive.sh" --run r1 --repo "$REPO" --dry-run 2>/dev/null)"
+printf '%s' "$ARC2" | jq -e '.repo_label=="repo"' >/dev/null \
+  && ok "ff-archive: non-worktree repo label unchanged (no regression)" \
+  || bad "ff-archive: non-worktree label regressed"
+# --dry-run must not append anywhere
+[ "$ISO_BEFORE" = "$(iso_size)" ] \
+  && ok "ff-archive: --dry-run appends nothing" \
+  || bad "ff-archive: --dry-run appended to the store"
+
+# --- the suite never touches the real machine-level store ----------------------
+# Guards the isolation exported at the top of this file. Without it, ff-clean's
+# archive-before-remove (ADR-011) writes throwaway `rc` runs into the history
+# the machine-wide dashboard renders - and nothing ever cleans them out.
+REAL_STORE_AFTER="$(real_store_size)"
+[ "$REAL_STORE_BEFORE" = "$REAL_STORE_AFTER" ] \
+  && ok "suite left ~/.fleetflow/history.jsonl untouched" \
+  || bad "suite WROTE to the real history store ($REAL_STORE_BEFORE -> $REAL_STORE_AFTER bytes)"
 
 echo "=== $PASS passed, $FAILN failed ==="
 [ "$FAILN" = 0 ] || exit 1
