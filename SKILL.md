@@ -166,6 +166,29 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
 5. **Land** through fleet-ops (sequential, test-gated). Delete lanes and
    `.fleetflow/<run>/` after landing.
 
+**A manually spawned chip is a lane too — open it before you click it.**
+A `spawn_task` chip does *not* get its own worktree: per
+[claude-code#64605](https://github.com/anthropics/claude-code/issues/64605) it
+starts in the **primary checkout on whatever branch is out**, so it dirties the
+tree `--check-main-clean` watches and collides with any sibling chip on the same
+index. Route around it:
+
+```bash
+bash scripts/ff-chip.sh open --run <run> --id <id> --task "<the brief>"   # prints the seed prompt
+# …paste that into spawn_task, let it work, then:
+bash scripts/ff-chip.sh close --run <run> --id <id> --note "<one line>"
+```
+
+`open` builds the lane (worktree + branch + guard preamble), journals `started`,
+and seeds `.ff-heartbeat` so the lane reads *running* rather than instantly
+stalled; `close` records the **measured** outcome (commits, dirty, HEAD), never
+a self-report. Between the two, the chip is a normal lane on every surface — and
+because `ff-status`'s live introspection keys on the worktree path rather than
+the model, it gets tokens, tools and stall detection for free. `chip` is not
+spawnable (fleetflow cannot click a chip), so `ff-run resume` reports chip
+packets as skipped. Rationale:
+[ADR-021](docs/adr/ADR-021-chips-are-lanes-not-a-second-worker-class.md).
+
 **Inter-worker communication is hub-and-spoke, by design.** Workers never talk
 to each other — no shared memory, no message bus, no sideband files (lanes are
 isolated worktrees). The only channel is the native tool's: a worker's FINAL
@@ -519,6 +542,7 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
 | [scripts/ff-widget.sh](scripts/ff-widget.sh) | HTML fragment for chat sandbox: wave bar, metric cells (lanes/tokens/cost/findings/elapsed), lane grid (capped at `--max-lanes N=10`), findings strip (severity chips when >0), buttons (refresh, triage failed, review gate when gated); stateless, CSS variables only, sole external reference is the fleetflow.lab anchor |
 | [scripts/ff-clean.sh](scripts/ff-clean.sh) | `--run NAME [--force]` reclaims zero-commit lanes (worktree remove + branch -D), keeps lanes with unmerged commits, removes the run's cache dirs; reports locked ACL-litter dirs. Note a **landed** lane already counts as zero-commit (`rev-list BASE..HEAD` is 0 once merged), so landing then cleaning reclaims it with no extra flag ([ADR-020](docs/adr/ADR-020-sweep-reclaims-only-archived-and-landed.md)). **Archives the run to history first** (`--no-archive` opts out). `--reap [--force]` finds worker processes the wrapper left alive, matched by ancestry to the run's journalled anchors |
 | [scripts/ff-archive.sh](scripts/ff-archive.sh) | `--run NAME` appends a compact run summary to `~/.fleetflow/history.jsonl` so the run outlives its own directory; `--dry-run` prints without appending |
+| [scripts/ff-chip.sh](scripts/ff-chip.sh) | adopts a manually spawned `spawn_task` chip as an ordinary lane: `open --run NAME --id ID --task "…"` creates the worktree lane, journals `started`, and prints the seed prompt to paste into the chip; `close --run NAME --id ID [--rc N] [--note …]` records the measured outcome (commits, dirt, HEAD) so collect/status/clean/archive/sweep treat it like any lane; `list --run NAME`. `chip` is not spawnable — `ff-run resume` skips it. See [ADR-021](docs/adr/ADR-021-chips-are-lanes-not-a-second-worker-class.md) |
 | [scripts/ff-sweep.sh](scripts/ff-sweep.sh) | machine-wide housekeeping: `--list` (default) reports every run dir still on disk across the configured roots with a verdict (`reclaimable` / `landed-untracked` / `holds-work` / `active`), lane landed-counts, and bytes; `--reclaim` removes only the provably safe ones (archiving first if needed), `--include-untracked` extends that to runs pinned open by untracked leftovers after listing their paths. Never touches `.claude/worktrees/`. See [ADR-020](docs/adr/ADR-020-sweep-reclaims-only-archived-and-landed.md) |
 | [scripts/ff-aggregate.py](scripts/ff-aggregate.py) | discovers every run under the configured roots and emits ONE aggregate JSON (all repos, all runs, roll-ups, history); `--init-roots PATH...` writes the roots file |
 | [scripts/ff-serve.py](scripts/ff-serve.py) | serves the machine-wide dashboard + builds its aggregate on request; the process behind `https://fleetflow.lab` |

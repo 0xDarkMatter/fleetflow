@@ -937,6 +937,17 @@ while [ "$i" -lt "$N" ]; do
       '$R + [{id:$id,status:$s,rc:$rc}]')"
     i=$((i+1)); continue
   fi
+  # chip packets are the same class of terminal fact: a chip is launched by a
+  # HUMAN CLICK, so there is nothing for fleetflow to replay - re-running one
+  # would need a person, not a process. Reported, never silently dropped (the
+  # no-silent-caps rule). Re-open a fresh chip with ff-chip open, or spawn a
+  # normal lane and paste the chip's result into its packet. See ff-chip.sh.
+  if [ "$pmodel" = "chip" ]; then
+    err "  $((i+1))   $(printf '%-23s' "$pid")  chip       manual lane (skipped)"
+    RESULTS="$(jq -nc --argjson R "$RESULTS" --arg id "$pid" --arg s "chip" --argjson rc 0 \
+      '$R + [{id:$id,status:$s,rc:$rc}]')"
+    i=$((i+1)); continue
+  fi
   pphase="$(printf '%s' "$PACKETS" | jq -r ".[$i].phase // \"build\"")"
   ppf="$(printf '%s' "$PACKETS" | jq -r ".[$i].prompt_file")"
   pwt="$(printf '%s' "$PACKETS" | jq -r ".[$i].worktree // false")"

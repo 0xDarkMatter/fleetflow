@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (293 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (313 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -21,7 +21,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | Path | What lives there |
 |---|---|
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
-| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-sweep` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
+| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-sweep` / `ff-chip` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
@@ -53,6 +53,16 @@ operational playbook — read it first; this file only carries repo mechanics.
   re-verifying the streaming envelope against `ff-collect`'s gate; grok
   WORKTREE lanes are stall-covered by the `.ff-heartbeat` file instead.
   See [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **A `spawn_task` chip has NO worktree — it runs in the primary checkout on
+  the current branch** ([claude-code#64605](https://github.com/anthropics/claude-code/issues/64605)),
+  so an un-adopted chip dirties the tree `ff-collect --check-main-clean` watches
+  and collides with sibling chips on one index. Always `ff-chip open` before
+  clicking. Two things in `ff-chip` look like litter and are not: the
+  `.ff-heartbeat` seed (without it a fresh lane reads `stalled` on the first
+  poll — no transcript means `last_activity_s` falls back to a garbage epoch),
+  and the `started`-without-`result` asymmetry (that is what makes the lane read
+  running, which is what switches on live transcript introspection).
+  See [docs/adr/ADR-021](docs/adr/ADR-021-chips-are-lanes-not-a-second-worker-class.md).
 - **`ff-sweep` owns `.fleetflow/` and NOTHING else — never point it at
   `.claude/worktrees/`.** Those are Claude Code session state, not fleetflow's
   to reap, and one that looks abandoned may be a live session (see
