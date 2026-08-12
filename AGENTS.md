@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (192 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (278 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -21,7 +21,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | Path | What lives there |
 |---|---|
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
-| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-serve.py` (dashboard server) |
+| `scripts/` | `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard) |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
@@ -53,6 +53,19 @@ operational playbook — read it first; this file only carries repo mechanics.
   re-verifying the streaming envelope against `ff-collect`'s gate; grok
   WORKTREE lanes are stall-covered by the `.ff-heartbeat` file instead.
   See [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **`tests/run.sh` exports its own `FLEETFLOW_HOME` — never remove that line.**
+  `ff-clean` archives before it removes (ADR-011), so every ff-clean exercise
+  appends a throwaway `rc` run to the machine-level history the dashboard
+  renders. Unisolated, the suite polluted the real store on every invocation,
+  multiplied by lane count whenever a fleetflow run ran the suite inside its
+  own workers: 81 of 120 unique runs on this box were test fixtures by
+  2026-08-12. A guard assertion at the end of the suite pins the real store
+  byte-unchanged.
+- **`ff-archive`'s `repo_label` must keep the `.claude/worktrees/` collapse.**
+  Runs are now routinely driven from inside Claude Code worktree sessions, and
+  a bare `basename` labels those with the session slug alone — orphaning the
+  run from its repo's dashboard group the moment it is archived, which is the
+  live-vs-archived divergence the roll-up comment in that file forbids.
 - **`ff-clean` archives before it removes** — teardown is the last moment the
   run's data exists; never reorder the archive step below the removal loop.
   See [docs/adr/ADR-011](docs/adr/ADR-011-archive-before-remove.md).

@@ -53,6 +53,27 @@ EOF
 
 err() { echo "ff-archive: $*" >&2; }
 
+# repo_label: mirrors the worktree collapse in ff-aggregate.py's repo_label().
+# A run driven from inside a Claude Code worktree session has its toplevel at
+# <repo>/.claude/worktrees/<slug>, so a bare basename labels it with the SLUG
+# alone ("dreamy-matsumoto-ad4a2f") and the run drops out of its repo's group in
+# the dashboard the moment it is archived - the exact live-vs-archived
+# divergence the roll-up comment below forbids. Collapse to "<repo>@<slug>",
+# the shape ff-aggregate.py already produces for the live half.
+# Non-worktree repos keep the basename they have always had; ff-archive has no
+# roots concept, so it cannot (and must not) reproduce aggregate's
+# relative-to-root labels for nested repos.
+repo_label() {
+  local p="${1//\\//}" base
+  case "$p" in
+    */.claude/worktrees/*)
+      base="${p%%/.claude/worktrees/*}"
+      printf '%s@%s' "${base##*/}" "${p##*/}"
+      ;;
+    *) printf '%s' "${p##*/}" ;;
+  esac
+}
+
 RUN="" REPO="" STORE="" DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -103,7 +124,7 @@ NOW="$(date +%s)"
 # live and archived runs side by side, so a run must not change shape or verdict
 # the moment it moves from one section to the other.
 REC="$(printf '%s' "$STATUS" | jq -c \
-  --arg v "$FF_VERSION" --argjson now "$NOW" --arg label "$(basename "$REPO")" --argjson findings "$FINDINGS_BLOCK" '
+  --arg v "$FF_VERSION" --argjson now "$NOW" --arg label "$(repo_label "$REPO")" --argjson findings "$FINDINGS_BLOCK" '
   . as $s
   | (.lanes // []) as $L
   | ($L | map(select(.cost_usd != null))) as $costed
@@ -113,6 +134,12 @@ REC="$(printf '%s' "$STATUS" | jq -c \
   | {
       schema: "fleetflow/history/1", v: $v,
       run: $s.run, repo: $s.repo, repo_label: $label,
+      # Who drove the fleet. ff-status resolves it (journal first, manifest
+      # fallback) and ff-aggregate.py carries it for LIVE runs, so dropping it
+      # here made every run read "orchestrator unrecorded" the moment it was
+      # archived - discarding a fact that existed at archive time. The badge
+      # never guesses, so an omitted field is unrecoverable, not merely absent.
+      orchestrator: ($s.orchestrator // null),
       archived_at: $now,
       started: ([$L[].started | select(. > 0)] | min // 0),
       ended: (if ($inflight | length) > 0 then null else $now end),
