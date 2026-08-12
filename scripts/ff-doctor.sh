@@ -79,6 +79,13 @@ for s in ff-spawn.sh ff-collect.sh ff-status.sh; do
   if bash -n "$HERE/$s" 2>/dev/null; then say "syntax-$s" ok "parses"; else say "syntax-$s" fail "syntax error"; FAIL=1; fi
 done
 [ -f "$HERE/../assets/guard-preamble.txt" ] && say "guard-preamble" ok "present" || { say "guard-preamble" fail "missing"; FAIL=1; }
+# raven-bus (P4 wiring, ADR-022): advisory only - the bus heartbeat clause
+# is opt-in via FLEETFLOW_BUS=1 and degrades silently without the binary.
+if command -v raven >/dev/null 2>&1; then
+  say "raven-bus" ok "$(raven version 2>/dev/null | head -1) (FLEETFLOW_BUS=1 adds worker bus heartbeats)"
+else
+  say "raven-bus" advisory "raven not on PATH - bus heartbeats unavailable"
+fi
 
 # --- install-sync: repo copy vs the installed copy at $HOME/.claude/skills ---
 # version-skew guard. Only compares when an installed copy exists AND is a

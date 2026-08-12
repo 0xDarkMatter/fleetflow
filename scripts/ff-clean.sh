@@ -210,6 +210,19 @@ if [ "$ARCHIVE" = 1 ]; then
   fi
 fi
 
+# raven-bus teardown (P4 wiring, ADR-022): the run's bus channels
+# (run/<name>/...) are scratch state like the lane worktrees - reclaim
+# them with the run. Best-effort and silent-skip: no raven on PATH, or
+# nothing on the bus for this run (teardown is a prefix delete of zero
+# rows), are both fine; a failure warns and never blocks the clean.
+if command -v raven >/dev/null 2>&1; then
+  if raven teardown --run "$RUN" --yes >/dev/null 2>&1; then
+    err "raven-bus: run channels torn down"
+  else
+    err "WARNING: raven teardown failed - cleaning anyway"
+  fi
+fi
+
 NLANES="$(list_lane_ids | wc -l | tr -d ' ')"
 err "cleaning run '$RUN': $NLANES lane(s); FORCE=$FORCE; base=$BASE; cache=$CACHE_ROOT"
 if [ "$NLANES" = "0" ]; then

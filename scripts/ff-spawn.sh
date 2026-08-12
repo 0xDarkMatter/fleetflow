@@ -231,6 +231,20 @@ if [ "$GUARD" = 1 ]; then
 - HEARTBEAT: after each major step (a file finished, tests run, a phase begun), append one short line to ./.ff-heartbeat in your cwd, e.g.:  echo "tests green" >> .ff-heartbeat
   This is your liveness signal to the orchestrator; a long silence reads as a wedged worker. Do not commit this file.
 EOF
+    # Bus heartbeat clause - OPT-IN via FLEETFLOW_BUS=1 (raven-bus P4
+    # wiring, ADR-022). Additive: the file heartbeat above STAYS the
+    # canonical stall signal (ff-status reads its mtime); the bus copy
+    # gives the orchestrator/dashboards one uniform live feed across all
+    # models via `raven tail`. Opt-in because the clause changes the
+    # effective prompt and therefore the journal cache key for
+    # guard+worktree packets (see the NB above) - default runs keep
+    # their keys.
+    if [ "${FLEETFLOW_BUS:-0}" = 1 ]; then
+      cat >> "$SENT" <<EOF
+- BUS HEARTBEAT: additionally, after each major step, run:  raven send --channel run/$RUN/telemetry --from $ID@$RUN -t heartbeat --body "{\"step\":\"<short note>\"}"
+  If the raven command is unavailable or errors, skip it silently - the .ff-heartbeat file above remains required either way. Never wait on or retry this command.
+EOF
+    fi
   fi
   echo >> "$SENT"
 fi

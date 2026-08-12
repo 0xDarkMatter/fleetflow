@@ -202,13 +202,19 @@ later packet (the `prevResult`-into-next-prompt handoff; see
 just the collected builder outputs pasted in. If a stage needs *all* sibling
 results, that is a barrier — collect everything first, then compose. (True
 peer-to-peer between long-lived workers is out of scope; that's what a message
-bus like pigeon is for.)
+bus is for.) One sanctioned sideband exists — **opt-in raven-bus telemetry**
+(`FLEETFLOW_BUS=1`): worker heartbeats onto `run/<run>/telemetry`, tailed with
+`raven tail`. Telemetry is not peer coordination; workers gain no bus-READ
+instructions, and the `.ff-heartbeat` file stays the canonical stall signal.
+See [docs/adr/ADR-022](docs/adr/ADR-022-raven-bus-optin-telemetry.md).
 
 **Why not Claude Desktop's `ccd_session_mgmt` messaging here** (asked and settled
 2026-08-03): it addresses Desktop sessions, and a fleetflow worker is an OS
 process with no address in that system — hub-and-spoke is the only topology
 this process model permits, and where cross-worker signalling IS wanted the
-tool is `pigeon` (a real CLI, works for any harness). Full settlement:
+tool is a real CLI bus that works for any harness — in-run telemetry is now
+raven-bus (ADR-022 supersedes ADR-005's pigeon pointer for this case); pigeon
+remains the cross-project mailbox. Full settlement:
 [docs/adr/ADR-005](docs/adr/ADR-005-hub-and-spoke-worker-topology.md). The
 Desktop-only channel is documented in
 [fleet-ops SKILL.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-ops/SKILL.md),
