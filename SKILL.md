@@ -216,7 +216,8 @@ packet goes in as the harness's trusted boundary-0 prompt (bus messages stay
 data-framed). An ACP lane is a persistent process: it ends by being reaped,
 and its verdict is distilled from telemetry into the normal claude-style
 envelope, so collect/status are unchanged. Permission mode defaults to
-`dontAsk` (`FLEETFLOW_PERMISSION_MODE` opts up); `--effort` is refused.
+`acceptEdits` — edit tools auto-allowed, Bash gated by the allowlist
+(`FLEETFLOW_PERMISSION_MODE` opts up/down); `--effort` is refused.
 See [docs/adr/ADR-023](docs/adr/ADR-023-acp-lanes-packet-trusted-verdict-from-telemetry.md).
 
 **Why not Claude Desktop's `ccd_session_mgmt` messaging here** (asked and settled

@@ -76,10 +76,11 @@ ENV (--acp lanes)
   FLEETFLOW_ACP_AGENT_JS           path to claude-code-acp's dist/index.js
                                    (default: resolved via `npm root -g`)
   FLEETFLOW_PERMISSION_MODE        session mode sent via session/set_mode
-                                   (default: dontAsk - gated by the allowlist,
-                                   per the loop-engineering rule; set
-                                   bypassPermissions to opt up to the claude -p
-                                   lanes' posture)
+                                   (default: acceptEdits - file-edit tools
+                                   auto-allowed, Bash gated by the allowlist;
+                                   set bypassPermissions to opt up to the
+                                   claude -p lanes' posture, dontAsk to lock
+                                   edits down too)
 
 ENV (codex model)
   FLEETFLOW_CODEX_MODEL            model passed to `codex exec -m`
@@ -627,8 +628,11 @@ else
         # var is the only per-lane model channel.
         # --mode: the harness refuses session/request_permission, so the lane
         # must sit in a non-prompting permission mode or it cannot use tools.
-        # Default dontAsk (loop-engineering rule: gated by the allowlist, not
-        # bypassed); FLEETFLOW_PERMISSION_MODE is the explicit opt-up.
+        # Default acceptEdits: the adapter auto-allows file-edit tools; Bash
+        # stays gated by the user's allowlist (dontAsk denied Write outright -
+        # e2e finding: interactive allowlists never contain Write/Edit rules,
+        # so a dontAsk lane cannot build anything). FLEETFLOW_PERMISSION_MODE
+        # opts up (bypassPermissions) or down (dontAsk).
         # The packet goes in VERBATIM as --initial-prompt-file (trusted
         # boundary 0); bus messages stay data-framed (raven ADR-003).
         ( cd "$WORKDIR" && \
@@ -638,7 +642,7 @@ else
             raven acp --as "$ID@$RUN" \
               --channel "run/$RUN/lane/$ID" --channel "run/$RUN/control" \
               --reply-to "run/$RUN/telemetry" \
-              --mode "${FLEETFLOW_PERMISSION_MODE:-dontAsk}" \
+              --mode "${FLEETFLOW_PERMISSION_MODE:-acceptEdits}" \
               --initial-prompt-file "$SENT" --cwd "$WORKDIR" \
               -- node "$ACP_AGENT_JS" \
         ) > "$RUNDIR/$ID.acp.log" 2> "$ERRF" || true

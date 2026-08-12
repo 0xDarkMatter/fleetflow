@@ -17,8 +17,9 @@ packet is delivered **verbatim as the harness's trusted boundary-0
 prompt** (never as a bus message), the lane's **verdict is distilled
 from bus telemetry** (last `acp-reply` ending `end_turn` = success)
 because the process only ever ends by being reaped, and the session's
-permission mode defaults to **`dontAsk`** via `session/set_mode`
-(`FLEETFLOW_PERMISSION_MODE` opts up).
+permission mode defaults to **`acceptEdits`** via `session/set_mode`
+(`FLEETFLOW_PERMISSION_MODE` opts up to `bypassPermissions` or down to
+`dontAsk`).
 
 ## Context
 
@@ -51,12 +52,19 @@ its whole design:
    no capabilities and answers `session/request_permission` "method
    not found", so a lane left in the adapter's default prompting mode
    cannot use tools. `ff-spawn` selects a non-prompting mode via
-   `raven acp --mode`. The default is `dontAsk` — gated by the user's
-   allowlist, per the loop-engineering rule ("least authority; reserve
-   bypassPermissions for containers") — even though the one-shot
-   `claude -p` lanes historically default to `bypassPermissions`.
-   `FLEETFLOW_PERMISSION_MODE=bypassPermissions` is the explicit
-   opt-up when a run needs the old posture.
+   `raven acp --mode`. The default is `acceptEdits`: the adapter
+   auto-allows file-edit tools; everything else stays gated by the
+   user's allowlist. `dontAsk` was tried first (loop-engineering rule:
+   least authority) and failed in the live e2e — interactive
+   allowlists accumulate *Bash command patterns*, never `Write`/`Edit`
+   *tool* rules (nothing prompts for them interactively), so a
+   `dontAsk` lane cannot create a single file and every build packet
+   dead-ends at "status: blocked". `acceptEdits` is the least
+   authority that lets a build lane build: writes are confined by the
+   worktree cage, commands still by the allowlist.
+   `FLEETFLOW_PERMISSION_MODE=bypassPermissions` opts up to the
+   one-shot `claude -p` lanes' historical posture; `=dontAsk` locks
+   edits down again for read-only/judge packets.
 
 Mechanics that follow from the platform: the adapter is invoked as
 `node <dist/index.js>` (the npm `.cmd` shim is not exec-able by the
@@ -78,6 +86,10 @@ ignored flag would also poison the cache key with a lie).
 - **`bypassPermissions` default** (parity with `claude -p` lanes) —
   contradicts the loop-engineering default-deny rule; kept available
   as the env opt-up rather than the default. Rejected as default.
+- **`dontAsk` default** — the rule-purist choice, and the first one
+  shipped; reverted same day on live e2e evidence (a lane that cannot
+  write files cannot do fleet work; see Context §3). Kept as the env
+  opt-down.
 - **A second lane-state reader on the bus** — ff-status/dashboard
   keep reading files/transcripts only (ADR-022's standing deferral);
   the distilled envelope is how ACP lanes stay inside that single
