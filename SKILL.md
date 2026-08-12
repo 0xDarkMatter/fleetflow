@@ -167,11 +167,12 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    `.fleetflow/<run>/` after landing.
 
 **A manually spawned chip is a lane too — open it before you click it.**
-A `spawn_task` chip does *not* get its own worktree: per
-[claude-code#64605](https://github.com/anthropics/claude-code/issues/64605) it
-starts in the **primary checkout on whatever branch is out**, so it dirties the
-tree `--check-main-clean` watches and collides with any sibling chip on the same
-index. Route around it:
+A chip can now start in its own fresh worktree (the click-time option that fixed
+[claude-code#64605](https://github.com/anthropics/claude-code/issues/64605)), so
+it need not dirty the primary checkout any more. But an isolated chip is still
+*invisible*: its tree is `.claude/worktrees/<slug>`, which fleetflow deliberately
+never manages, so the work stays outside status, cost roll-ups, teardown and the
+sweep. Give it a fleetflow lane instead:
 
 ```bash
 bash scripts/ff-chip.sh open --run <run> --id <id> --task "<the brief>"   # prints the seed prompt
@@ -182,7 +183,10 @@ bash scripts/ff-chip.sh close --run <run> --id <id> --note "<one line>"
 `open` builds the lane (worktree + branch + guard preamble), journals `started`,
 and seeds `.ff-heartbeat` so the lane reads *running* rather than instantly
 stalled; `close` records the **measured** outcome (commits, dirty, HEAD), never
-a self-report. Between the two, the chip is a normal lane on every surface — and
+a self-report. **Start the chip with its cwd set to that lane and without the
+fresh-worktree option** — the lane already is the isolation, and because
+`ff-status` resolves a transcript by encoding the session's cwd, a
+double-isolated chip goes dark on the dashboard even though its work is fine. Between the two, the chip is a normal lane on every surface — and
 because `ff-status`'s live introspection keys on the worktree path rather than
 the model, it gets tokens, tools and stall detection for free. `chip` is not
 spawnable (fleetflow cannot click a chip), so `ff-run resume` reports chip

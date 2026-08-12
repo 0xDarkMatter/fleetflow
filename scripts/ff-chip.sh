@@ -239,6 +239,14 @@ EOF
   # relative-paths-only rule governs what the worker WRITES, and the chip has to
   # be told where to stand before it can obey it. Everything after the cd is
   # relative, as the guard requires.
+  #
+  # The cwd check is not ceremony. ff-status resolves a lane's transcript by
+  # encoding the SESSION's cwd, so a chip started in its own fresh worktree
+  # (the chip UI offers that at click time) writes its transcript - and the
+  # ./.ff-heartbeat the guard asks for - somewhere fleetflow does not look. The
+  # lane then goes dark and eventually reads stalled while the chip works fine.
+  # This repo cannot enforce a click, so the best it can do is make the chip
+  # notice and say so. See ADR-021.
   cat <<EOF
 You are lane \`$ID\` of fleetflow run \`$RUN\`.
 
@@ -250,6 +258,13 @@ That is a git worktree on branch \`fleetflow/$RUN/$ID\`. Do NOT work in the
 repository root, do not switch branches, and do not touch any path outside this
 worktree - sibling lanes and the orchestrator are using them concurrently.
 You may commit in this lane; that is how your work is landed.
+
+This lane was created FOR you, so you did not need to be started in a fresh
+worktree of your own. If you were - i.e. your session began somewhere under
+\`.claude/worktrees/\` rather than in the lane above - then say so in your first
+message and in your FINAL REPLY. Your work is still fine, but the orchestrator's
+live view of this lane will be blank and it will eventually look stalled, so it
+needs to know to read your reply instead of the dashboard.
 
 $(cat "$SENT")
 

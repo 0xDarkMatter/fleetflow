@@ -53,11 +53,15 @@ operational playbook — read it first; this file only carries repo mechanics.
   re-verifying the streaming envelope against `ff-collect`'s gate; grok
   WORKTREE lanes are stall-covered by the `.ff-heartbeat` file instead.
   See [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
-- **A `spawn_task` chip has NO worktree — it runs in the primary checkout on
-  the current branch** ([claude-code#64605](https://github.com/anthropics/claude-code/issues/64605)),
-  so an un-adopted chip dirties the tree `ff-collect --check-main-clean` watches
-  and collides with sibling chips on one index. Always `ff-chip open` before
-  clicking. Two things in `ff-chip` look like litter and are not: the
+- **Never double-isolate a chip.** The chip UI can start a session in its own
+  fresh worktree (fixed since [claude-code#64605](https://github.com/anthropics/claude-code/issues/64605),
+  which used to force the primary checkout). When `ff-chip open` has already made
+  the lane, take the plain option with `cwd` set to that lane: `ff-status`
+  resolves a lane's transcript by encoding the **session's cwd**, so a chip in
+  `.claude/worktrees/<slug>` writes its transcript and `.ff-heartbeat` where
+  fleetflow never looks — the lane goes dark and reads stalled while the chip
+  works normally. The seed prompt asks the chip to report a cwd mismatch;
+  that detects it, nothing prevents it. Two things in `ff-chip` look like litter and are not: the
   `.ff-heartbeat` seed (without it a fresh lane reads `stalled` on the first
   poll — no transcript means `last_activity_s` falls back to a garbage epoch),
   and the `started`-without-`result` asymmetry (that is what makes the lane read
