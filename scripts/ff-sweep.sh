@@ -253,13 +253,18 @@ size_fingerprint() {
 dir_bytes() {
   local rundir="$1" resolved key fp bytes
   resolved="$(cd "$rundir" 2>/dev/null && pwd -P)" || resolved="$rundir"
+  # Canonical key form: the HOST-NATIVE absolute path, forward slashes,
+  # lowercased ("x:/caches/temp/.../.fleetflow/run"). Two traps make this
+  # explicit conversion load-bearing (both bit the sweepfast gate 2026-08-14):
+  # (1) Git Bash pwd -P returns the POSIX form (/tmp/...), which is NOT the
+  # form roots/aggregate paths use - cygpath -m converts deliberately;
+  # (2) an MSYS-linked jq.exe path-converts --arg values that look like paths,
+  # rewriting the key to real filesystem case - so which jq is on PATH would
+  # silently change the key (sibling of the CRLF landmine). The env pins
+  # below disable that; the conversion happens HERE, on purpose, or not at all.
+  command -v cygpath >/dev/null 2>&1 && resolved="$(cygpath -m "$resolved" 2>/dev/null || printf '%s' "$resolved")"
   key="${resolved//\\//}"; key="${key,,}"
   fp="$(size_fingerprint "$rundir")"
-  # MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL: an MSYS-linked jq.exe path-converts
-  # any --arg value that LOOKS like a path, rewriting the lowercased key back to
-  # real filesystem case - so the cache key silently depends on which jq is on
-  # PATH (bit the sweepfast gate 2026-08-14; sibling of the CRLF landmine).
-  # Both vars so Git-for-Windows and MSYS2 builds are covered; no-ops elsewhere.
   bytes="$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
     jq -er --arg k "$key" --argjson fp "$fp" --arg by "$SIZE_BY" '
     .[$k] | select(.fp == $fp and .by == $by and (.bytes | type) == "number"
