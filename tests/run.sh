@@ -656,6 +656,14 @@ grep -q 'function worktreeLine' "$DASH" \
   && grep -q '"reclaimed"' "$DASH" && grep -q 'worktree_state' "$DASH" \
   && ok "dashboard: lane card distinguishes reclaimed from never-had-a-worktree" \
   || bad "dashboard: worktree tri-state collapsed back to two"
+# ff-status can only count commits while the worktree directory exists, so on a
+# reclaimed or never-had-one lane `commits:0` means UNMEASURED. The chip must be
+# gated on that, not rendered unconditionally - an ungated chip tells the majority
+# of a healthy fleet's lanes that they produced nothing.
+grep -q 'const measuredCommits' "$DASH" \
+  && grep -q 'measuredCommits(l) ? chip("git"' "$DASH" \
+  && ok "dashboard: commits chip gated on a real measurement" \
+  || bad "dashboard: commits chip asserts 0 where nothing was measured"
 grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
   && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
   || bad "dashboard: no build marker"

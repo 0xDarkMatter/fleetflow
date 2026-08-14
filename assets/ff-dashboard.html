@@ -830,7 +830,7 @@ const POLL_MS = 3000;
    That is genuinely hard to diagnose by eye and cost a long back-and-forth, so
    the build is on screen: if this string is not what you expect, you are looking
    at a stale tab and a reload is the whole fix. Bump it when you ship. */
-const PAGE_BUILD = "2026-08-05 · auth-refresh";
+const PAGE_BUILD = "2026-08-14 · honest-commits";
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 const fmt = s => s == null ? "—"
@@ -2419,6 +2419,23 @@ function worktreeLine(l) {
     ${ico("git")}no worktree lane</div>`;
 }
 
+/* `commits` is 0 unless ff-status could actually count it, and it can only count
+   while the lane's worktree directory still exists (ff-status.sh: the git log runs
+   inside `if [ -d wt-$id ]`, and 0 is the initialiser). So for BOTH other states
+   the zero means "never measured", not "measured none":
+
+     reclaimed  the directory is gone - the count went with it.
+     none       no worktree: the lane committed into the shared checkout, where
+                its commits are indistinguishable from its siblings'. ff-status
+                does not even try.
+
+   Rendering `0 commits` there asserts a measurement that was never taken, and on
+   this fleet that is the majority of lanes - it reads as "this lane produced
+   nothing" for runs that were landed successfully. Same defect the worktree row
+   had; same remedy - draw nothing rather than a number we do not have.
+   (`last_commit` below has always behaved this way, being empty-string-gated.) */
+const measuredCommits = l => (l.worktree_state || (l.branch ? "present" : "none")) === "present";
+
 function laneCard(l, age) {
   const [, col] = modelOf(l.model);
   const live = inflight(l.state) ? age : 0;
@@ -2454,7 +2471,7 @@ function laneCard(l, age) {
         ? chip("clock", fmt(l.last_activity_s + live), "silent", "warn")
         : chip("clock", fmt(l.elapsed_s + live))}
       ${chip("tool", nf(l.tools), "tools")}
-      ${chip("git", nf(l.commits), "commits")}
+      ${measuredCommits(l) ? chip("git", nf(l.commits), "commits") : ""}
       <span class="chip" title="${tok(l.tokens_in)} fresh input · ${tok(l.tokens_cached)} cache reads · ${tok(l.tokens_out)} output">
         ${ico("activity")}${tok(l.tokens_total)}<span style="color:var(--text-muted)">tok</span></span>
       <span class="chip" title="${esc(lcTitle)}">${ico("coin")}${costFmt(lc)}</span>
