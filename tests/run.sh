@@ -1352,23 +1352,47 @@ bash "$S/ff-sweep.sh" --repo "$SWL" --include-untracked --json 2>/dev/null \
   || bad "ff-sweep: --include-untracked had no effect"
 
 # --- ff-sweep SWEEP-PERF P1-P4 contract (plan SWEEPFAST-2026-08 §1) -------------
-# Written against the §1 surface contract, not against this lane's copy of
-# scripts/ff-sweep.sh: the build lane lands the script separately, sight-unseen
-# of these assertions. Until the integrated tree exists the new-flag assertions
-# below FAIL HERE BY DESIGN (the shipped script exits 2 on unknown flags); every
-# safety assertion must hold on both the shipped and the built script.
+# Written against the §1 surface contract. The theme is ADR-020 / ADR-024 /
+# report §7: a cache may hold PATHS and BYTES, never VERDICTS. Each fixture
+# poisons a cache exactly the way a lazy implementation would trust it, then
+# asserts the verdict still comes from live git. Every cache assertion below is
+# TWO-SIDED: it first proves the poisoned/fresh entry is actually read (a real
+# cache hit), so "the cache cannot flip a verdict" is never asserted against a
+# cache the implementation merely ignores.
 #
-# The theme is ADR-020 / report §7: a cache may hold PATHS and BYTES, never
-# VERDICTS. Each fixture poisons a cache exactly the way a lazy implementation
-# would trust it, then asserts the verdict still comes from live git.
+# Hermeticity: walk-mode invocations below resolve roots by precedence
+# (--root > $FLEETFLOW_ROOTS > $FF_HOME/roots.txt). An inherited
+# FLEETFLOW_ROOTS would outrank the temp roots.txt fixture and point discovery
+# at REAL repositories, so it is unset for the whole section; the snapshot
+# guard at the end of the section backstops the real caches themselves.
+unset FLEETFLOW_ROOTS
+real_sweep_state_snap() { # checksum the real store/roots/caches this section must not touch
+  local f out=""
+  for f in "${HOME:-}/.fleetflow/history.jsonl" \
+           "${HOME:-}/.fleetflow/roots.txt" \
+           "${HOME:-}/.fleetflow/cache/sweep-sizes.json" \
+           "${HOME:-}/.fleetflow/cache/aggregate-cache.json"; do
+    if [ -f "$f" ]; then out="${out}$(cksum "$f" 2>/dev/null | awk '{print $2":"$1}')"$'\n'
+    else out="${out}none:$f"$'\n'; fi
+  done
+  printf '%s' "$out"
+}
+SWEEP_HERM_BEFORE="$(real_sweep_state_snap)"
 bash "$S/ff-sweep.sh" --help 2>/dev/null | grep -q -- '--no-size' \
   && ok "ff-sweep: --help documents --no-size" || bad "ff-sweep: --help lacks --no-size"
 bash "$S/ff-sweep.sh" --help 2>/dev/null | grep -q -- '--rediscover' \
   && ok "ff-sweep: --help documents --rediscover" || bad "ff-sweep: --help lacks --rediscover"
 bash "$S/ff-sweep.sh" --help 2>/dev/null | grep -q -- '--discover-ttl' \
   && ok "ff-sweep: --help documents --discover-ttl" || bad "ff-sweep: --help lacks --discover-ttl"
+bash "$S/ff-sweep.sh" --help 2>/dev/null | grep -q '900' \
+  && ok "ff-sweep: --help documents the 900s discovery-TTL default" \
+  || bad "ff-sweep: --help hides the discovery-TTL default"
 check "ff-sweep: --discover-ttl parses" 0 \
   bash "$S/ff-sweep.sh" --repo "$SWL" --discover-ttl 60 --json
+check "ff-sweep: FF_SWEEP_DISCOVER_TTL parses" 0 \
+  env FF_SWEEP_DISCOVER_TTL=60 bash "$S/ff-sweep.sh" --repo "$SWL" --json
+check "ff-sweep: --discover-ttl rejects garbage" 2 \
+  bash "$S/ff-sweep.sh" --repo "$SWL" --discover-ttl soon --json
 
 # porcelain-v2 predicate (P3) - the one change that can silently break the
 # safety rule. In `status --porcelain=v2 --branch` output: `#` header lines are
@@ -1392,10 +1416,28 @@ mkrunlanded() { mkrun "$1" "$2" && git -C "$1" merge -q --no-ff -m "land $2" "fl
 mkrunlanded "$SWP" vclean
 mkrunlanded "$SWP" vmix
 echo EDIT >> "$SWP/.fleetflow/vmix/wt-a/a.txt"       # ONE tracked modification
-echo stray > "$SWP/.fleetflow/vmix/stray.md"         # ONE untracked file
+echo stray > "$SWP/.fleetflow/vmix/wt-a/stray.md"    # ONE untracked file, INSIDE the
+                                                     # lane (at the run root the lane's
+                                                     # porcelain never sees it, and the
+                                                     # mixed-state fixture stops testing
+                                                     # tracked-vs-untracked precedence)
 mkrunlanded "$SWP" vuntr
 echo litter > "$SWP/.fleetflow/vuntr/wt-a/notes.md"  # untracked ONLY
 mkrun "$SWP" vpunm                                   # committed, deliberately unmerged
+# `2 ` records: a landed lane holding a STAGED RENAME. Rename detection makes
+# porcelain-v2 emit `2 R. ...`; a parser matching only `1 ` lines would call
+# this lane landed-and-clean -> reclaimable -> eligible. It must be holds-work.
+mkrunlanded "$SWP" vren
+git -C "$SWP/.fleetflow/vren/wt-a" mv a.txt b.txt    # staged rename -> `2 R.` record
+# `u ` records: a landed lane holding UNMERGED index stages, hand-seeded via
+# update-index --index-info (deterministic - no merge machinery needed). A
+# parser matching only `1 `/`2 ` would call this lane reclaimable too.
+mkrunlanded "$SWP" vuconf
+UC_A="$(git -C "$SWP/.fleetflow/vuconf/wt-a" rev-parse HEAD:a.txt)"
+UC_B="$(printf 'conflicting' | git -C "$SWP" hash-object -w --stdin)"
+printf '100644 %s 1\tc.txt\n100644 %s 2\tc.txt\n100644 %s 3\tc.txt\n' \
+  "$UC_A" "$UC_B" "$UC_A" \
+  | git -C "$SWP/.fleetflow/vuconf/wt-a" update-index --index-info
 # unborn HEAD: a `git init` with no commit prints `# branch.oid (initial)`
 VOD="$SWP/.fleetflow/vorphan"; mkdir -p "$VOD/wt-a"
 jq -nc '{run:"vorphan",base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$VOD/manifest.json"
@@ -1406,8 +1448,8 @@ SWPJ="$(bash "$S/ff-sweep.sh" --repo "$SWP" --json 2>/dev/null)"
 printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vclean")|.verdict=="reclaimable"' >/dev/null \
   && ok "ff-sweep: clean landed lane stays landed (v2 # headers never counted as changes)" \
   || bad "ff-sweep: clean lane misread as holding work (headers counted as changes?)"
-printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vmix")|.verdict=="holds-work" and .holding==1 and .eligible==false' >/dev/null \
-  && ok "ff-sweep: 1 tracked mod + 1 untracked = exactly one holding lane, never eligible" \
+printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vmix")|.verdict=="holds-work" and .holding==1 and .eligible==false and (.detail|test("a:modified"))' >/dev/null \
+  && ok "ff-sweep: 1 tracked mod + 1 untracked = one holding lane (tracked wins), never eligible" \
   || bad "ff-sweep: tracked+untracked lane miscounted"
 printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vuntr")|.verdict=="landed-untracked"' >/dev/null \
   && ok "ff-sweep: ? lines stay untracked (never counted as tracked changes)" \
@@ -1417,27 +1459,49 @@ printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vorphan")|.verdict=="holds-work" 
   || bad "ff-sweep: unborn-HEAD lane not kept"
 printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vpunm")|.verdict=="holds-work" and .eligible==false' >/dev/null \
   && ok "ff-sweep: unmerged-commit lane kept" || bad "ff-sweep: unmerged lane not kept"
+printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vren")|.verdict=="holds-work" and .holding==1 and .eligible==false' >/dev/null \
+  && ok "ff-sweep: 2 (rename) records count as tracked - staged rename holds the lane" \
+  || bad "ff-sweep: staged rename misread (2 records not counted as changes)"
+printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vuconf")|.verdict=="holds-work" and .holding==1 and .eligible==false' >/dev/null \
+  && ok "ff-sweep: u (unmerged) records count as tracked - conflicted lane held" \
+  || bad "ff-sweep: unmerged index misread (u records not counted)"
 
 # P2 age semantics: the default age is shallow and LABELLED approximate
 # (`age_s_approx`); `--older-than` alone gates eligibility on the exact
 # recursive walk. vclean gets every file aged 5d; vpunm gets ONLY its top-level
 # files aged, so its lane-nested files stay fresh - a shallow gating walk would
-# call it old, the exact one must not.
-printf '%s' "$SWPJ" | jq -e '.[0]|has("age_s_approx")' >/dev/null \
-  && ok "ff-sweep: default JSON emits age_s_approx (shallow age labelled, not exact)" \
+# call it old, the exact one must not. vorphan is aged 5d AND holds work: an
+# --older-than implementation that "filters" by silently dropping every
+# holds-work run would also pass the vpunm assertion, so the old holds-work
+# run must still be listed.
+printf '%s' "$SWPJ" | jq -e '.[0]|has("age_s_approx") and (has("age_s")|not)' >/dev/null \
+  && ok "ff-sweep: default rows carry age_s_approx and never exact age_s" \
   || bad "ff-sweep: default age field not marked approximate"
 SWEEP_NOW="$(date +%s)"
 if touch -d "@$SWEEP_NOW" "$TMP/.touchprobe" 2>/dev/null; then
   find "$SWP/.fleetflow/vclean" -type f -exec touch -d "@$((SWEEP_NOW-432000))" {} +
   find "$SWP/.fleetflow/vpunm" -maxdepth 1 -type f -exec touch -d "@$((SWEEP_NOW-432000))" {} +
+  find "$SWP/.fleetflow/vorphan" -type f -exec touch -d "@$((SWEEP_NOW-432000))" {} +
   SWAG="$(bash "$S/ff-sweep.sh" --repo "$SWP" --older-than 1 --json 2>/dev/null)"
+  printf '%s' "$SWAG" | jq -e '.[0]|has("age_s") and (has("age_s_approx")|not)' >/dev/null \
+    && ok "ff-sweep: --older-than rows carry exact age_s and no approx key" \
+    || bad "ff-sweep: --older-than age key shape wrong"
   printf '%s' "$SWAG" | jq -e '.[]|select(.run=="vclean")' >/dev/null \
     && ok "ff-sweep: --older-than still sees a fully-aged run (filter works)" \
     || bad "ff-sweep: --older-than dropped a genuinely old run"
+  printf '%s' "$SWAG" | jq -e '.[]|select(.run=="vorphan")|.verdict=="holds-work" and .eligible==false' >/dev/null \
+    && ok "ff-sweep: --older-than keeps an OLD holds-work run (age filter, not verdict filter)" \
+    || bad "ff-sweep: --older-than dropped a holds-work run as its filter"
   printf '%s' "$SWAG" | jq -e '.[]|select(.run=="vpunm")' >/dev/null \
     && bad "ff-sweep: --older-than judged a lane-fresh run old (gating walk approximated)" \
     || ok "ff-sweep: --older-than uses the exact recursive walk (lane-nested fresh file wins)"
-  printf '%s' "$SWPJ" | jq -e '.[]|select(.run=="vpunm")' >/dev/null \
+  # the DEFAULT traversal stays shallow: vpunm's top level is aged 5d while its
+  # lane files are fresh - a default recursive walk would report ~0.
+  SWAGDEF="$(bash "$S/ff-sweep.sh" --repo "$SWP" --json 2>/dev/null)"
+  printf '%s' "$SWAGDEF" | jq -e '.[]|select(.run=="vpunm")|.age_s_approx>400000' >/dev/null \
+    && ok "ff-sweep: default age walk is shallow (top-level mtime, lanes not walked)" \
+    || bad "ff-sweep: default age walk is not shallow"
+  printf '%s' "$SWAGDEF" | jq -e '.[]|select(.run=="vpunm")' >/dev/null \
     && ok "ff-sweep: unfiltered default still lists the lane-fresh run" \
     || bad "ff-sweep: default listing lost a run"
 else
@@ -1445,38 +1509,97 @@ else
 fi
 
 # P4 --no-size: du is skipped, the bytes column prints `-`, the "on disk"
-# roll-up is omitted - and none of that may touch a verdict.
+# roll-up is omitted - and none of that may touch a verdict. Every output
+# assertion captures the exit code FIRST: without that, an early crash whose
+# stderr happens to omit "on disk" satisfies the negative assertions.
 sweepverdicts() { jq -r '.[]|[.run,.verdict,(.eligible|tostring)]|@tsv' | tr -d '\r' | sort; }
 SVSIZED="$(bash "$S/ff-sweep.sh" --repo "$SWP" --json 2>/dev/null | sweepverdicts)"
 SVNOSZ="$(bash "$S/ff-sweep.sh" --repo "$SWP" --no-size --json 2>/dev/null | sweepverdicts)"
 [ -n "$SVSIZED" ] && [ "$SVSIZED" = "$SVNOSZ" ] \
   && ok "ff-sweep: --no-size changes no verdicts (bytes are display-only)" \
   || bad "ff-sweep: --no-size changed verdicts"
-bash "$S/ff-sweep.sh" --repo "$SWP" --no-size 2>/dev/null | tr -d '\r' \
-  | awk -F'\t' '$1=="vmix" && $6=="-"{f=1} END{exit !f}' \
+bash "$S/ff-sweep.sh" --repo "$SWP" --no-size >"$TMP/nosz.tsv" 2>"$TMP/nosz.err"; NOSZRC=$?
+[ "$NOSZRC" = "0" ] && ok "ff-sweep: --no-size TSV run exits 0" \
+  || bad "ff-sweep: --no-size TSV rc=$NOSZRC"
+tr -d '\r' < "$TMP/nosz.tsv" | awk -F'\t' '$1=="vmix" && $6=="-"{f=1} END{exit !f}' \
   && ok "ff-sweep: --no-size prints - in the bytes column" \
   || bad "ff-sweep: --no-size bytes column is not '-'"
-bash "$S/ff-sweep.sh" --repo "$SWP" --no-size 2>&1 >/dev/null | tr -d '\r' | grep -q 'on disk' \
-  && bad "ff-sweep: --no-size still prints the on-disk roll-up" \
-  || ok "ff-sweep: --no-size omits the on-disk roll-up"
+{ [ "$NOSZRC" = "0" ] && ! grep -q 'on disk' "$TMP/nosz.err"; } \
+  && ok "ff-sweep: --no-size omits the on-disk roll-up" \
+  || bad "ff-sweep: --no-size crashed or still prints the on-disk roll-up"
+bash "$S/ff-sweep.sh" --repo "$SWP" --json >/dev/null 2>"$TMP/sz.err"
+grep -q 'on disk' "$TMP/sz.err" \
+  && ok "ff-sweep: sized run still prints the on-disk roll-up" \
+  || bad "ff-sweep: sized run lost the on-disk roll-up (omission assert went vacuous)"
+# du is REALLY skipped: a du shim first on PATH records every call. The sized
+# positive control proves the shim is the du ff-sweep actually resolves -
+# without it a PATH-healed resolution would make the skip assertion vacuous.
+DUBIN="$TMP/du-bin"; mkdir -p "$DUBIN"
+cat > "$DUBIN/du" <<'EOS'
+#!/bin/sh
+printf 'du\n' >> "$DUMARKER"
+exit 0
+EOS
+chmod +x "$DUBIN/du"
+rm -f "$FLEETFLOW_HOME/cache/sweep-sizes.json" "$TMP/du-marker"
+DUMARKER="$TMP/du-marker" PATH="$DUBIN:$PATH" \
+  bash "$S/ff-sweep.sh" --repo "$SWP" --json >/dev/null 2>&1
+[ -s "$TMP/du-marker" ] \
+  && ok "ff-sweep: du shim is the resolved du (sized sweep calls it)" \
+  || bad "ff-sweep: du shim never called - control broken, skip assert is vacuous"
+rm -f "$TMP/du-marker" "$FLEETFLOW_HOME/cache/sweep-sizes.json"
+DUMARKER="$TMP/du-marker" PATH="$DUBIN:$PATH" \
+  bash "$S/ff-sweep.sh" --repo "$SWP" --no-size --json >/dev/null 2>&1
+[ ! -e "$TMP/du-marker" ] \
+  && ok "ff-sweep: --no-size never invokes du" \
+  || bad "ff-sweep: --no-size still ran du"
 
 # P4 size cache: $FLEETFLOW_HOME/cache/sweep-sizes.json, keyed on the resolved
-# lowercased run-dir path, holding only {fp, by, bytes, at}. Poisoned for the
-# unmerged run: hit or miss, the verdict must still come from live git.
+# lowercased run-dir path, value {fp, by, bytes, at} (§1). A poison fixture
+# that guesses fp/by never HITS the cache - and a cache the reader ignores
+# trivially cannot flip a verdict. So: let the sweep write the cache itself,
+# verify the written shape, then poison ONLY the bytes of a real entry. The
+# poisoned bytes being SERVED proves the hit; the verdict staying put proves
+# bytes never feed classification.
 mkdir -p "$FLEETFLOW_HOME/cache"
-RD="$(cd "$SWP/.fleetflow/vpunm" && pwd)"
-RDKEY="$(printf '%s' "$RD" | tr 'A-Z' 'a-z')"
-if command -v realpath >/dev/null 2>&1; then
-  RDR="$(realpath "$RD" 2>/dev/null | tr 'A-Z' 'a-z')"; [ -n "$RDR" ] || RDR="$RDKEY"
-else RDR="$RDKEY"; fi
-jq -nc --arg k1 "$RDKEY" --arg k2 "$RDR" --argjson at "$SWEEP_NOW" '
-  {($k1):{fp:[3,9999999999],by:"poison",bytes:999999999,at:$at},
-   ($k2):{fp:[3,9999999999],by:"poison",bytes:999999999,at:$at}}' \
-  > "$FLEETFLOW_HOME/cache/sweep-sizes.json"
+bash "$S/ff-sweep.sh" --repo "$SWP" --json >/dev/null 2>&1
+SCF="$FLEETFLOW_HOME/cache/sweep-sizes.json"
+[ -s "$SCF" ] \
+  && ok "ff-sweep: sized sweep writes \$FLEETFLOW_HOME/cache/sweep-sizes.json" \
+  || bad "ff-sweep: size cache not written"
+jq -e 'type=="object" and (to_entries|length>0) and all(to_entries[];
+         (.key|type)=="string"
+         and ((.key | sub("^[A-Za-z]:"; "") | ascii_downcase) == (.key | sub("^[A-Za-z]:"; "")))
+         and (.value.fp|type=="array") and (.value.fp|length)==2
+         and (.value.fp[0]|type)=="number" and (.value.fp[1]|type)=="string"
+         and (.value.by|type)=="string" and (.value.by|startswith("1.2.0:"))
+         and (.value.bytes|type)=="number" and (.value.bytes>=0)
+         and (.value.at|type)=="number")' "$SCF" >/dev/null \
+  && ok "ff-sweep: size cache value shape is §1 (fp=[n,mtime-string], by=producer stamp)" \
+  || bad "ff-sweep: size cache value shape wrong"
+# Key = resolved lowercased run-dir path. NB the drive-letter quirk: bash
+# lowercases the whole path, but handing it to native jq.exe as --arg runs it
+# through MSYS argv conversion, which rewrites /c/... to C:/... and
+# re-capitalises the drive. Compare case-insensitively for path identity; the
+# shape check above (everything but the drive prefix already lowercase) is
+# what actually pins the lowercasing.
+VPKEY="$(jq -r 'to_entries[]|select(.key|endswith("/.fleetflow/vpunm"))|.key' "$SCF" | head -1 | tr -d '\r')"
+VPRES="$( (cd "$SWP/.fleetflow/vpunm" && pwd -P) )"
+command -v cygpath >/dev/null 2>&1 && VPRES="$(cygpath -m "$VPRES" 2>/dev/null || printf '%s' "$VPRES")"
+VPKEY_LC="$(printf '%s' "$VPKEY" | tr 'A-Z' 'a-z' | sed 's#\\#/#g')"
+VPRES_LC="$(printf '%s' "$VPRES" | tr 'A-Z' 'a-z' | sed 's#\\#/#g')"
+[ -n "$VPKEY_LC" ] && [ "$VPKEY_LC" = "$VPRES_LC" ] \
+  && ok "ff-sweep: size cache key is the resolved run-dir path (lowercased)" \
+  || bad "ff-sweep: size cache key wrong ('$VPKEY_LC' vs '$VPRES_LC')"
+SCPOIS="$TMP/sweep-sizes-poison.json"
+jq --arg k "$VPKEY" '.[$k].bytes = 999999999' "$SCF" > "$SCPOIS" && mv "$SCPOIS" "$SCF"
 SWPO="$(bash "$S/ff-sweep.sh" --repo "$SWP" --json 2>/dev/null)"
+printf '%s' "$SWPO" | jq -e '.[]|select(.run=="vpunm")|.bytes==999999999' >/dev/null \
+  && ok "ff-sweep: valid size-cache entry HITS (poisoned bytes served from cache)" \
+  || bad "ff-sweep: size cache never hit (entry with the live fp/by ignored)"
 printf '%s' "$SWPO" | jq -e '.[]|select(.run=="vpunm")|.verdict=="holds-work" and .eligible==false' >/dev/null \
-  && ok "ff-sweep: poisoned size cache cannot flip a verdict (bytes cached, verdicts never)" \
-  || bad "ff-sweep: size-cache poison changed a verdict (SAFETY)"
+  && ok "ff-sweep: a size-cache HIT cannot flip a verdict (bytes cached, verdicts never)" \
+  || bad "ff-sweep: size-cache hit changed a verdict (SAFETY)"
 printf 'not json{at all' > "$FLEETFLOW_HOME/cache/sweep-sizes.json"
 check "ff-sweep: malformed size cache does not crash the sweep" 0 \
   bash "$S/ff-sweep.sh" --repo "$SWP" --json
@@ -1485,17 +1608,68 @@ bash "$S/ff-sweep.sh" --repo "$SWP" --json 2>/dev/null \
   && ok "ff-sweep: malformed size cache falls back (verdict still computed)" \
   || bad "ff-sweep: malformed size cache broke classification"
 
+# The classification is NEVER cached (§1 / ADR-024): change a lane's state
+# BETWEEN invocations with every cache warm from the pass above. A stale
+# verdict cache - exactly the shortcut the poison fixtures imitate - would
+# keep answering `reclaimable` for the now-dirty lane.
+SWLV="$TMP/swlive"; mkdir -p "$SWLV" && git -C "$SWLV" init -q -b main
+git -C "$SWLV" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+mkrunlanded "$SWLV" live                              # landed + clean -> reclaimable
+SWL1="$(bash "$S/ff-sweep.sh" --repo "$SWLV" --json 2>/dev/null)"   # warms the caches
+printf '%s' "$SWL1" | jq -e '.[]|select(.run=="live")|.verdict=="reclaimable" and .eligible==true' >/dev/null \
+  && ok "ff-sweep: landed-clean run reads reclaimable (pre-state-change)" \
+  || bad "ff-sweep: pre-change verdict wrong"
+echo "UNLANDED EDIT" >> "$SWLV/.fleetflow/live/wt-a/a.txt"           # tracked mod
+SWL2="$(bash "$S/ff-sweep.sh" --repo "$SWLV" --json 2>/dev/null)"
+printf '%s' "$SWL2" | jq -e '.[]|select(.run=="live")|.verdict=="holds-work" and .holding==1 and .eligible==false' >/dev/null \
+  && ok "ff-sweep: verdict recomputed live after lane state changed (no cached verdict)" \
+  || bad "ff-sweep: verdict stale after a state change (classification cached? SAFETY)"
+git -C "$SWLV/.fleetflow/live/wt-a" checkout -- a.txt                # revert the edit
+SWL3="$(bash "$S/ff-sweep.sh" --repo "$SWLV" --json 2>/dev/null)"
+printf '%s' "$SWL3" | jq -e '.[]|select(.run=="live")|.verdict=="reclaimable" and .eligible==true' >/dev/null \
+  && ok "ff-sweep: verdict reverts when the worktree does (both directions live)" \
+  || bad "ff-sweep: revert not reflected (verdict stuck)"
+
 # P1 discovery reuse: the dashboard's `_discovery` entry is read only when
 # source and TTL line up; ANY parse failure falls through to the find walk;
 # --rediscover bypasses even a well-formed cache; and the cache holds PATHS
 # ONLY - a cached entry for a run that holds work must never yield an eligible
-# row. Roots come from $FLEETFLOW_HOME/roots.txt (no --repo/--root), which is
-# the only mode the cache applies to.
+# row. Roots come from $FLEETFLOW_HOME/roots.txt (no --repo/--root and
+# FLEETFLOW_ROOTS unset at the top of this section - the env var outranks
+# roots.txt and would redirect discovery at real repositories), which is the
+# only mode the cache applies to.
+#
+# Proving REUSE needs a run the find walk can never see: `phantom`'s
+# .fleetflow sits 8 levels below the discovery root, one level past the walk's
+# -maxdepth 7. phantom in the output == the cache was read; phantom absent ==
+# the walk ran. Every miss probe therefore also asserts the walkable fixture
+# run is still found, so "cache ignored" can never masquerade as "cache hit".
 DROOT="$TMP/swdisc"; DREPO="$DROOT/drepo"
 mkdir -p "$DREPO" && git -C "$DREPO" init -q -b main
 git -C "$DREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 mkrun "$DREPO" disc                                  # committed, unmerged -> holds work
+PHANTOM="$DROOT/l1/l2/l3/l4/l5/l6/l7/l8/.fleetflow/phantom"
+mkdir -p "$PHANTOM"
+jq -nc '{run:"phantom",base:"main",created_by:"fixture",phases:["build"],packets:[]}' \
+  > "$PHANTOM/manifest.json"
+: > "$PHANTOM/journal.jsonl"
 printf '%s\n' "$DROOT" > "$FLEETFLOW_HOME/roots.txt"
+DISC_NOW="$(date +%s)"
+if command -v cygpath >/dev/null 2>&1; then
+  DISC_RD="$(cygpath -w "$DREPO/.fleetflow/disc")"; DISC_ROOT="$(cygpath -w "$DROOT")"
+else DISC_RD="$DREPO/.fleetflow/disc"; DISC_ROOT="$DROOT"; fi
+DISC_SRC="$FLEETFLOW_HOME/roots.txt"
+disco_write() { # age-offset-seconds, source, include-phantom (0|1)
+  jq -nc --argjson at "$((DISC_NOW - $1))" --arg src "$2" \
+    --arg rd "$DISC_RD" --arg rt "$DISC_ROOT" --arg ph "$PHANTOM" --argjson phx "$3" '
+    [ {rundir:$rd, run:"disc", repo:"drepo", repo_label:"drepo", root:$rt} ]
+    + (if $phx == 1
+       then [{rundir:$ph, run:"phantom", repo:"l8", repo_label:"l8", root:$rt}]
+       else [] end)
+    | {_discovery:{at:$at, source:$src, errors:[], entries:.}}' \
+    > "$FLEETFLOW_HOME/cache/aggregate-cache.json"
+}
+# malformed cache -> the find walk must still find the fixture run
 printf '{"_discovery": this is not json' > "$FLEETFLOW_HOME/cache/aggregate-cache.json"
 DMAL_RC=0; DMAL="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)" || DMAL_RC=$?
 [ "$DMAL_RC" = 0 ] \
@@ -1504,34 +1678,150 @@ DMAL_RC=0; DMAL="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)" || DMAL_RC=$?
 printf '%s' "$DMAL" | jq -e '.[]|select(.run=="disc")|.verdict=="holds-work" and .eligible==false' >/dev/null \
   && ok "ff-sweep: malformed discovery cache falls through to the find walk" \
   || bad "ff-sweep: malformed discovery cache lost the fixture run"
-# well-formed cache whose only entry names the work-holding run (the poison
-# shape: a sweep that cached verdicts would serve `reclaimable` for it). The
-# entry's rundir is Windows-separated, as ff-aggregate.py writes it - the sweep
-# must normalise.
-if command -v cygpath >/dev/null 2>&1; then
-  DISC_RD="$(cygpath -w "$DREPO/.fleetflow/disc")"; DISC_ROOT="$(cygpath -w "$DROOT")"
-else DISC_RD="$DREPO/.fleetflow/disc"; DISC_ROOT="$DROOT"; fi
-jq -nc --arg rd "$DISC_RD" --arg rt "$DISC_ROOT" --arg src "$FLEETFLOW_HOME/roots.txt" \
-  --argjson at "$SWEEP_NOW" \
-  '{_discovery:{at:$at,source:$src,errors:[],
-    entries:[{rundir:$rd,run:"disc",repo:"drepo",repo_label:"drepo",root:$rt}]}}' \
-  > "$FLEETFLOW_HOME/cache/aggregate-cache.json"
-DWCL="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)"
-printf '%s' "$DWCL" | jq -e '.[]|select(.run=="disc")|.verdict=="holds-work" and .eligible==false' >/dev/null \
+# HIT: fresh, source-matching cache. disc's rundir is Windows-separated, as
+# ff-aggregate.py writes it - the sweep must normalise. phantom proves the
+# entries were actually served; disc's verdict proves cached PATHS still get
+# live classification (the poison shape: a sweep caching verdicts would serve
+# `reclaimable` for a work-holding run).
+disco_write 0 "$DISC_SRC" 1
+DHIT="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)"
+printf '%s' "$DHIT" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && ok "ff-sweep: fresh matching discovery cache IS reused (phantom run served)" \
+  || bad "ff-sweep: discovery cache never hit (sweep always walks)"
+printf '%s' "$DHIT" | jq -e '.[]|select(.run=="phantom")|.verdict=="reclaimable"' >/dev/null \
+  && ok "ff-sweep: cache-sourced run still classified live from its path" \
+  || bad "ff-sweep: cache-sourced row not classified"
+printf '%s' "$DHIT" | jq -e '.[]|select(.run=="disc")|.verdict=="holds-work" and .eligible==false' >/dev/null \
   && ok "ff-sweep: cached discovery path still classified live (no eligible row for work)" \
   || bad "ff-sweep: discovery cache leaked into the verdict (SAFETY)"
-# same well-formed shape but with EMPTY entries and a fresh `at`: --rediscover
-# must ignore it and run the walk anyway
-jq -nc --arg src "$FLEETFLOW_HOME/roots.txt" --argjson at "$SWEEP_NOW" \
-  '{_discovery:{at:$at,source:$src,errors:[],entries:[]}}' \
-  > "$FLEETFLOW_HOME/cache/aggregate-cache.json"
+# source mismatch -> miss -> walk
+disco_write 0 "some-other-source" 1
+DSRC="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)"
+printf '%s' "$DSRC" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && bad "ff-sweep: discovery cache used despite a source mismatch" \
+  || ok "ff-sweep: source mismatch falls back to the find walk"
+printf '%s' "$DSRC" | jq -e 'any(.[]; .run=="disc")' >/dev/null \
+  && ok "ff-sweep: source-miss walk still finds the fixture run" \
+  || bad "ff-sweep: source-miss walk lost the fixture run"
+# TTL expiry (default 900s; cache 1h stale) -> miss -> walk
+disco_write 3600 "$DISC_SRC" 1
+DTTL="$(bash "$S/ff-sweep.sh" --json 2>/dev/null)"
+printf '%s' "$DTTL" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && bad "ff-sweep: stale discovery cache used past the default TTL" \
+  || ok "ff-sweep: expired discovery cache falls back to the walk (default TTL < 1h)"
+printf '%s' "$DTTL" | jq -e 'any(.[]; .run=="disc")' >/dev/null \
+  && ok "ff-sweep: expired-cache walk still finds the fixture run" \
+  || bad "ff-sweep: expired-cache walk lost the fixture run"
+# env TTL override: the same 1h-stale entry is fresh under FF_SWEEP_DISCOVER_TTL
+disco_write 3600 "$DISC_SRC" 1
+DENV="$(FF_SWEEP_DISCOVER_TTL=7200 bash "$S/ff-sweep.sh" --json 2>/dev/null)"
+printf '%s' "$DENV" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && ok "ff-sweep: FF_SWEEP_DISCOVER_TTL extends reuse (env TTL honoured)" \
+  || bad "ff-sweep: FF_SWEEP_DISCOVER_TTL ignored"
+# CLI TTL override: --discover-ttl 7200 does the same
+disco_write 3600 "$DISC_SRC" 1
+DCLI="$(bash "$S/ff-sweep.sh" --discover-ttl 7200 --json 2>/dev/null)"
+printf '%s' "$DCLI" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && ok "ff-sweep: --discover-ttl extends reuse (CLI TTL affects behaviour)" \
+  || bad "ff-sweep: --discover-ttl has no behavioural effect"
+# --rediscover bypasses even a fresh, matching cache
+disco_write 0 "$DISC_SRC" 1
 DRDY="$(bash "$S/ff-sweep.sh" --rediscover --json 2>/dev/null)"
-printf '%s' "$DRDY" | jq -e '.[]|select(.run=="disc")' >/dev/null \
-  && ok "ff-sweep: --rediscover bypasses the discovery cache (find walk runs)" \
-  || bad "ff-sweep: --rediscover did not bypass the cache"
-# hermeticity: every cache and roots fixture above lives under the temp
-# FLEETFLOW_HOME exported at the top of this file; the real-store guard at the
-# end of the suite is the backstop.
+printf '%s' "$DRDY" | jq -e 'any(.[]; .run=="phantom")' >/dev/null \
+  && bad "ff-sweep: --rediscover used the discovery cache" \
+  || ok "ff-sweep: --rediscover bypasses the discovery cache (find walk runs)"
+printf '%s' "$DRDY" | jq -e 'any(.[]; .run=="disc")' >/dev/null \
+  && ok "ff-sweep: --rediscover walk still finds the fixture run" \
+  || bad "ff-sweep: --rediscover walk lost the fixture run"
+
+# §1: the find walk prunes BELOW .fleetflow - a run a worker nested inside its
+# own lane worktree (a repo cloned mid-run) is not fleetflow litter to reap.
+# The fixture lives under the discovery root and the probe runs in WALK mode
+# (--rediscover, roots.txt) - `--repo` mode never calls find_run_dirs, so a
+# --repo probe could not see the prune at all.
+NWR="$DROOT/nrepo"; mkdir -p "$NWR" && git -C "$NWR" init -q -b main
+git -C "$NWR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+mkrunlanded "$NWR" outer
+NEST="$NWR/.fleetflow/outer/wt-a/nested/.fleetflow/inner"
+mkdir -p "$NEST"
+jq -nc '{run:"inner",base:"main",created_by:"fixture",phases:["build"],packets:[]}' \
+  > "$NEST/manifest.json"
+: > "$NEST/journal.jsonl"
+NWJ="$(bash "$S/ff-sweep.sh" --rediscover --json 2>/dev/null)"
+printf '%s' "$NWJ" | jq -e 'any(.[]; .run=="inner")' >/dev/null \
+  && bad "ff-sweep: walk descended below .fleetflow (nested run discovered)" \
+  || ok "ff-sweep: find prunes below .fleetflow (lane-nested runs undiscovered)"
+printf '%s' "$NWJ" | jq -e 'any(.[]; .run=="outer")' >/dev/null \
+  && ok "ff-sweep: the hosting run itself is still discovered (walk mode)" \
+  || bad "ff-sweep: hosting run lost"
+NWRJ="$(bash "$S/ff-sweep.sh" --repo "$NWR" --json 2>/dev/null)"
+printf '%s' "$NWRJ" | jq -e 'any(.[]; .run=="inner")' >/dev/null \
+  && bad "ff-sweep: --repo mode listed a nested run" \
+  || ok "ff-sweep: --repo mode stays at the top level of .fleetflow"
+
+# ADR-020 deletion safety: --reclaim must remove EXACTLY the eligible rows.
+# Everything above only READ `.eligible`; an implementation that reported it
+# correctly but ignored it during deletion passed vacuously. keepme holds an
+# unmerged commit (must survive); goner/dryone are landed and clean (must go).
+# ADR-011 is asserted too: the removed run must be in the history store first.
+RCL="$TMP/swrecl"; mkdir -p "$RCL" && git -C "$RCL" init -q -b main
+git -C "$RCL" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+mkrun "$RCL" keepme                                  # committed, UNMERGED - must survive
+mkrunlanded "$RCL" goner                             # landed + clean - must go
+mkrunlanded "$RCL" dryone                            # landed + clean - dry run must keep
+mkrunlanded "$RCL" dirty                             # landed, then ONE tracked edit - must survive
+echo EDIT >> "$RCL/.fleetflow/dirty/wt-a/a.txt"
+mkrunlanded "$RCL" litter                            # landed + untracked only - no opt-in, must survive
+echo note > "$RCL/.fleetflow/litter/wt-a/note.md"
+# `active` verdict on a lane that is landed AND clean: the journal says a second
+# lane started but never returned, so classify() must say active/ineligible even
+# though ff-clean alone would happily remove the clean worktree. This is the row
+# that proves --reclaim re-checks eligibility rather than delegating safety to
+# ff-clean's (weaker) dirty/committed lane defenses.
+mkrunlanded "$RCL" zomb                              # landed + clean, one lane never returned
+printf '{"type":"started","id":"b","at":1}\n' >> "$RCL/.fleetflow/zomb/journal.jsonl"
+bash "$S/ff-sweep.sh" --repo "$RCL" --reclaim --dry-run >"$TMP/recl-dry.out" 2>"$TMP/recl-dry.err"; RDRY=$?
+{ [ "$RDRY" = "0" ] && [ -d "$RCL/.fleetflow/dryone" ] && grep -q 'would remove' "$TMP/recl-dry.err"; } \
+  && ok "ff-sweep --reclaim --dry-run: says what it would remove, removes nothing" \
+  || bad "ff-sweep --reclaim --dry-run removed something (rc=$RDRY)"
+ZOMBV="$(awk -F'\t' '$1=="zomb" {print $3}' "$TMP/recl-dry.out" | tr -d '\r')"
+[ "$ZOMBV" = "active" ] \
+  && ok "ff-sweep: never-returned lane reads active (not reclaimable)" \
+  || bad "ff-sweep: active run misread as '$ZOMBV'"
+FLEETFLOW_CACHE_ROOT="$TMP/swrecl-cache" \
+  bash "$S/ff-sweep.sh" --repo "$RCL" --reclaim >/dev/null 2>"$TMP/recl.err"; RRC=$?
+[ "$RRC" = "0" ] && ok "ff-sweep --reclaim exits 0" || bad "ff-sweep --reclaim rc=$RRC"
+[ ! -d "$RCL/.fleetflow/goner" ] && [ ! -d "$RCL/.fleetflow/dryone" ] \
+  && ok "ff-sweep --reclaim: eligible run dirs removed" \
+  || bad "ff-sweep --reclaim left an eligible run dir behind"
+[ -d "$RCL/.fleetflow/keepme" ] && [ -f "$RCL/.fleetflow/keepme/wt-a/a.txt" ] \
+  && ok "ff-sweep --reclaim: holds-work run dir and its worktree survive (ADR-020)" \
+  || bad "ff-sweep --reclaim DESTROYED AN INELIGIBLE RUN (SAFETY)"
+grep -q keepme "$RCL/.fleetflow/keepme/wt-a/a.txt" \
+  && ok "ff-sweep --reclaim: unmerged lane's file content intact" \
+  || bad "ff-sweep --reclaim: surviving lane's work corrupted"
+[ -d "$RCL/.fleetflow/dirty" ] && grep -q EDIT "$RCL/.fleetflow/dirty/wt-a/a.txt" \
+  && ok "ff-sweep --reclaim: tracked-modified run survives (no --force without opt-in)" \
+  || bad "ff-sweep --reclaim DESTROYED A TRACKED-MODIFIED RUN (SAFETY)"
+[ -d "$RCL/.fleetflow/litter" ] && [ -f "$RCL/.fleetflow/litter/wt-a/note.md" ] \
+  && ok "ff-sweep --reclaim: landed-untracked run survives without --include-untracked" \
+  || bad "ff-sweep --reclaim removed an untracked-opt-out run (SAFETY)"
+[ -d "$RCL/.fleetflow/zomb" ] && [ -f "$RCL/.fleetflow/zomb/wt-a/a.txt" ] \
+  && ok "ff-sweep --reclaim: active (never-returned) run survives though its lane is clean" \
+  || bad "ff-sweep --reclaim DESTROYED AN ACTIVE RUN (SAFETY)"
+jq -e 'select(.run=="goner")' "$FLEETFLOW_HOME/history.jsonl" >/dev/null 2>&1 \
+  && ok "ff-sweep --reclaim: archived the run before removing it (ADR-011)" \
+  || bad "ff-sweep --reclaim removed a run with no history record"
+
+# hermeticity backstop: FLEETFLOW_HOME redirected every cache written above,
+# and the unset FLEETFLOW_ROOTS at the top of the section kept discovery off
+# real repositories. The end-of-suite guard covers the real history store by
+# byte count only - this one checksums the roots and caches a sweep would
+# touch, so a redirect regression fails HERE, named.
+SWEEP_HERM_AFTER="$(real_sweep_state_snap)"
+[ "$SWEEP_HERM_BEFORE" = "$SWEEP_HERM_AFTER" ] \
+  && ok "sweep section left the real store, roots and caches untouched" \
+  || bad "sweep section touched real machine state"
 
 # --- ff-chip: manually spawned chips as first-class lanes -----------------------
 bash -n "$S/ff-chip.sh" 2>/dev/null && ok "syntax ff-chip.sh" || bad "syntax ff-chip.sh"
