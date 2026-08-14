@@ -1,7 +1,7 @@
 # Worker Contracts — per-model launch, gate, and auth
 
 > Verified against installed binaries 2026-07-05: `codex-cli 0.125.0`,
-> Claude Code v2.1.x, fleet-worker (GLM-5.2 via z.ai). Re-verify flag maps on
+> Claude Code v2.1.x, fleet-worker (GLM-5.3 via z.ai). Re-verify flag maps on
 > major version bumps (`ff-doctor --offline` checks the load-bearing ones).
 
 ## 1. GLM workers (via fleet-worker)
@@ -19,9 +19,20 @@ fleetflow does not duplicate it. Load-bearing facts:
 - **Gate**: `is_error` in the result JSON is the real success signal
   (`subtype` lies); `fleet-collect.sh` implements it and `ff-collect` defers
   to the same check.
-- Models: `FLEET_WORKER_MODEL` (default GLM-5.2), `FLEET_WORKER_SMALL_MODEL`
-  (GLM-4.5-Air). The isolated config starts with **no skills** — provision any
-  the packet needs into `<config>/skills/` or the lane's `.claude/skills/`.
+- Models: `FLEET_WORKER_MODEL` (default GLM-5.3, since 2026-08-14),
+  `FLEET_WORKER_SMALL_MODEL` (GLM-4.5-Air). The isolated config starts with
+  **no skills** — provision any the packet needs into `<config>/skills/` or
+  the lane's `.claude/skills/`.
+- **GLM-5.3 reasoning levels** (verified live 2026-08-14): the endpoint takes
+  `reasoning_effort: low|high|max` (default `max`; z.ai recommends `max` for
+  coding), and **thinking can no longer be disabled** — a request with
+  `thinking.type: "disabled"` FAILS on 5.3. Through the CLI path the lever is
+  the same as ever: `FLEET_WORKER_EFFORT` seeds `effortLevel` into the
+  isolated config (fleet-worker default `high`), and `ff-spawn --effort`
+  rides the same setting; all three levels verified end-to-end through
+  `claude -p` → z.ai with no migration breakage (the CLI never sends
+  thinking-disabled). NB Claude's effort scale includes `medium`, which 5.3
+  does not — the endpoint maps it; `low|high|max` are the exact-match values.
 
 ## 2. Codex workers (`codex exec`)
 

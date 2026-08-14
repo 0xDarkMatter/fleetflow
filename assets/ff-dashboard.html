@@ -1023,6 +1023,10 @@ const PRICING = {
     opus:   { in: 5,    cached: 0.50,  out: 25,   provider: "Anthropic" },
     sonnet: { in: 3,    cached: 0.30,  out: 15,   provider: "Anthropic" },
     haiku:  { in: 1,    cached: 0.10,  out: 5,    provider: "Anthropic" },
+    /* glm default is GLM-5.3 since 2026-08-14; z.ai's API rate table did not
+       yet list 5.3 that day, so the alias carries the GLM-5.2-verified rates
+       until published 5.3 rates exist - an estimate, and the cost machinery
+       already marks estimates with the honesty tilde. */
     glm:    { in: 1.40, cached: 0.26,  out: 4.40, provider: "z.ai" },
     codex:  { in: 1.75, cached: 0.175, out: 14,   provider: "OpenAI" },
     grok:   { in: 2.00, cached: 0.50,  out: 6.00, provider: "xAI" },
