@@ -1,6 +1,6 @@
 # Run plan: `sweepfast` — implement SWEEP-PERF P1–P4
 
-**Status:** active (2026-08-14) · The measurements and phase designs live in
+**Status:** landed (2026-08-14) · The measurements and phase designs live in
 [docs/reports/SWEEP-PERF-2026-08.md](../reports/SWEEP-PERF-2026-08.md) §5; the
 safety rule lives in [ADR-020](../adr/ADR-020-sweep-reclaims-only-archived-and-landed.md);
 the cache-bytes-never-verdicts decision lands as ADR-024 (docs lane). Cite,
