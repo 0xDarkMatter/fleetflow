@@ -73,8 +73,11 @@ VERDICTS
   landed-untracked  every lane landed, but untracked leftovers exist. KEPT
                     unless --include-untracked. The paths are always listed.
   holds-work        a lane has TRACKED modifications or unmerged commits - KEPT
-  not-archived      no history record yet (--reclaim archives it first) - KEPT
   active            a lane never returned a result - KEPT
+
+  A landed run with no history record still reads `reclaimable` (with
+  archived:false in --json); --reclaim archives it FIRST, then removes -
+  ADR-011 ordering. There is no separate not-archived verdict.
 
   Only `reclaimable` is ever removed by default. A run with tracked
   modifications or unmerged commits is never deleted under any flag.
