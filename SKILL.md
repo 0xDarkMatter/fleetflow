@@ -12,7 +12,7 @@ metadata:
 
 # fleetflow
 
-> Facts verified as of 2026-07 (Claude Code Workflow tool, codex-cli 0.144, fleet-worker GLM-5.2/z.ai).
+> Facts verified as of 2026-08-14 (Claude Code Workflow tool, codex-cli 0.144, fleet-worker GLM-5.3/z.ai).
 
 ## On invocation — open the dashboard
 
@@ -67,7 +67,7 @@ workers**, where each worker gets its own env block — and therefore its own mo
 
 | Worker model | Process | Harness |
 |---|---|---|
-| **GLM-5.2 / GLM-4.5-Air** | `claude -p` → z.ai endpoint | Claude Code tools, cheap model (via `fleet-worker`) |
+| **GLM-5.3 / GLM-4.5-Air** | `claude -p` → z.ai endpoint | Claude Code tools, cheap model (via `fleet-worker`) |
 | **Codex** (GPT-class) | `codex exec` | OpenAI's own agent harness — a genuinely different toolchain *and* model |
 | **Grok** (xAI grok-4.5) | `grok -p` | xAI's own agentic CLI — a different provider, model, *and* toolchain (like Codex); `GROK_DEPLOYMENT_KEY` auth |
 | **Pi** (wildcard: gemini/deepseek/zai/groq/…) | `pi -p` | earendil-works Pi — one harness fronting 15+ providers; `FLEETFLOW_PI_PROVIDER`/`_MODEL` pick the model, provider API-key env auth ([contract §4](references/worker-contracts.md)) |
@@ -102,8 +102,8 @@ with the Codex/Grok columns and the orchestrator rule:
 
 | Work class | Model | Why |
 |---|---|---|
-| **mechanical** (batch edits, verifier clones, backfills) | GLM-5.2, Haiku | proven cheap; gate catches misses |
-| **scout** (survey, inventory, locate) | Sonnet, GLM-5.2 | breadth over depth |
+| **mechanical** (batch edits, verifier clones, backfills) | GLM-5.3, Haiku | proven cheap; gate catches misses |
+| **scout** (survey, inventory, locate) | Sonnet, GLM-5.3 | breadth over depth |
 | **build** (scoped features, refactors) | Sonnet, Codex, Grok | Codex/Grok = independent harnesses; good second implementations for judge panels |
 | **verify / judge** | Opus + one cross-provider dissenter (Codex, Grok, GLM, or Pi) | *never under-power a judge*; diversity beats redundancy |
 | **wildcard / third-opinion** (a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=gemini\|deepseek\|…`) | one integration, 15+ providers; no sandbox and no turn cap — worktree + stall detector are the bounds |
@@ -676,7 +676,7 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   — tabbing through the run list was impossible because focus died within three
   seconds. When it does paint, scroll and focus are restored.
 - **Per-lane telemetry the single-run view never had:** `density` (20 buckets) +
-  `density_basis`, `model` (the resolved id, e.g. `GLM-5.2`, not the `glm` alias),
+  `density_basis`, `model` (the resolved id, e.g. `GLM-5.3`, not the `glm` alias),
   `worktree` / `branch`. **`density_basis` is load-bearing:** it is `"time"` for
   claude-family lanes, whose transcripts carry per-record ISO timestamps, and
   `"sequence"` for codex, whose `--json` stream carries **none** — those buckets
@@ -753,7 +753,7 @@ summary never scrolls out of view.
 **Naming (renamed from `brain`, 2026-08-05):** the spawnable alias is the
 **model** (`--model glm|codex|grok|pi|sonnet|opus|haiku|fable`; wire fields
 `model` in journal/manifest/status lanes, `models` in roll-ups and archives)
-and the exact resolved id is **`model_id`** (e.g. `GLM-5.2`). In a legacy
+and the exact resolved id is **`model_id`** (e.g. `GLM-5.3`). In a legacy
 record `brain` must win the alias fallback (`.brain // .model` on journals,
 `.model // .brain` on manifests/archives); `--brain` survives as a deprecated
 flag alias, and tests pin both directions. See
