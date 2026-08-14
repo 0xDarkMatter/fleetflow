@@ -1421,6 +1421,13 @@ echo stray > "$SWP/.fleetflow/vmix/wt-a/stray.md"    # ONE untracked file, INSID
                                                      # porcelain never sees it, and the
                                                      # mixed-state fixture stops testing
                                                      # tracked-vs-untracked precedence)
+# Fixture-validity assert (re-verify round 2): prove the mix is REAL - the lane's
+# own porcelain must show BOTH a tracked record and a `? ` untracked record, or
+# the precedence assertion below is satisfiable by the tracked edit alone.
+VMIXP="$(git -C "$SWP/.fleetflow/vmix/wt-a" status --porcelain=v2 2>/dev/null)"
+printf '%s\n' "$VMIXP" | grep -q '^1 ' && printf '%s\n' "$VMIXP" | grep -q '^? ' \
+  && ok "sweep: vmix fixture genuinely mixed (tracked + untracked both observed)" \
+  || bad "sweep: vmix fixture is not mixed - precedence assertion is vacuous"
 mkrunlanded "$SWP" vuntr
 echo litter > "$SWP/.fleetflow/vuntr/wt-a/notes.md"  # untracked ONLY
 mkrun "$SWP" vpunm                                   # committed, deliberately unmerged
