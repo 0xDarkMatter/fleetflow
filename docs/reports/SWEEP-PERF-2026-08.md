@@ -1,6 +1,6 @@
 # `ff-sweep --list` is slow because it walks every worktree twice — measurement and proposal
 
-**Status:** proposal (2026-08-12) · measured on this machine, lane
+**Status:** implemented (run sweepfast, 2026-08-14) — decision record: ADR-024 · measured on this machine, lane
 `fleetflow/sweepperf/perf`. Nothing here is landed; `scripts/ff-sweep.sh` is
 unchanged. Every number below was taken, not estimated; where a figure is a
 projection it says so.
