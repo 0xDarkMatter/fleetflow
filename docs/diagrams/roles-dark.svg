@@ -1,0 +1,102 @@
+<svg viewBox="0 0 960 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-roles-dark-title ff-roles-dark-desc" font-family="ui-sans-serif,'Segoe UI',Helvetica,Arial,sans-serif">
+<title id="ff-roles-dark-title">fleetflow agent roles by work class</title>
+<desc id="ff-roles-dark-desc">Work flows from a frontier orchestrator that plans and judges, to builder lanes on capable mid-tier models, to a cross-provider verify tier whose verdicts return to the orchestrator, with cheap mechanical and scout lanes underneath and a wildcard Pi lane for a third opinion from any provider.</desc>
+<defs>
+<marker id="fr-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#9aa0ae"/></marker>
+<marker id="fr-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#17181c"/>
+
+<!-- tier zones (painted first) -->
+<rect x="240" y="48" width="480" height="112" rx="8" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<rect x="260" y="52" width="180" height="12" rx="2" fill="#17181c"/>
+<text x="350" y="61" fill="rgba(245,245,245,0.45)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.14em">ORCHESTRATE · FRONTIER MODELS</text>
+
+<rect x="48" y="208" width="560" height="112" rx="8" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<rect x="68" y="212" width="160" height="12" rx="2" fill="#17181c"/>
+<text x="148" y="221" fill="rgba(245,245,245,0.45)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.14em">BUILD · INDEPENDENT LANES</text>
+
+<rect x="48" y="368" width="560" height="112" rx="8" fill="rgba(235,108,54,0.10)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8" stroke-dasharray="4,4"/>
+<rect x="68" y="372" width="200" height="12" rx="2" fill="#17181c"/>
+<text x="168" y="381" fill="rgba(235,108,54,0.70)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.14em">VERIFY · CROSS-PROVIDER DISSENT</text>
+
+<!-- arrows (before boxes) -->
+<!-- orchestrator -> build tier (packets), straight vertical -->
+<line x1="440" y1="160" x2="440" y2="208" stroke="#9aa0ae" stroke-width="1.2" marker-end="url(#fr-arrow)"/>
+<!-- build -> verify, straight vertical -->
+<line x1="328" y1="320" x2="328" y2="368" stroke="#9aa0ae" stroke-width="1.2" marker-end="url(#fr-arrow)"/>
+<!-- verify verdicts -> back to orchestrator (accent, up the free right corridor) -->
+<path d="M608,408 H640 Q648,408 648,400 V120 Q648,112 656,112 H680" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#fr-arrow-accent)"/>
+<!-- mechanical tier supports verify fixtures (dashed, straight vertical) -->
+<line x1="328" y1="528" x2="328" y2="480" stroke="rgba(245,245,245,0.45)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#fr-arrow)"/>
+<!-- pi wildcard joins verify (dashed, straight horizontal) -->
+<line x1="712" y1="432" x2="616" y2="432" stroke="rgba(245,245,245,0.45)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#fr-arrow)"/>
+
+<!-- arrow labels -->
+<rect x="452" y="172" width="96" height="12" rx="2" fill="#17181c"/>
+<text x="500" y="181" fill="#8a93a6" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.06em">TASK PACKETS</text>
+<rect x="340" y="332" width="104" height="12" rx="2" fill="#17181c"/>
+<text x="392" y="341" fill="#8a93a6" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.06em">DIFFS + REPLIES</text>
+<rect x="660" y="244" width="68" height="12" rx="2" fill="#17181c"/>
+<text x="694" y="253" fill="#eb6c36" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.06em">VERDICTS</text>
+
+<!-- orchestrator node (focal) -->
+<rect x="280" y="80" width="400" height="64" rx="6" fill="#17181c"/>
+<rect x="280" y="80" width="400" height="64" rx="6" fill="rgba(235,108,54,0.14)" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="480" y="108" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Orchestrator · Claude Fable / GPT-5.6 Sol</text>
+<text x="480" y="126" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">architecture · packet authoring · land decisions</text>
+
+<!-- build tier nodes -->
+<rect x="80" y="240" width="160" height="64" rx="6" fill="#17181c"/>
+<rect x="80" y="240" width="160" height="64" rx="6" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="160" y="266" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Sonnet</text>
+<text x="160" y="284" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">scoped features</text>
+
+<rect x="256" y="240" width="160" height="64" rx="6" fill="#17181c"/>
+<rect x="256" y="240" width="160" height="64" rx="6" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="336" y="266" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Codex</text>
+<text x="336" y="284" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">2nd implementation</text>
+
+<rect x="432" y="240" width="160" height="64" rx="6" fill="#17181c"/>
+<rect x="432" y="240" width="160" height="64" rx="6" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="512" y="266" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Grok</text>
+<text x="512" y="284" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">3rd toolchain</text>
+
+<!-- verify tier nodes -->
+<rect x="80" y="400" width="160" height="64" rx="6" fill="#17181c"/>
+<rect x="80" y="400" width="160" height="64" rx="6" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="160" y="426" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Opus judge</text>
+<text x="160" y="444" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">never under-powered</text>
+
+<rect x="256" y="400" width="256" height="64" rx="6" fill="#17181c"/>
+<rect x="256" y="400" width="256" height="64" rx="6" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="384" y="426" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Refuters · a different provider</text>
+<text x="384" y="444" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">prompted to attack, majority kills</text>
+
+<!-- mechanical tier (store-style, wide) -->
+<rect x="48" y="528" width="560" height="64" rx="6" fill="#17181c"/>
+<rect x="48" y="528" width="560" height="64" rx="6" fill="rgba(245,245,245,0.06)" stroke="#9aa0ae" stroke-width="1"/>
+<text x="328" y="554" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Mechanical + scout · GLM-5.3 / Haiku</text>
+<text x="328" y="572" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">batch edits · verifier clones · surveys · the cheap majority of tokens</text>
+
+<!-- pi wildcard (optional/dashed) -->
+<rect x="712" y="392" width="200" height="80" rx="6" fill="#17181c"/>
+<rect x="712" y="392" width="200" height="80" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="812" y="420" fill="#e8e8ea" font-size="12" font-weight="600" text-anchor="middle">Pi · wildcard</text>
+<text x="812" y="438" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">gemini · deepseek · groq…</text>
+<text x="812" y="454" fill="#9aa0ae" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">third opinion on demand</text>
+
+<!-- legend -->
+<line x1="32" y1="600" x2="928" y2="600" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="32" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="104" y="608" width="12" height="8" fill="rgba(235,108,54,0.14)" stroke="#eb6c36" stroke-width="1"/>
+<text x="124" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">frontier · judgment</text>
+<rect x="272" y="608" width="12" height="8" fill="#232529" stroke="#e8e8ea" stroke-width="1"/>
+<text x="292" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">worker lane</text>
+<rect x="404" y="608" width="12" height="8" fill="rgba(245,245,245,0.06)" stroke="#9aa0ae" stroke-width="1"/>
+<text x="424" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">cheap capacity</text>
+<line x1="548" y1="612" x2="576" y2="612" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="584" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">verdicts</text>
+<line x1="672" y1="612" x2="700" y2="612" stroke="rgba(245,245,245,0.45)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="708" y="616" fill="#9aa0ae" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">optional · support</text>
+</svg>

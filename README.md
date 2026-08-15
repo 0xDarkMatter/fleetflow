@@ -82,6 +82,49 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -T
 ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
 ```
 
+## Supported models and harnesses
+
+Every row is a spawnable `--model` alias. The dashboard's Fleet view carries
+this same matrix (hand-maintained, changed in the same commit as any contract
+change) plus live capacity probes; per-model launch, gate, and auth contracts
+live in [references/worker-contracts.md](references/worker-contracts.md).
+
+| Alias | Models | Harness | Live stream / stall coverage | Self-commit | Typical role |
+|---|---|---|---|---|---|
+| `glm` | GLM-5.3 (default) · GLM-4.5-Air (small) | `claude -p` → z.ai endpoint, isolated config dir | session transcript | yes | mechanical, scout: proven cheap |
+| `codex` | GPT-5.6 family | `codex exec`, OpenAI's own agent harness, OS sandbox | `--json` event stream | no (orchestrator commits) | build, cross-provider dissent |
+| `grok` | grok-4.5 | `grok -p`, xAI's own agentic CLI | none (buffered to exit); heartbeat file covers stalls | yes | build, cross-provider dissent |
+| `pi` | wildcard: gemini, deepseek, groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | third opinion no fixed model covers |
+| `sonnet` / `haiku` | Claude Sonnet / Haiku | `claude -p`, host auth | session transcript | yes | build, scout / mechanical |
+| `opus` / `fable` | Claude Opus / Fable | `claude -p`, host auth | session transcript | yes | verify, judge / orchestrator |
+| `chip` | whatever the chip session runs | a human-clicked Claude Code session, adopted via `ff-chip` | transcript + heartbeat | yes | manual work as a first-class lane |
+
+Two execution modes for claude-family lanes: the default one-shot `claude -p`,
+or `--acp` under the [raven](https://github.com/0xDarkMatter/raven) harness
+for lanes that need mid-run steering and graceful wind-down (ADR-023).
+Concurrency guidance, sandbox rules, and per-model gotchas (Codex lanes
+cannot self-commit; Grok has no live stream by design) are in
+[SKILL.md](SKILL.md).
+
+How the roles compose in a typical run:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/roles-dark.svg">
+  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; Sonnet, Codex, and Grok build independently; an Opus judge and cross-provider refuters verify; GLM and Haiku carry the mechanical majority; Pi supplies a wildcard third opinion" src="docs/diagrams/roles-light.svg">
+</picture>
+
+### A word on Pi
+
+[Pi](https://github.com/earendil-works/pi) deserves a specific mention: it is
+an excellent, deliberately minimalist coding agent - one small harness
+fronting 15+ providers (Gemini, DeepSeek, Groq, and more) behind a single
+CLI. That minimalism is exactly what makes it a good fleet citizen: no
+sandbox of its own, no turn cap, just a clean event stream and provider
+selection by env var, with fleetflow's worktree cage and stall detector
+supplying the bounds. Inside fleetflow it is the wildcard seat: when a run
+wants a third opinion from a provider none of the fixed models cover, `pi` is
+one `--model` flag away.
+
 ## How it works
 
 One orchestrator, many processes. Your interactive session plans file-disjoint
