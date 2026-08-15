@@ -24,6 +24,46 @@ its first row. This repo is simultaneously a Claude Code **skill** (mount it
 at `~/.claude/skills/fleetflow`) and the home of a **machine-wide dashboard**
 that watches every run, live and archived, across every repo on the box.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-run-dark.png">
+  <img alt="fleetflow dashboard, run detail: cross-provider lanes with per-lane tokens, states, and honest cost estimates" src="docs/screenshots/dashboard-fleet-light.png">
+</picture>
+
+## How it works
+
+One orchestrator, many processes. Your interactive session plans file-disjoint
+task packets and keeps the judgment; the scripts own the deterministic
+mechanics. Every worker is an OS process in its own git worktree with its own
+environment — which is precisely what lets each lane run a different provider.
+Workers never talk to each other (hub-and-spoke, by design); a lane's FINAL
+REPLY comes back through the collect gate, and the orchestrator decides what
+happens next.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="hub-and-spoke architecture: orchestrator spawns four cross-provider worker lanes in git worktrees; one collect gate returns results; journal enables resume; a dashboard observes" src="docs/diagrams/architecture-light.svg">
+</picture>
+
+A run is a pipeline with verification built in, not bolted on. `ff-doctor`
+refuses to bless a fleet a provider can't serve; every spawn is journalled
+under a content-hash key so an unchanged packet replays from cache; the
+collect gate applies per-model success semantics plus an escape guard on the
+primary checkout; and the verify phase sends cross-provider refuters at every
+build lane's work before anything lands. Findings loop back into fix lanes
+until the refuters run dry. Teardown archives before it removes — a run's
+history outlives its directory.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lifecycle-dark.svg">
+  <img alt="run lifecycle: doctor preflight, spawn, collect gate, cross-provider verify with a fix loop, test-gated landing, archive-then-remove cleanup" src="docs/diagrams/lifecycle-light.svg">
+</picture>
+
+In-run telemetry and mid-run steering ride
+[raven](https://github.com/0xDarkMatter/raven), a zero-infra SQLite message
+bus: workers post opt-in heartbeats onto the run's telemetry channel, and
+`raven acp` hosts steerable claude lanes that accept course corrections and
+graceful wind-downs mid-flight (ADR-022/ADR-023).
+
 ## Components
 
 | Piece | What it does |

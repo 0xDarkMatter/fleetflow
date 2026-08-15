@@ -1,0 +1,98 @@
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-arch-title ff-arch-desc" font-family="ui-sans-serif,'Segoe UI',Helvetica,Arial,sans-serif">
+<title id="ff-arch-title">fleetflow hub-and-spoke architecture</title>
+<desc id="ff-arch-desc">An orchestrator session spawns four cross-provider worker lanes, each an OS process in its own git worktree; results return through one collect gate, runs are journalled for resume, and a dashboard observes without being a second source of truth.</desc>
+<defs>
+<marker id="fa-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+<marker id="fa-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<!-- zone: worktree lanes (painted first) -->
+<rect x="432" y="48" width="464" height="424" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="452" y="52" width="240" height="12" rx="2" fill="#f5f5f5"/>
+<text x="572" y="61" fill="rgba(45,49,66,0.40)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.14em">GIT WORKTREE LANES · ONE WRITER PER TREE</text>
+
+<!-- arrows (before boxes) -->
+<!-- spawn fan: orchestrator right edge, nested mids so nothing crosses -->
+<path d="M304,208 H408 Q416,208 416,200 V136 Q416,128 424,128 H464" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#fa-arrow)"/>
+<path d="M304,244 H384 Q392,244 392,236 V232 Q392,224 400,224 H464" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#fa-arrow)"/>
+<path d="M304,264 H360 Q368,264 368,272 V312 Q368,320 376,320 H464" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#fa-arrow)"/>
+<path d="M304,288 H320 Q328,288 328,296 V408 Q328,416 336,416 H464" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#fa-arrow)"/>
+<!-- collective return: zone edge -> around the left margin -> orchestrator left edge (accent) -->
+<path d="M432,440 H40 Q32,440 32,432 V256 Q32,248 40,248 H64" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#fa-arrow-accent)"/>
+<!-- journal write: orchestrator bottom -> journal top -->
+<line x1="184" y1="304" x2="184" y2="364" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#fa-arrow)"/>
+<!-- dashboard watches run state: journal -> dashboard, routed around the orchestrator -->
+<path d="M64,388 H52 Q44,388 44,380 V104 Q44,96 52,96 H64" fill="none" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#fa-arrow)"/>
+
+<!-- arrow labels (masked, gap kept off the strokes and off later-painted boxes) -->
+<rect x="316" y="188" width="76" height="12" rx="2" fill="#f5f5f5"/>
+<text x="354" y="197" fill="#7a8399" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.06em">FF-SPAWN ×N</text>
+<rect x="332" y="420" width="76" height="12" rx="2" fill="#f5f5f5"/>
+<text x="370" y="429" fill="#eb6c36" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.06em">FINAL REPLY</text>
+<rect x="196" y="324" width="68" height="12" rx="2" fill="#f5f5f5"/>
+<text x="230" y="333" fill="#7a8399" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="start" letter-spacing="0.06em">JOURNALS</text>
+
+<!-- dashboard (observer, optional) -->
+<rect x="64" y="64" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="64" y="64" width="240" height="64" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="184" y="92" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Dashboard · ff-serve</text>
+<text x="184" y="110" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">watches run dirs · never a 2nd truth</text>
+
+<!-- orchestrator (focal) -->
+<rect x="64" y="192" width="240" height="112" rx="6" fill="#f5f5f5"/>
+<rect x="64" y="192" width="240" height="112" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+<rect x="72" y="200" width="52" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.40)" stroke-width="0.8"/>
+<text x="98" y="209" fill="rgba(235,108,54,0.9)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.08em">SESSION</text>
+<text x="184" y="248" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Orchestrator</text>
+<text x="184" y="268" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">your chat session · owns judgment</text>
+
+<!-- journal (store) -->
+<rect x="64" y="364" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="64" y="364" width="240" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="392" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Journal · manifest</text>
+<text x="184" y="410" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">content-hash keys · replayable resume</text>
+
+<!-- worker lanes -->
+<rect x="464" y="88" width="400" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="464" y="88" width="400" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="472" y="96" width="32" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="488" y="105" fill="rgba(45,49,66,0.8)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.08em">Z.AI</text>
+<text x="664" y="124" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">GLM-5.3 lane</text>
+<text x="664" y="144" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">claude -p → z.ai · isolated config dir</text>
+
+<rect x="464" y="184" width="400" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="464" y="184" width="400" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="472" y="192" width="44" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="494" y="201" fill="rgba(45,49,66,0.8)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.08em">OPENAI</text>
+<text x="664" y="220" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Codex lane</text>
+<text x="664" y="240" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">codex exec · its own OS sandbox</text>
+
+<rect x="464" y="280" width="400" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="464" y="280" width="400" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="472" y="288" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="486" y="297" fill="rgba(45,49,66,0.8)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.08em">XAI</text>
+<text x="664" y="316" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Grok lane</text>
+<text x="664" y="336" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">grok -p · xAI's own agentic CLI</text>
+
+<rect x="464" y="376" width="400" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="464" y="376" width="400" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="472" y="384" width="52" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="498" y="393" fill="rgba(45,49,66,0.8)" font-size="7" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle" letter-spacing="0.08em">CLAUDE</text>
+<text x="664" y="412" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle">Sonnet · Opus · Haiku lanes</text>
+<text x="664" y="432" fill="#4f5d75" font-size="9" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" text-anchor="middle">claude -p · host auth · judge seats</text>
+
+<!-- legend -->
+<line x1="32" y1="500" x2="928" y2="500" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="104" y="512" width="12" height="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="124" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">focal · judgment</text>
+<rect x="264" y="512" width="12" height="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="284" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">worker lane · own env + model</text>
+<rect x="480" y="512" width="12" height="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="500" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">state</text>
+<line x1="568" y1="516" x2="596" y2="516" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="604" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">observer · optional</text>
+<line x1="756" y1="516" x2="784" y2="516" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="792" y="520" fill="#4f5d75" font-size="8" font-family="ui-monospace,'Cascadia Code',Consolas,monospace">collect gate</text>
+</svg>
