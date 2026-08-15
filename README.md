@@ -162,6 +162,35 @@ same-model skeptics miss, cheap mechanical lanes (GLM, Haiku) make wide
 fan-outs affordable, and premium models keep the judgment seats. The
 [SKILL.md](SKILL.md) decision gate puts the native tool first for a reason.
 
+## ADRs are load-bearing
+
+Fleets generate code and documents at fan-out speed, and the observed failure
+mode is documentary drift: a plan restates a decision that lives elsewhere,
+the restatement drifts, and the plan becomes the wrong record. fleetflow's
+docs contract exists to prevent that, and it is simple to state: **plans
+cite, ADRs own, reference docs state.** A plan is disposable intent for one
+run; an [ADR](docs/adr/) is the append-only record of a choice and its
+rejected alternatives; a reference doc is living current-state. A plan edit
+may never be the only record of a decision changing.
+
+This matters more with agents than it ever did with humans, because workers
+cannot read what they are not given. A Codex lane has no ambient knowledge of
+your repo's standing decisions, so before packets are authored, the
+orchestrator checks which ADRs govern the paths each packet touches and
+pastes the governing decisions into the packet as hard constraints. The
+verify wave then runs doc-parity refuters: a cross-provider lane reads a
+canonical doc and the implementation and is prompted to refute the doc, so
+every falsifiable claim gets tested like code.
+
+fleetflow eats its own cooking. This repo carries
+[24 ADRs](docs/adr/) covering everything from why the dashboard is one
+process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
+sweep caches bytes but never verdicts
+([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
+`adr-lint` runs inside the 389-assertion test gate: a malformed decision
+record fails the build. Several of those ADRs were written, refuted, and
+amended by the fleets they now govern.
+
 ## The dashboard
 
 Every run on the machine, live and archived, across every repo, behind one
