@@ -104,7 +104,7 @@ with the Codex/Grok columns and the orchestrator rule:
 |---|---|---|
 | **mechanical** (batch edits, verifier clones, backfills) | GLM-5.3, Haiku | proven cheap; gate catches misses |
 | **scout** (survey, inventory, locate) | Sonnet, GLM-5.3 | breadth over depth |
-| **build** (scoped features, refactors) | Sonnet, Codex, Grok | Codex/Grok = independent harnesses; good second implementations for judge panels |
+| **build** (scoped features, refactors) | Sonnet, GLM-5.3, Codex, Grok | Codex/Grok = independent harnesses; GLM-5.3 = open-weights coding SOTA at commodity rates; good second implementations for judge panels |
 | **verify / judge** | Opus + one cross-provider dissenter (Codex, Grok, GLM, or Pi) | *never under-power a judge*; diversity beats redundancy |
 | **wildcard / third-opinion** (a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=gemini\|deepseek\|…`) | one integration, 15+ providers; no sandbox and no turn cap — worktree + stall detector are the bounds |
 | **synthesize / land decisions** | orchestrator (Fable > Opus) | needs the conversation's context |

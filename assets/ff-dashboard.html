@@ -1750,7 +1750,7 @@ const HARNESS = [
   { k:"glm", cls:"z.ai", proc:"fleet-worker → claude -p (z.ai endpoint)",
     auth:"z.ai key, isolated CLAUDE_CONFIG_DIR", sandbox:"worktree lane + own config dir",
     stream:"session transcript", conc:"4–6", commits:true,
-    role:"mechanical · scout — proven cheap",
+    role:"build · mechanical · scout — proven cheap",
     checks:["fleet-worker","glm-endpoint"] },
   { k:"codex", cls:"OpenAI", proc:"codex exec --full-auto --json",
     auth:"ChatGPT plan (codex login)", sandbox:"AppContainer, workspace-write, -C lane",
