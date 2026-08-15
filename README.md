@@ -162,6 +162,34 @@ same-model skeptics miss, cheap mechanical lanes (GLM, Haiku) make wide
 fan-outs affordable, and premium models keep the judgment seats. The
 [SKILL.md](SKILL.md) decision gate puts the native tool first for a reason.
 
+## QA as a pipeline: post-build waves
+
+After the build lanes land their diffs, `ff-run wave` sequences the follow-up
+work: finder waves (QA, visual QA, security, supply-chain, a11y, docs-parity,
+regression, polish) emit findings into an append-only ledger, triage groups
+them into file-disjoint fix packets, fix lanes run, and a different provider
+re-verifies every fix. Two dials control it:
+
+- `--posture baseline|tested|hardened|complete` picks which finder waves run.
+- `--attend none|land|each` sets who is watching: fully autonomous, one
+  review gate at landing, or a human gate after every wave. Per-wave
+  `--gate WAVE=auto|review|stop` overrides the macro.
+
+```bash
+# tested posture, review gate after every wave
+bash scripts/ff-run.sh wave --run v0-2 --posture tested --attend each
+
+# hardened, gated only at landing; preview the plan first
+bash scripts/ff-run.sh wave --run v0-2 --posture hardened --attend land --dry-run
+```
+
+Findings at or below `--severity-floor` (default `medium`) auto-fix; anything
+above it, or touching auth, crypto, permissions, schema, deps, public API, or
+ADR-governed paths, escalates to a human. A finding refuted twice escalates
+rather than looping (`--fix-rounds`, default 2). Skipped waves are reported,
+never silent, and no posture ever deploys: the pipeline stops at land
+([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
+
 ## ADRs are load-bearing
 
 Fleets generate code and documents at fan-out speed, and the observed failure
