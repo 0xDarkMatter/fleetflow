@@ -110,7 +110,7 @@ How the roles compose in a typical run:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/roles-dark.svg">
-  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; Sonnet, Codex, and Grok build independently; an Opus judge and cross-provider refuters verify; GLM and Haiku carry the mechanical majority; Pi supplies a wildcard third opinion" src="docs/diagrams/roles-light.svg">
+  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; Sonnet, Codex, and Grok build independently; an Opus judge and cross-provider refuters verify; GLM-5.3 builds alongside them; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens at least of the cost" src="docs/diagrams/roles-light.svg">
 </picture>
 
 ### A word on Pi
