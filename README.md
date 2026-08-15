@@ -268,6 +268,20 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 📊 **One run-card renderer** shared byte-identically by the dashboard and
   the chat widget ([ADR-019](docs/adr/ADR-019-one-run-card-renderer-two-embedded-copies.md)).
 
+## Ecosystem
+
+fleetflow composes with a small family of tools, most of them skills in
+[claude-mods](https://github.com/0xDarkMatter/claude-mods):
+
+| Tool | Relationship |
+|---|---|
+| [fleet-worker](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-worker) | The single-worker spawn layer fleetflow builds on: GLM auth isolation, model routing, terms-of-service notes |
+| [fleet-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-ops) | The landing layer: a sequential, test-gated merge queue; every fleetflow run ends there |
+| [adr-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/adr-ops) | The decision layer of the docs contract: `adr-init` at seeding, `adr-touching` before packet authoring, `adr-lint` in the gate |
+| [loop-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/loop-ops) | Schedule a recurring fleetflow run as a risk-tiered autonomous loop |
+| [raven](https://github.com/0xDarkMatter/raven) | The in-run message bus: opt-in telemetry and the ACP harness for steerable lanes |
+| [rookery](https://github.com/0xDarkMatter/rookery) | The predecessor job system; several of its patterns (structured verdicts, parcel heartbeats) live on here |
+
 ## Test
 
 ```bash

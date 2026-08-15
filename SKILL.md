@@ -97,7 +97,7 @@ Codex refuter catches what three same-model skeptics miss).
 
 ## Model routing (work class × model)
 
-Extends [fleet-worker's routing convention](../fleet-worker/references/model-routing.md)
+Extends [fleet-worker's routing convention](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/references/model-routing.md)
 with the Codex/Grok columns and the orchestrator rule:
 
 | Work class | Model | Why |
@@ -293,7 +293,7 @@ Fleetflow eats its own cooking: this repo's standing decisions live in
 and the prose in this file cites them rather than owning the archaeology.
 
 The doc kit a fleetflow-built repo carries (Diátaxis for the canonical side,
-[adr-ops](../adr-ops/SKILL.md) for the decision side, arc42-shaped architecture
+[adr-ops](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/adr-ops/SKILL.md) for the decision side, arc42-shaped architecture
 doc; ATDW-MCP's `00_INDEX.md` filing criterion is the reference implementation):
 
 | Layer | Holds | Mutability |
@@ -721,7 +721,7 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   comforts: the tab title carries `(N▶ M⚠)` so a background tab still alerts on
   stalls, `/` focuses the filter, Esc closes the costs modal, and every run
   detail has an "export json" button (client-side blob, nothing leaves the box).
-- **Card language is shared with the [summon](../summon/) session picker** — same
+- **Card language is shared with the [summon](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/summon) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the
   overview), which is what makes the cross-model cost story visible at a glance.
@@ -803,9 +803,9 @@ visual continuity in the monitor — not to resume native work in place.
 
 ## See Also
 
-- [fleet-worker](../fleet-worker/) — the single-worker spawn layer fleetflow builds on (GLM auth isolation, model routing, terms).
-- [fleet-ops](../fleet-ops/) — the landing layer; every fleetflow run ends there.
-- [loop-ops](../loop-ops/) — schedule a recurring fleetflow run as an L1/L2 loop.
-- [adr-ops](../adr-ops/) — the decision layer of the docs contract: `adr-init` at
+- [fleet-worker](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-worker) — the single-worker spawn layer fleetflow builds on (GLM auth isolation, model routing, terms).
+- [fleet-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-ops) — the landing layer; every fleetflow run ends there.
+- [loop-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/loop-ops) — schedule a recurring fleetflow run as an L1/L2 loop.
+- [adr-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/adr-ops) — the decision layer of the docs contract: `adr-init` at
   greenfield seeding, `adr-touching` before packet authoring, `adr-new
   --supersedes` for mid-run reversals, `adr-lint` in the target repo's gate.

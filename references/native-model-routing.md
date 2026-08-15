@@ -7,7 +7,7 @@
 > Scope: the **in-process** half of routing (native `agent()` calls sharing the
 > session's provider). The cross-provider half (GLM/Codex process workers) and
 > the shared work-class taxonomy live in
-> [fleet-worker/references/model-routing.md](../../fleet-worker/references/model-routing.md).
+> [fleet-worker/references/model-routing.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/references/model-routing.md).
 
 ## 1. Why — the cost evidence
 
@@ -78,7 +78,7 @@ Corollaries (carried over from the shared taxonomy, they bind here too):
 - **Reach for the effort lever before the model lever.** Same model at
   `effort: 'low'` is often the bigger saving with no quality cliff.
 - **Budget pressure degrades collectors, never deciders.**
-  [route.js](../../fleet-worker/assets/route.js) encodes this: under 15%
+  [route.js](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/assets/route.js) encodes this: under 15%
   remaining budget it steps collect-stages down a tier; judge/synthesize are
   exempt.
 
@@ -125,7 +125,7 @@ Agent({ subagent_type: 'Explore', model: 'haiku',
 - **Not a provider switch.** `opts.model` picks a tier on the *session's*
   provider; pointing a stage at GLM/Codex requires an OS-process worker
   (fleetflow/fleet-worker) — see the locus rule in
-  [fleet-worker/references/model-routing.md](../../fleet-worker/references/model-routing.md).
+  [fleet-worker/references/model-routing.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/references/model-routing.md).
 - **Not free accuracy.** A haiku collector will miss things a premium collector
   wouldn't. That's acceptable *only* when a premium-tier verify/judge stage
   stands downstream — which is why the [default posture](../SKILL.md) pairs
@@ -135,7 +135,7 @@ Agent({ subagent_type: 'Explore', model: 'haiku',
 
 - [native-workflow-insights.md](native-workflow-insights.md) §5 — where
   `opts.model`/`opts.effort` sit in the progress/structure surface.
-- [fleet-worker/references/model-routing.md](../../fleet-worker/references/model-routing.md)
+- [fleet-worker/references/model-routing.md](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/references/model-routing.md)
   — the shared work-class taxonomy and the in-process vs provider-worker locus rule.
-- [fleet-worker/assets/route.js](../../fleet-worker/assets/route.js) — paste-in
+- [fleet-worker/assets/route.js](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/assets/route.js) — paste-in
   helper implementing this table (`route('mechanical')` etc.).

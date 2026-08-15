@@ -6,7 +6,7 @@
 
 ## 1. GLM workers (via fleet-worker)
 
-The [fleet-worker](../../fleet-worker/SKILL.md) launcher is the contract —
+The [fleet-worker](https://github.com/0xDarkMatter/claude-mods/blob/main/skills/fleet-worker/SKILL.md) launcher is the contract —
 fleetflow does not duplicate it. Load-bearing facts:
 
 - **Auth isolation is mandatory**: on a machine with a Claude subscription,
