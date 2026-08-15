@@ -1,40 +1,63 @@
 # fleetflow
 
-Heterogeneous cross-provider agent fleets from one Claude Code session —
-**GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
-Sonnet/Haiku/Opus** — porting the native Workflow tool's patterns (adversarial
-verify, judge panels, journal resume) to OS-process workers, where every worker
-gets its own env block and therefore its own model.
-
-Claude Code's built-in orchestration spawns every agent in-process, so they all
-share one provider: `ANTHROPIC_BASE_URL` is process-global, and only the model
-alias varies per agent. fleetflow moves the worker boundary to the OS process.
-Each lane is a real process in its own git worktree with its own environment —
-which means a Codex refuter can attack a GLM build, an Opus judge can score
-both, and the whole run stays journalled, resumable, and test-gated before
-anything lands. The orchestrator is your interactive session; the scripts own
-the deterministic mechanics (spawn, journal, collect, gate, clean).
-
-It exists because model diversity is a quality tool, not just a cost tool: a
-cross-provider refuter catches what three same-model skeptics miss, and cheap
-mechanical lanes (GLM, Haiku) make wide fan-outs affordable while premium
-models keep the judgment seats. If your fan-out is happy on one provider, use
-the native Workflow tool — the [SKILL.md](SKILL.md) decision gate says so in
-its first row. This repo is simultaneously a Claude Code **skill** (mount it
-at `~/.claude/skills/fleetflow`) and the home of a **machine-wide dashboard**
-that watches every run, live and archived, across every repo on the box.
+**Heterogeneous cross-provider agent fleets from one Claude Code session** —
+GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
+Sonnet/Haiku/Opus — as OS-process workers with adversarial cross-model
+verification, journalled resume, and a machine-wide dashboard.
 
 <img alt="fleetflow dashboard, run detail: an 8-lane run across four providers, all green — per-lane tokens, states, and honest cost estimates" src="docs/screenshots/dashboard-run.png">
+
+- **One model per process, not per prompt.** Every lane is a real OS process in
+  its own git worktree with its own environment — so a Codex refuter can attack
+  a GLM build and an Opus judge can score both, in the same run.
+- **Verification is the default, not a flag.** Cross-provider refuters attack
+  every build lane's work before anything lands; findings loop into fix lanes
+  until the refuters run dry.
+- **Runs are journalled and resumable.** Every spawn is keyed by a content hash
+  of `(model, prompt, opts)`; an unchanged packet replays from cache, a changed
+  one re-runs alone.
+- **Costs are honest.** Token totals are model-comparable, estimates are marked
+  `≈`, uncosted lanes are marked `*`, and nothing is ever presented as an
+  invoice.
+
+## Quickstart
+
+```bash
+# 1. preflight — don't spawn a fleet a doctor won't bless
+bash scripts/ff-doctor.sh --live
+
+# 2. author a task packet, then spawn a lane per packet (repeat per model)
+bash scripts/ff-spawn.sh --run demo --id build --model glm   --prompt-file packets/build.task.md --worktree
+bash scripts/ff-spawn.sh --run demo --id refute --model codex --prompt-file packets/refute.task.md --worktree
+
+# 3. gate each lane, then check the whole run
+bash scripts/ff-collect.sh --run demo --id build
+bash scripts/ff-status.sh  --run demo
+
+# 4. land through your merge gate, then reclaim
+bash scripts/ff-clean.sh --run demo
+```
+
+The full playbook — model routing, packet discipline, safety rules, the
+decision gate for when *not* to use fleetflow — is [SKILL.md](SKILL.md). This
+repo is simultaneously a Claude Code **skill** (mount it at
+`~/.claude/skills/fleetflow`) and the home of the dashboard service.
+
+```powershell
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -Target "<path-to-your-clone>"
+```
+
+```bash
+ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
+```
 
 ## How it works
 
 One orchestrator, many processes. Your interactive session plans file-disjoint
 task packets and keeps the judgment; the scripts own the deterministic
-mechanics. Every worker is an OS process in its own git worktree with its own
-environment — which is precisely what lets each lane run a different provider.
-Workers never talk to each other (hub-and-spoke, by design); a lane's FINAL
-REPLY comes back through the collect gate, and the orchestrator decides what
-happens next.
+mechanics. Workers never talk to each other (hub-and-spoke, by design); a
+lane's FINAL REPLY comes back through the collect gate, and the orchestrator
+decides what happens next.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
@@ -42,13 +65,9 @@ happens next.
 </picture>
 
 A run is a pipeline with verification built in, not bolted on. `ff-doctor`
-refuses to bless a fleet a provider can't serve; every spawn is journalled
-under a content-hash key so an unchanged packet replays from cache; the
-collect gate applies per-model success semantics plus an escape guard on the
-primary checkout; and the verify phase sends cross-provider refuters at every
-build lane's work before anything lands. Findings loop back into fix lanes
-until the refuters run dry. Teardown archives before it removes — a run's
-history outlives its directory.
+refuses to bless a fleet a provider can't serve; the collect gate applies
+per-model success semantics plus an escape guard on the primary checkout; and
+teardown archives before it removes — a run's history outlives its directory.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lifecycle-dark.svg">
@@ -60,6 +79,23 @@ In-run telemetry and mid-run steering ride
 bus: workers post opt-in heartbeats onto the run's telemetry channel, and
 `raven acp` hosts steerable claude lanes that accept course corrections and
 graceful wind-downs mid-flight (ADR-022/ADR-023).
+
+**Why not Claude Code's built-in orchestration?** Use it — when one provider
+suffices. Its agents run in-process, so they all share `ANTHROPIC_BASE_URL`;
+only the model alias varies. fleetflow exists for the runs where model
+*diversity* is the point: a cross-provider refuter catches what three
+same-model skeptics miss, cheap mechanical lanes (GLM, Haiku) make wide
+fan-outs affordable, and premium models keep the judgment seats. The
+[SKILL.md](SKILL.md) decision gate puts the native tool first for a reason.
+
+## The dashboard
+
+Every run on the machine — live and archived, across every repo — behind one
+always-on page. Serve `scripts/ff-serve.py` under a process supervisor with a
+readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
+(seed once with `ff-aggregate.py --init-roots <paths>`).
+
+<img alt="fleetflow machine-wide dashboard: every run on the box, live and archived, with token, cost, and failure roll-ups" src="docs/screenshots/dashboard-fleet.png">
 
 ## Components
 
@@ -100,26 +136,6 @@ graceful wind-downs mid-flight (ADR-022/ADR-023).
   ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
 - 📊 **One run-card renderer** shared byte-identically by the dashboard and
   the chat widget ([ADR-019](docs/adr/ADR-019-one-run-card-renderer-two-embedded-copies.md)).
-
-## Install as a skill
-
-Clone, then junction (or symlink) the clone into your skills directory:
-
-```powershell
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -Target "<path-to-your-clone>"
-```
-
-```bash
-ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
-```
-
-## Run the dashboard
-
-Serve `scripts/ff-serve.py` under a process supervisor with a readiness probe
-on `/api/health`. Roots to scan live in `~/.fleetflow/roots.txt` (seed once
-with `ff-aggregate.py --init-roots <paths>`).
-
-<img alt="fleetflow machine-wide dashboard: every run on the box, live and archived, with token, cost, and failure roll-ups" src="docs/screenshots/dashboard-fleet.png">
 
 ## Test
 
