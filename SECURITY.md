@@ -10,10 +10,7 @@ unsupported version, please upgrade before reporting.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| latest  | :white_check_mark: |
-| < latest| :x:                |
-
-> Adapt this table to your project's actual release line (e.g. `1.x`, `0.9.x`).
+| 0.1.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
