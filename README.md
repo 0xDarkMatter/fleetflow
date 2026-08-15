@@ -24,10 +24,7 @@ its first row. This repo is simultaneously a Claude Code **skill** (mount it
 at `~/.claude/skills/fleetflow`) and the home of a **machine-wide dashboard**
 that watches every run, live and archived, across every repo on the box.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-run-dark.png">
-  <img alt="fleetflow dashboard, run detail: cross-provider lanes with per-lane tokens, states, and honest cost estimates" src="docs/screenshots/dashboard-fleet-light.png">
-</picture>
+<img alt="fleetflow dashboard, run detail: an 8-lane run across four providers, all green — per-lane tokens, states, and honest cost estimates" src="docs/screenshots/dashboard-run.png">
 
 ## How it works
 
@@ -121,6 +118,8 @@ ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
 Serve `scripts/ff-serve.py` under a process supervisor with a readiness probe
 on `/api/health`. Roots to scan live in `~/.fleetflow/roots.txt` (seed once
 with `ff-aggregate.py --init-roots <paths>`).
+
+<img alt="fleetflow machine-wide dashboard: every run on the box, live and archived, with token, cost, and failure roll-ups" src="docs/screenshots/dashboard-fleet.png">
 
 ## Test
 
