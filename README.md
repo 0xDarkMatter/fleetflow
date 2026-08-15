@@ -94,7 +94,7 @@ live in [references/worker-contracts.md](references/worker-contracts.md).
 | `glm` | GLM-5.3 (default) · GLM-4.5-Air (small) | `claude -p` → z.ai endpoint, isolated config dir | session transcript | yes | build, mechanical, scout: proven cheap |
 | `codex` | GPT-5.6 family | `codex exec`, OpenAI's own agent harness, OS sandbox | `--json` event stream | no (orchestrator commits) | build, cross-provider dissent |
 | `grok` | grok-4.5 | `grok -p`, xAI's own agentic CLI | none (buffered to exit); heartbeat file covers stalls | yes | build, cross-provider dissent |
-| `pi` | wildcard: gemini, deepseek, groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | third opinion no fixed model covers |
+| `pi` | wildcard: gemini, deepseek, groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | build via any provider; third opinion |
 | `sonnet` / `haiku` | Claude Sonnet / Haiku | `claude -p`, host auth | session transcript | yes | build, scout / mechanical |
 | `opus` / `fable` | Claude Opus / Fable | `claude -p`, host auth | session transcript | yes | verify, judge / orchestrator |
 | `chip` | whatever the chip session runs | a human-clicked Claude Code session, adopted via `ff-chip` | transcript + heartbeat | yes | manual work as a first-class lane |
@@ -110,7 +110,7 @@ How the roles compose in a typical run:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/roles-dark.svg">
-  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; GLM-5.3, Sonnet, Codex, and Grok build independently; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens at least of the cost" src="docs/diagrams/roles-light.svg">
+  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; GLM-5.3, Sonnet, Codex, Grok, and Pi build independently; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens at least of the cost" src="docs/diagrams/roles-light.svg">
 </picture>
 
 ### A word on Pi
