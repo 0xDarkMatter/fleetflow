@@ -7,18 +7,34 @@ verification, journalled resume, and a machine-wide dashboard.
 
 <img alt="fleetflow dashboard, run detail: an 8-lane run across four providers, all green — per-lane tokens, states, and honest cost estimates" src="docs/screenshots/dashboard-run.png">
 
-- **One model per process, not per prompt.** Every lane is a real OS process in
-  its own git worktree with its own environment — so a Codex refuter can attack
-  a GLM build and an Opus judge can score both, in the same run.
-- **Verification is the default, not a flag.** Cross-provider refuters attack
-  every build lane's work before anything lands; findings loop into fix lanes
-  until the refuters run dry.
-- **Runs are journalled and resumable.** Every spawn is keyed by a content hash
-  of `(model, prompt, opts)`; an unchanged packet replays from cache, a changed
-  one re-runs alone.
-- **Costs are honest.** Token totals are model-comparable, estimates are marked
-  `≈`, uncosted lanes are marked `*`, and nothing is ever presented as an
-  invoice.
+## Why
+
+**Frontier judgment, commodity execution.** The expensive models are worth
+every cent exactly where judgment concentrates — architecture, task
+decomposition, verdicts — and wasted almost everywhere else. fleetflow makes
+that split structural: a frontier orchestrator (Claude Fable, GPT-5.6 Sol via
+Codex) architects the run and authors the task packets, then very capable,
+much cheaper models (GLM-5.3, Haiku) execute the grunt work in parallel lanes.
+The gate catches what the cheap lanes miss, so you spend frontier tokens on
+decisions and commodity tokens on keystrokes — which is what makes a 20-lane
+fan-out affordable instead of aspirational.
+
+**Multi-model consensus, adversarial by design.** Three same-model reviewers
+share the same blind spots; a reviewer from a different provider does not.
+fleetflow builds runs around that: independent implementations judged across
+providers, refuters prompted to *attack* rather than confirm, tests written
+blind to the implementation and then refuted by yet another model. Findings
+loop into fix lanes until the refuters run dry. In practice that means more
+features per week — parallel lanes do the building — while more bugs die
+before landing, because every claim survives a model that had no stake in
+making it.
+
+**And the boring guarantees that make it usable daily:** every lane is a real
+OS process in its own git worktree (one writer per tree, escape-guarded);
+every spawn is journalled under a content hash so unchanged work replays from
+cache and a crashed run resumes; costs are honest — token totals are
+model-comparable, estimates are marked `≈`, uncosted lanes are marked `*`, and
+nothing is ever presented as an invoice.
 
 ## Quickstart
 
