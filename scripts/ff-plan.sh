@@ -124,7 +124,8 @@ draft_cmd() {
   require_run "$run"; [ -n "$spec" ] || { err "draft requires --spec"; usage; return 2; }
   case "$shape" in feature|review|research|migrate|app);; *) err "invalid shape '$shape'"; return 2;; esac
   repo="$(resolve_repo "$repo_arg")" || { err "not in a git repo"; return 2; }; require_repo "$repo"
-  [ -f "$(repo_file "$repo" "$spec")" ] || { err "spec file missing: $spec"; return 3; }
+  # --spec accepts a path as given (absolute or cwd-relative) or repo-relative.
+  [ -f "$spec" ] || [ -f "$(repo_file "$repo" "$spec")" ] || { err "spec file missing: $spec"; return 3; }
   if [ -n "$packets_arg" ]; then
     IFS=',' read -r -a entries <<< "$packets_arg"
     for entry in "${entries[@]}"; do
@@ -135,7 +136,9 @@ draft_cmd() {
       ids+=("$id"); roles+=("$role"); classes+=("$class"); models+=("$model")
     done
   fi
-  plan_template="$(repo_file "$repo" assets/plan.tmpl.md)"; packet_template="$(repo_file "$repo" assets/packet.tmpl.md)"
+  # Templates ship with the SKILL, not the target repo — a planning tool must
+  # work against arbitrary repos (same pattern as assets/wave-packets).
+  plan_template="$SCRIPT_DIR/../assets/plan.tmpl.md"; packet_template="$SCRIPT_DIR/../assets/packet.tmpl.md"
   [ -f "$plan_template" ] && [ -f "$packet_template" ] || { err "draft templates are missing"; return 3; }
   today="$(date +%F | tr -d '\r')"; month="$(date +%Y-%m | tr -d '\r')"; upper="${run^^}"
   plan_dir="$(repo_file "$repo" docs/plans)"; plan_file="$plan_dir/$upper-$month.md"
@@ -148,13 +151,15 @@ draft_cmd() {
   mkdir -p "$plan_dir" "$packet_dir"; render_plan_template "$plan_template" "$plan_file" "$run" "$today" "$spec"; err "created plan: $plan_file"
   for ((i=0;i<${#ids[@]};i++)); do
     id="${ids[$i]}"; role="${roles[$i]}"; class="${classes[$i]}"; model="${models[$i]}"; packet_file="$packet_dir/$id.task.md"
-    card="$(repo_file "$repo" "assets/roles/${role,,}.role.md")"; [ -f "$card" ] || err "warning: role card missing for $role ($card); marker left in packet"
+    card="$SCRIPT_DIR/../assets/roles/${role,,}.role.md"; [ -f "$card" ] || err "warning: role card missing for $role ($card); marker left in packet"
     render_packet_template "$packet_template" "$packet_file" "$id" "$role" "$class" "$model" "$card"; err "created packet: $packet_file"
     prompt=".fleetflow/$run/packets/$id.task.md"
     packet_json="$(jq -c --arg id "$id" --arg role "$role" --arg class "$class" --arg model "$model" --arg prompt "$prompt" \
       '.+[{id:$id,role:$role,class:$class,model:$model,phase:"build",prompt_file:$prompt,depends_on:[],locus:"process",gate:"auto"}]' <<< "$packet_json" | tr -d '\r')"
   done
-  base="$(git -C "$repo" rev-parse HEAD | tr -d '\r')"; tmp="$manifest.ff-plan.tmp"
+  # Unborn HEAD (fresh repo, no commits yet) is a legal draft target — base
+  # is simply unknown until the first commit.
+  base="$(git -C "$repo" rev-parse HEAD 2>/dev/null | tr -d '\r' || true)"; tmp="$manifest.ff-plan.tmp"
   if [ -f "$manifest" ]; then jq -e 'type=="object"' "$manifest" >/dev/null 2>&1 || { err "manifest is malformed: $manifest"; return 3; }; existing="$(jq -c . "$manifest"|tr -d '\r')"; fi
   jq -n --argjson old "$existing" --arg run "$run" --arg base "$base" --arg shape "$shape" --argjson incoming "$packet_json" '
     ($old+{run:$run,base:($old.base//$base),created_by:"ff-plan",phases:($old.phases//[]),packets:($old.packets//[]),
@@ -176,7 +181,7 @@ expand_cmd() {
   repo="$(resolve_repo "$repo_arg")" || return 2; require_repo "$repo"
   [ -f "$(repo_file "$repo" "$vars")" ] || { err "vars file missing: $vars"; return 3; }
   [ -f "$(repo_file "$repo" ".fleetflow/$run/manifest.json")" ] || { err "manifest missing for run $run"; return 3; }
-  registry="$(repo_file "$repo" references/generator-registry.md)"; [ -f "$registry" ] || { err "generator registry missing"; return 3; }
+  registry="$SCRIPT_DIR/../references/generator-registry.md"; [ -f "$registry" ] || { err "generator registry missing"; return 3; }
   while IFS=$'\t' read -r name row_status; do known="${known:+$known, }$name"; [ "$name" = "$generator" ] && status="$row_status"; done < <(registry_rows "$registry")
   [ -n "$status" ] || { err "unknown generator '$generator' (known: ${known:-none})"; return 3; }
   if [[ "${status,,}" == *pending* ]]; then err "generator $generator is registered but has no expansion tables yet"; return 3; fi
@@ -237,8 +242,12 @@ lint_cmd() {
     *) err "unknown lint argument: $1"; usage; return 2;; esac; done
   require_run "$run"; repo="$(resolve_repo "$repo_arg")" || return 2; require_repo "$repo"
   run_dir="$(repo_file "$repo" ".fleetflow/$run")"; manifest="$run_dir/manifest.json"; packet_dir="$run_dir/packets"
-  [ -f "$manifest" ] || { err "manifest missing for run $run"; return 3; }
-  jq -e 'type=="object"' "$manifest" >/dev/null 2>&1 || { err "manifest is malformed: $manifest"; return 3; }
+  # A missing manifest never blocks the packet checks (ADR-030: report
+  # disarmed, don't refuse) — only the manifest-dependent checks (f)/(g)
+  # degrade. A PRESENT but malformed manifest is still fatal.
+  if [ -f "$manifest" ]; then
+    jq -e 'type=="object"' "$manifest" >/dev/null 2>&1 || { err "manifest is malformed: $manifest"; return 3; }
+  else manifest=""; fi
   shopt -s nullglob; files=("$packet_dir"/*.task.md); shopt -u nullglob
   for file in "${files[@]}"; do
     id="$(packet_id "$file")"
@@ -321,14 +330,17 @@ lint_cmd() {
   if [ "$fm_count" -gt 0 ]; then add_check routing true "checked $fm_count packet(s)$legacy_reason"; else add_check routing false "no frontmatter"; fi
 
   # (f) every barrier under manifest.plan must name a non-empty string join.
-  if jq -e 'has("plan")' "$manifest" >/dev/null 2>&1; then
+  if [ -z "$manifest" ]; then add_check barriers false "no manifest"
+  elif jq -e 'has("plan")' "$manifest" >/dev/null 2>&1; then
     while IFS= read -r value; do [ -z "$value" ] || add_finding barriers warn '[]' '[]' "$value"; done < <(
       jq -r '.plan.barriers//[]|to_entries[]|select((((.value.joins? //"")|type)!="string") or (((.value.joins? //"")|length)==0))|"barrier \(.key) has empty joins"' "$manifest" | tr -d '\r')
     add_check barriers true "manifest plan.barriers checked"
   else add_check barriers false "manifest has no plan key"; fi
 
-  # (g) absent bounds is a finding; the value "none" is valid.
-  if jq -e '(.plan? | type)=="object" and (.plan|has("bounds"))' "$manifest" >/dev/null 2>&1; then add_check bounds true "manifest plan.bounds declared"
+  # (g) absent bounds is a finding; the value "none" is valid. No manifest at
+  # all disarms the check rather than manufacturing a finding.
+  if [ -z "$manifest" ]; then add_check bounds false "no manifest"
+  elif jq -e '(.plan? | type)=="object" and (.plan|has("bounds"))' "$manifest" >/dev/null 2>&1; then add_check bounds true "manifest plan.bounds declared"
   else add_finding bounds warn '[]' '[]' "manifest plan.bounds is absent"; add_check bounds true "manifest checked; plan.bounds absent"; fi
 
   local result count
@@ -362,7 +374,7 @@ refute_cmd() {
   jq -e 'type=="object"' "$manifest" >/dev/null 2>&1 || { err "manifest is malformed: $manifest"; return 3; }
   [ -n "$model" ] || model="$(choose_refute_model "$manifest")"
   packet_dir="$(repo_file "$repo" ".fleetflow/$run/packets")"; mkdir -p "$packet_dir"; packet="$packet_dir/plan-adversary.task.md"
-  role_card="$(repo_file "$repo" assets/roles/adversary.role.md)"; [ -f "$role_card" ] || { err "Adversary role card missing: $role_card"; return 3; }
+  role_card="$SCRIPT_DIR/../assets/roles/adversary.role.md"; [ -f "$role_card" ] || { err "Adversary role card missing: $role_card"; return 3; }
   plan_dir="$(repo_file "$repo" docs/plans)"; shopt -s nullglob; plans=("$plan_dir/${run^^}-"*.md); packet_files=("$packet_dir"/*.task.md); shopt -u nullglob
   [ "${#plans[@]}" -gt 0 ] || { err "plan doc missing for run $run"; return 3; }; plan_doc="${plans[${#plans[@]}-1]}"
   {

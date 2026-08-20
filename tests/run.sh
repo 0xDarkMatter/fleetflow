@@ -2078,6 +2078,8 @@ owns:
 modifies: []
 registries: []
 depends_on: []
+final_reply:
+  - "TESTS: <passed>/<failed>"
 ---
 
 Build D1. FINAL REPLY: one line.
@@ -2093,6 +2095,8 @@ owns:
 modifies: []
 registries: []
 depends_on: []
+final_reply:
+  - "TESTS: <passed>/<failed>"
 ---
 
 Build D2. FINAL REPLY: one line.
