@@ -133,6 +133,12 @@ mechanics. Workers never talk to each other (hub-and-spoke, by design); a
 lane's FINAL REPLY comes back through the collect gate, and the orchestrator
 decides what happens next.
 
+Runs now start at [ff-plan](scripts/ff-plan.sh): `draft` scaffolds the plan
+and its manifest, `lint` gates the spawn, and a cross-provider Adversary
+refutes the decomposition before any lane runs. Lane behaviour comes from
+versioned role cards in a trade-guild persona register, Architect through
+Warden ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
   <img alt="hub-and-spoke architecture: orchestrator spawns four cross-provider worker lanes in git worktrees; one collect gate returns results; journal enables resume; a dashboard observes" src="docs/diagrams/architecture-light.svg">
@@ -233,6 +239,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 | Piece | What it does |
 |---|---|
 | [SKILL.md](SKILL.md) | Operational doctrine: decision gate, model routing, run lifecycle, safety (escape guard, stall detector, sandbox rules) |
+| [scripts/ff-plan.sh](scripts/ff-plan.sh) | Planning stage: `draft` scaffolds the plan doc + manifest, `lint` gates the spawn (exit 10 on findings), `refute` attacks the decomposition cross-provider before any lane runs (ADR-026/028/030) |
 | `scripts/ff-doctor` → `ff-clean` | The run lifecycle: preflight → spawn → collect/gate → status → resume → clean. Bash, semantic exit codes, `--help` with examples |
 | [scripts/ff-sweep.sh](scripts/ff-sweep.sh) | Machine-wide housekeeping: verdicts on every leftover run dir (`reclaimable` / `holds-work` / `active`), reclaim only what is provably safe; verdicts computed live, never cached (ADR-020/024) |
 | [scripts/ff-chip.sh](scripts/ff-chip.sh) | Adopts a manually spawned Claude Code chip as an ordinary lane: worktree, journal, telemetry, teardown (ADR-021) |
