@@ -152,6 +152,11 @@ versioned role cards in a trade-guild persona register, Architect through
 Warden ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)).
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/ffplan-dark.svg">
+  <img alt="the pre-spawn planning gate: ff-plan draft authors the plan, packets, and manifest; lint exits 10 on findings that loop back into the draft; a cross-provider Adversary refutes the decomposition, findings loop back as fixes, and a plan refuted twice escalates to a human gate; a clean plan passes ff-doctor preflight and ff-spawn launches the fleet" src="docs/diagrams/ffplan-light.svg">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
   <img alt="hub-and-spoke architecture: orchestrator spawns four cross-provider worker lanes in git worktrees; one collect gate returns results; journal enables resume; a dashboard observes" src="docs/diagrams/architecture-light.svg">
 </picture>
@@ -171,6 +176,13 @@ In-run telemetry and mid-run steering ride
 bus: workers post opt-in heartbeats onto the run's telemetry channel, and
 `raven acp` hosts steerable claude lanes that accept course corrections and
 graceful wind-downs mid-flight (ADR-022/ADR-023).
+
+Zoomed to a single lane, the safety mechanics look like this:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lane-dark.svg">
+  <img alt="anatomy of one worker lane: a task packet with its role card prepended enters an isolated worktree lane holding the guard preamble, heartbeat file, transcript stream, and working-tree artifacts; a journal records started and result keyed by content hash; the collect gate applies per-model semantics plus the escape guard and returns the final reply to the orchestrator; a dashed opt-in edge feeds the raven telemetry bus" src="docs/diagrams/lane-light.svg">
+</picture>
 
 **Why not Claude Code's built-in orchestration?** Use it, when one provider
 suffices. Its agents run in-process, so they all share `ANTHROPIC_BASE_URL`;
