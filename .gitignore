@@ -10,3 +10,6 @@ __pycache__/
 .fleetflow/
 .claude/fleet/
 .fleet-worktrees/
+
+# Impeccable design-lint local state (waivers stay machine-local by preference)
+.impeccable/
