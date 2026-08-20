@@ -503,6 +503,15 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   tell*, never *healthy* — one more reason to spawn mutating workers with
   `--worktree`. Boundaries, false-positive history, and the grok deferral:
   [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **Silence for hours is a verdict of its own — `abandoned`.** A `running` or
+  `stalled` lane whose `last_activity_s` passes `FLEETFLOW_ABANDON_SECONDS`
+  (default 21600 = 6h) demotes to the FINAL state `abandoned` — even where
+  `live_signal` is false, because at that horizon total filesystem silence
+  plus no result envelope is decisive without a stream. Abandoned lanes are
+  not in flight: the dashboard stops animating them, `live_runs` stops
+  counting them, and the aggregator stops re-polling them. Rationale and the
+  STATE_RANK slot:
+  [docs/adr/ADR-025](docs/adr/ADR-025-abandonment-demotes-silent-inflight-lanes.md).
 - **Killing a lane leaves orphans — reap them.** `TaskStop` (or killing the
   background Bash task) kills the *wrapper*, not the worker's children; the
   2026-07-27 cleanup left five live `codex.exe` / `codex-code-mode-host.exe`
@@ -558,7 +567,7 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
 | [scripts/ff-doctor.sh](scripts/ff-doctor.sh) | `--offline` structural preflight (+ which `windows.sandbox` mode codex lanes will get); `--live` probes GLM endpoint, Codex auth, Grok key, Anthropic models, the `windows.sandbox` key tripwire, and reports orchestrator tier (fable/opus) |
 | [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-model launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
 | [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-model result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
-| [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
+| [scripts/ff-status.sh](scripts/ff-status.sh) | run status as JSON (lane state `running`/`stalled`/`abandoned`/`done`/`failed`, elapsed, `last_activity_s` + `stalled` + `live_signal` stall detector, hours-scale abandonment demotion, commits, tools, tokens, activity, manifest summary); `--watch N --out status.json` feeds the live monitor; `--exit-stalled` exits 14 so a watchdog can branch without parsing |
 | [scripts/ff-run.sh](scripts/ff-run.sh) | `wave --run NAME --posture P [--attend none\|land\|each] [--gate WAVE=POLICY]... [--fix-rounds N] [--severity-floor S]` sequences post-build waves (QA, security, a11y, supply-chain, perf, docs, polish) — findings ledger, triage, fix-loop, re-verify, docs-sync. `resume --run NAME` replays every manifest packet through ff-spawn in order (unchanged = cached, changed/new = live); `status --run NAME` aliases ff-status |
 | [scripts/ff-findings.sh](scripts/ff-findings.sh) | findings ledger CLI: `append [--json '...']` dedupes by fingerprint, `list`/`count [--status S] [--severity S] [--min-severity S] [--wave W]`, `set-status --fp F --status S`, `waive --fp F --reason R [--expires DATE]`, `apply-waivers` (marks open findings whose fp appears in `docs/waivers.json` as waived); append accepts `--round`/`--lane` metadata; all take `--run NAME [--repo P]` |
 | [scripts/ff-widget.sh](scripts/ff-widget.sh) | HTML fragment for chat sandbox: wave bar, metric cells (lanes/tokens/cost/findings/elapsed), lane grid (capped at `--max-lanes N=10`), findings strip (severity chips when >0), buttons (refresh, triage failed, review gate when gated); stateless, CSS variables only, sole external reference is the fleetflow.lab anchor |
@@ -721,6 +730,14 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   comforts: the tab title carries `(N▶ M⚠)` so a background tab still alerts on
   stalls, `/` focuses the filter, Esc closes the costs modal, and every run
   detail has an "export json" button (client-side blob, nothing leaves the box).
+- **A time-window lens scopes every view.** The top-bar window select (This/Last
+  week · month · quarter, custom range, All time — weeks start Monday, quarters
+  calendar) filters which runs and history records feed *every* view and
+  roll-up: nav, charts, token/cost totals, failure rates, the fleet view's
+  observed stats. A record is in the window when its activity interval overlaps
+  it, so live runs always show in any "this …" window. Persisted under
+  `ffd.window` (ADR-013); plan-blend pools deliberately stay window-independent
+  so a month's blended costs still sum to the fee.
 - **Card language is shared with the [summon](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/summon) session picker** — same
   header, title/summary, bar strip, chip row, path footer. Change one, change both.
   The right pane leads with a **column chart** (tokens per lane, or per run on the

@@ -49,7 +49,11 @@ PRUNE = {
 
 # Roll-up precedence. A single stalled lane is the headline for the whole run:
 # it is the state most likely to be costing money while looking like progress.
-STATE_RANK = ["stalled", "running", "failed", "done", "unknown"]
+# `abandoned` (ADR-025: silent past FLEETFLOW_ABANDON_SECONDS, final, not in
+# flight) sits below failed - it is stale news, not live risk - but above done,
+# so a run that quietly died never headlines as finished. Keep this list in
+# step with ff-status.sh, ff-widget.sh, ff-dashboard.html, and ff-monitor.html.
+STATE_RANK = ["stalled", "running", "failed", "abandoned", "done", "unknown"]
 
 
 def err(msg: str) -> None:
@@ -240,7 +244,11 @@ def roll_up(status: dict) -> dict:
     # gets polled hard; a run abandoned three days ago in `stalled` gets polled
     # rarely, because re-reading cannot change a verdict that is already final.
     inflight = [l for l in lanes if l.get("state") in ("running", "stalled")]
-    idle = min((l.get("last_activity_s") or 0) for l in inflight) if inflight else None
+    # idle_s also covers abandoned lanes so an abandoned run's card can still say
+    # how long it has been silent - but the graduated re-read gate above keys on
+    # running/stalled counts only, so abandonment stops the poll burn as designed.
+    silent = inflight or [l for l in lanes if l.get("state") == "abandoned"]
+    idle = min((l.get("last_activity_s") or 0) for l in silent) if silent else None
     return {
         "state": state,
         "counts": counts,

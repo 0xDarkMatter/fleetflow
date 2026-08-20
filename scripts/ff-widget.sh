@@ -233,7 +233,7 @@ DATA_JSON="$(printf '%s' "$STATUS_JSON" | jq -c \
   --argjson cost_partial "$COST_PARTIAL_JSON" \
   --argjson max "$MAX_LANES" \
   '
-  def rank: ["stalled","running","failed","done"];
+  def rank: ["stalled","running","failed","abandoned","done"];   # keep in step with ff-aggregate.py STATE_RANK
   (.lanes // []) as $lanes
   | (reduce $lanes[] as $l ({}; .[$l.state] = ((.[$l.state] // 0) + 1))) as $counts
   | ((rank | map(select($counts[.] != null)) | .[0]) // "unknown") as $state
@@ -244,7 +244,7 @@ DATA_JSON="$(printf '%s' "$STATUS_JSON" | jq -c \
       orchestrator: .orchestrator,
       summary: {
         state: $state,
-        idle_s: ([$lanes[] | select(.state=="stalled") | .last_activity_s] | max // 0),
+        idle_s: ([$lanes[] | select(.state=="stalled" or .state=="abandoned") | .last_activity_s] | max // 0),
         counts: $counts,
         lane_count: ($lanes | length),
         elapsed_s: ([$lanes[].elapsed_s] | if length > 0 then max else 0 end),

@@ -7,7 +7,9 @@
 # from artifact mtimes, activity from lane commits (claude models) or the
 # codex event stream (item.completed counts + last item). A running lane whose
 # activity signal has gone silent past FLEETFLOW_STALL_SECONDS is reported
-# `stalled` (see the stall block below for why that state has to exist).
+# `stalled` (see the stall block below for why that state has to exist), and a
+# running/stalled lane silent past FLEETFLOW_ABANDON_SECONDS is demoted to
+# `abandoned` - final, no longer in flight (ADR-025).
 # stdout: the JSON document (data only). stderr: chatter.
 #
 # Exit codes: 0 ok | 2 usage | 14 stalled lane(s) (only with --exit-stalled)
@@ -28,13 +30,17 @@ Usage: ff-status.sh --run NAME [--repo PATH] [--out FILE] [--watch SECONDS]
                    With --watch this turns the loop into a watchdog: it polls
                    until a lane stalls, then exits 14.
 
-Lane state: running | stalled | done | failed. A lane is `stalled` once its
-LIVE stream (codex/pi --json events, claude/glm session transcript, or the
-worker-authored wt-<id>/.ff-heartbeat file) has been silent longer than
+Lane state: running | stalled | abandoned | done | failed. A lane is `stalled`
+once its LIVE stream (codex/pi --json events, claude/glm session transcript, or
+the worker-authored wt-<id>/.ff-heartbeat file) has been silent longer than
 FLEETFLOW_STALL_SECONDS (default 600). `last_activity_s` is reported for every
 lane; `live_signal` says whether the lane has a stream that could substantiate
 a stall at all - where it is false, `stalled` is always false and means
-"cannot tell", not "healthy".
+"cannot tell", not "healthy". A running or stalled lane whose last_activity_s
+exceeds FLEETFLOW_ABANDON_SECONDS (default 21600 = 6h) is demoted to
+`abandoned` - a FINAL verdict, applied regardless of live_signal, because at
+that timescale "nothing at all has been written for hours and there is no
+result" is decisive where a minute-scale stall claim would not be (ADR-025).
 
 Tokens: `tokens` is LEGACY and model-INCONSISTENT (codex = grand total, claude
 models = output only) - frozen because ff-monitor.html renders it. Compare lanes
@@ -43,7 +49,8 @@ which mean the same thing for every model. `cost_usd` is the worker's own
 self-reported spend (claude models only) and is null where unavailable.
 
 ENV
-  FLEETFLOW_STALL_SECONDS  silence before a running lane reads stalled (600)
+  FLEETFLOW_STALL_SECONDS    silence before a running lane reads stalled (600)
+  FLEETFLOW_ABANDON_SECONDS  silence before an in-flight lane reads abandoned (21600)
 
 EXAMPLES
   ff-status.sh --run currency | jq '.lanes[] | {id, state, elapsed_s}'
@@ -75,6 +82,13 @@ RUNDIR="$REPO/.fleetflow/$RUN"
 [ -f "$RUNDIR/journal.jsonl" ] || { err "no journal at $RUNDIR"; exit 2; }
 STALL_S="${FLEETFLOW_STALL_SECONDS:-600}"
 echo "$STALL_S" | grep -qE '^[0-9]+$' || { err "FLEETFLOW_STALL_SECONDS must be an integer"; exit 2; }
+# Abandonment threshold (ADR-025): hours, not minutes, on purpose. The stall
+# detector answers "is this wedged RIGHT NOW" and needs a live stream to say so;
+# abandonment answers "has this run been walked away from", and at a 6h horizon
+# total filesystem silence + no result envelope is decisive even for lanes the
+# stall detector cannot cover (live_signal:false).
+ABANDON_S="${FLEETFLOW_ABANDON_SECONDS:-21600}"
+echo "$ABANDON_S" | grep -qE '^[0-9]+$' || { err "FLEETFLOW_ABANDON_SECONDS must be an integer"; exit 2; }
 
 # One stat for the WHOLE run dir instead of ~6 per lane. Process spawns dominate
 # this script's cost on Windows (~150ms each): a 23-lane run was paying ~20s just
@@ -362,6 +376,21 @@ emit() {
     if [ "$state" = "running" ] && [ "$live" = true ] && [ "$idle" -gt "$STALL_S" ]; then
       state="stalled"; stalled=true; STALL_ANY=1
     fi
+    # --- abandonment (ADR-025) ------------------------------------------------
+    # A second, much longer silence horizon that - unlike the stall verdict -
+    # needs NO live stream: `idle` here already includes artifact/.err/result
+    # mtimes (a write there IS real activity) and falls back to the lane's own
+    # start time, so for every lane it is a true lower bound on how long nothing
+    # whatsoever has happened. Past ABANDON_S with no result envelope the lane is
+    # not "possibly still thinking" - it was walked away from. `abandoned` is
+    # FINAL and not in flight: the dashboard stops animating it, roll-ups stop
+    # counting it live, and the graduated re-read timer stops burning on it.
+    # The stalled flag drops with the demotion - state carries the verdict now -
+    # but STALL_ANY still trips so an --exit-stalled watchdog fires on lanes the
+    # stall detector could never cover (live_signal:false).
+    if { [ "$state" = "running" ] || [ "$state" = "stalled" ]; } && [ "$idle" -gt "$ABANDON_S" ]; then
+      state="abandoned"; stalled=false; STALL_ANY=1
+    fi
 
     lanes="$(jq -nc --argjson L "$lanes" \
       --arg id "$id" --arg model "$model" --arg state "$state" --arg activity "$activity" \
@@ -433,8 +462,8 @@ emit() {
           "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r' | tail -1)"
   [ -n "$orch" ] || orch="$(jq -r '.orchestrator // ""' "$RUNDIR/manifest.json" 2>/dev/null | tr -d '\r')"
   jq -nc --arg run "$RUN" --arg repo "$REPO" --argjson now "$now" --argjson lanes "$lanes" --arg orch "$orch" \
-    --argjson manifest "${manifest:-null}" --argjson stall "$STALL_S" \
-    '{run:$run,repo:$repo,generated_at:$now,stall_seconds:$stall,
+    --argjson manifest "${manifest:-null}" --argjson stall "$STALL_S" --argjson abandon "$ABANDON_S" \
+    '{run:$run,repo:$repo,generated_at:$now,stall_seconds:$stall,abandon_seconds:$abandon,
       orchestrator:(if $orch=="" then null else $orch end),
       lanes:$lanes,manifest:$manifest}'
 }
