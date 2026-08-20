@@ -113,6 +113,18 @@ How the roles compose in a typical run:
   <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; GLM-5.3, Sonnet, Codex, Grok, and Pi build independently; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens at least of the cost" src="docs/diagrams/roles-light.svg">
 </picture>
 
+Behaviour per seat is a versioned **role card**
+([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)): twelve
+trade-guild personas in [assets/roles/](assets/roles/), each carrying its
+mandate, stance rules, bounds, and reply shape — prepended into packets by
+`ff-plan draft` so the doctrine ships with the work instead of being retyped
+per run.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/role-cards-dark.svg">
+  <img alt="the twelve role-card seats grouped by run tier: plan-and-discover seats (Architect, Oracle, Scout, Surveyor, Scholar) author packets; build seats (Builder, Inspector, Warden) write and test in exclusive scopes; verify-and-consolidate seats (Adversary, Judge, Critic, Composer) attack, score, and merge, with findings looping back to build" src="docs/diagrams/role-cards-light.svg">
+</picture>
+
 ### A word on Pi
 
 [Pi](https://github.com/earendil-works/pi) deserves a specific mention: it is
@@ -250,6 +262,33 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 | [docs/adr/](docs/adr/) | Architecture Decision Records: the append-only WHY behind the standing rules (one process, escape guard, stall detection, pricing, …); lint-gated by the test suite |
 
 ## Recent Updates
+
+### v0.2.0 · 2026-08-20 · the planning stage
+
+- 📐 **`ff-plan` — runs are planned before they spawn**: `draft` authors the
+  plan doc, packets, and manifest up front; `lint` gates the spawn (scope
+  conflicts, dependency cycles, missing ADR constraints, routing sanity —
+  every check reporting armed/disarmed); `refute` sends a cross-provider
+  Adversary to attack the decomposition before a build token is spent;
+  `estimate` prices lanes honestly ([ADR-026..030](docs/adr/)).
+- 🎭 **Twelve role cards** — Architect through Warden: versioned behavioural
+  contracts (mandate, stance rules, bounds, reply shape) prepended into
+  packets, replacing per-run folklore
+  ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)).
+- 🧾 **Packet frontmatter**: `owns`/`modifies`/`registries` make
+  file-disjointness machine-checkable; shared registries get single-writer
+  enforcement.
+- 🏭 **Generator registry**: factory-backed work (Forma CLI+MCP stamping)
+  plans as `expand`-able sub-fleets; first entry registered, arming pending.
+- 🪦 **Abandoned-lane state**: runs walked away from stop rendering as live —
+  hours-scale silence demotes to a final `abandoned` state; the dashboard
+  stops animating and re-polling them
+  ([ADR-025](docs/adr/ADR-025-abandonment-demotes-silent-inflight-lanes.md)).
+- 🗓️ **Time-window lens**: this/last week · month · quarter, custom range, or
+  all time — scoping every dashboard view and roll-up.
+- ✅ Suite grown to 442 hermetic assertions; the ff-plan build itself ran as
+  a codex+glm fleet with tested-posture QA (findings ledger: 8 fixed, 1
+  waived, 0 open).
 
 ### v0.1.0 · 2026-08-14 · first public release
 
