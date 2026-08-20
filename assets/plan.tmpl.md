@@ -1,11 +1,16 @@
-<!-- SEEDED SKELETON (2026-08-20): the templates lane of run `ffplan` owns
-     this file — see docs/plans/FFPLAN-2026-08.md §7 and ADR-026/027. -->
-# Run plan: `{{RUN}}` — {{TITLE}}
+<!-- assets/plan.tmpl.md - the frozen v1 run-plan template. `ff-plan draft`
+     scaffolds docs/plans/<RUN>.md from this file by substituting the
+     {{BRACES}} placeholders; the tests lane checks template parity (section
+     set, lane-table columns, machine header). Spec:
+     docs/plans/FFPLAN-2026-08.md section 7; ADR-026, ADR-027, ADR-028. -->
 
-**Status:** draft ({{DATE}}) · **Disposable** — decisions live in the cited
-ADRs; this doc carries only the run's shared contracts and lane table. Cite,
-never restate. File ownership is exclusive. FINAL REPLY per packet
-`final_reply` shape.
+# Run plan: `{{RUN}}` - {{TITLE}}
+
+**Status:** draft ({{DATE}}) - **Disposable**: decisions live in the cited
+ADRs; this doc carries only the run's shared contracts and lane table.
+Cite, never restate. Every lane reads its packet first, then only the
+numbered sections named there. File ownership is exclusive. FINAL REPLY
+follows each packet's declared `final_reply` shape.
 
 ```
 GOAL: {{GOAL}}
@@ -18,32 +23,33 @@ DETECTED-CONFLICTS: {{0_OR_LIST}}
 BOUNDS: {{DECLARED_BOUNDS_OR_NONE}}
 ```
 
-## §1 Shared contracts
+## 1. Shared contracts
 
-<!-- frozen, verbatim; every packet cites §§ by number -->
+<!-- good entry: frozen interface text (wire shapes, CLI contracts, schemas) that two or more packets bind to; packets cite the section number, never retype it -->
 
-## §2 Lane table
+## 2. Lane table
+
+<!-- good entry: one row per packet; id = packet filename stem and manifest id; owns = repo-relative globs disjoint from every other row; builds cites sections of this doc; gate = auto|review|stop (ADR-018) -->
 
 | id | role | class | model | owns (exclusive) | builds | gate |
 |---|---|---|---|---|---|---|
 
-## §3 Dependency sketch
+## 3. Dependency sketch
 
-<!-- ASCII DAG + one line of prose per edge: WHY it exists.
-     Barriers must name what they join (ADR-027). -->
+<!-- good entry: an ASCII DAG plus one prose line per edge saying why the edge exists; every barrier names what it joins (ADR-027) -->
 
-## §4 Degradation plan
+## 4. Degradation plan
 
-<!-- "if something slips, drop X first" -->
+<!-- good entry: an ordered drop list - "if something slips, drop X first" - chosen before anything slips -->
 
-## §5 Risk register
+## 5. Risk register
 
-<!-- app-shape: >=5 risks, likelihood x impact x mitigation -->
+<!-- good entry: app-shape runs carry at least 5 risks (feature-shape: optional), one line each - likelihood x impact x mitigation -->
 
-## §6 Verify plan
+## 6. Verify plan
 
-<!-- Adversary seats, Judge seats, providers named (ADR-028) -->
+<!-- good entry: every Adversary and Judge seat named with its provider, never the builder's own; refuters attack the decomposition before spawn and the integrated tree after (ADR-028) -->
 
-## §7 Chip seats
+## 7. Chip seats
 
-<!-- human-attended lanes, if any -->
+<!-- good entry: each human-attended lane and the decision it waits on; "none" is a valid entry; chips are steerable conveniences, never load-bearing -->
