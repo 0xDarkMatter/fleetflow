@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 960 416" role="img" aria-labelledby="ffplan-dark-title ffplan-dark-desc" xmlns="http://www.w3.org/2000/svg">
+    <title id="ffplan-dark-title">ff-plan: the pre-spawn planning gate</title>
+    <desc id="ffplan-dark-desc">A spec is drafted into a plan doc, packets, and manifest; lint gates the spawn with exit-10 findings looping back into the draft; a cross-provider Adversary refutes the decomposition, findings feed a ledger-and-fix loop, and a plan refuted twice escalates to a human; a clean plan passes doctor preflight and the fleet spawns.</desc>
+    <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
+      <marker id="ffplan-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+      <marker id="ffplan-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#2d3142"/>
+
+    <!-- arrows (before nodes) -->
+    <line x1="144" y1="100" x2="182" y2="100" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+    <line x1="344" y1="100" x2="382" y2="100" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+    <line x1="528" y1="100" x2="574" y2="100" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+
+    <!-- exit 10? clean -> refute -->
+    <line x1="624" y1="136" x2="624" y2="198" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+    <rect x="632" y="156" width="44" height="12" rx="2" fill="#2d3142"/>
+    <text x="636" y="165" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">CLEAN</text>
+
+    <!-- exit 10? findings -> back to draft (dashed loop, over the top) -->
+    <path d="M 624,64 V 48 Q 624,40 616,40 H 312 Q 304,40 304,48 V 70"
+          fill="none" stroke="#bfc0c0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ffplan-dark-arrow)"/>
+    <rect x="416" y="22" width="88" height="12" rx="2" fill="#2d3142"/>
+    <text x="460" y="31" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EXIT 10 &#183; FIX</text>
+
+    <!-- refute -> findings? -->
+    <line x1="552" y1="228" x2="466" y2="228" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+
+    <!-- findings? clean -> doctor -->
+    <line x1="368" y1="228" x2="322" y2="228" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+    <rect x="324" y="208" width="44" height="12" rx="2" fill="#2d3142"/>
+    <text x="346" y="217" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CLEAN</text>
+
+    <!-- findings? findings -> ledger -> fix -> back to draft (dashed loop) -->
+    <path d="M 416,192 V 168 Q 416,160 408,160 H 240 Q 232,160 232,152 V 130"
+          fill="none" stroke="#bfc0c0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ffplan-dark-arrow)"/>
+    <rect x="280" y="140" width="92" height="12" rx="2" fill="#2d3142"/>
+    <text x="326" y="149" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FINDINGS &#183; FIX</text>
+
+    <!-- findings? refuted twice -> human gate -->
+    <line x1="416" y1="264" x2="416" y2="302" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+    <rect x="424" y="272" width="80" height="12" rx="2" fill="#2d3142"/>
+    <text x="428" y="281" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">REFUTED &#215;2</text>
+
+    <!-- doctor -> spawn -->
+    <line x1="176" y1="228" x2="146" y2="228" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#ffplan-dark-arrow)"/>
+
+    <!-- ============ nodes ============ -->
+    <!-- spec (start oval) -->
+    <rect x="32" y="76" width="112" height="48" rx="20" fill="#2d3142"/>
+    <rect x="32" y="76" width="112" height="48" rx="20" fill="rgba(191,192,192,0.10)" stroke="#8e98ac" stroke-width="1"/>
+    <text x="88" y="104" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">spec</text>
+
+    <!-- draft -->
+    <rect x="184" y="72" width="160" height="56" rx="6" fill="#2d3142"/>
+    <rect x="184" y="72" width="160" height="56" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="264" y="96" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ff-plan draft</text>
+    <text x="264" y="112" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plan &#183; packets &#183; manifest</text>
+
+    <!-- lint (focal gate) -->
+    <rect x="384" y="72" width="144" height="56" rx="6" fill="#2d3142"/>
+    <rect x="384" y="72" width="144" height="56" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+    <text x="456" y="96" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ff-plan lint</text>
+    <text x="456" y="112" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">armed / disarmed checks</text>
+
+    <!-- decision: exit 10? -->
+    <polygon points="624,64 672,100 624,136 576,100" fill="#2d3142"/>
+    <polygon points="624,64 672,100 624,136 576,100" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="624" y="104" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">exit 10?</text>
+
+    <!-- refute (focal adversary) -->
+    <rect x="552" y="200" width="144" height="56" rx="6" fill="#2d3142"/>
+    <rect x="552" y="200" width="144" height="56" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+    <text x="624" y="224" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ff-plan refute</text>
+    <text x="624" y="240" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">x-provider Adversary</text>
+
+    <!-- decision: findings? -->
+    <polygon points="416,192 464,228 416,264 368,228" fill="#2d3142"/>
+    <polygon points="416,192 464,228 416,264 368,228" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="416" y="232" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">findings?</text>
+
+    <!-- doctor -->
+    <rect x="176" y="200" width="144" height="56" rx="6" fill="#2d3142"/>
+    <rect x="176" y="200" width="144" height="56" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="248" y="224" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ff-doctor</text>
+    <text x="248" y="240" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">provider preflight</text>
+
+    <!-- spawn (end oval) -->
+    <rect x="32" y="204" width="112" height="48" rx="20" fill="#2d3142"/>
+    <rect x="32" y="204" width="112" height="48" rx="20" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="88" y="232" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ff-spawn</text>
+
+    <!-- human gate -->
+    <rect x="344" y="304" width="144" height="48" rx="6" fill="#2d3142"/>
+    <rect x="344" y="304" width="144" height="48" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+    <text x="416" y="324" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">human gate</text>
+    <text x="416" y="340" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">arbitrates the plan</text>
+
+    <!-- legend -->
+    <line x1="32" y1="384" x2="928" y2="384" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+    <text x="32" y="400" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+    <rect x="112" y="392" width="12" height="8" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+    <text x="132" y="400" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace">FOCAL: THE PLAN GATES</text>
+    <line x1="360" y1="396" x2="384" y2="396" stroke="#bfc0c0" stroke-width="1" stroke-dasharray="4,3"/>
+    <text x="392" y="400" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace">FINDINGS LOOP (EXIT 10)</text>
+    <polygon points="620,390 626,396 620,402 614,396" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+    <text x="634" y="400" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace">DECISION: TWO ROUNDS MAX (ADR-028)</text>
+  </svg>
