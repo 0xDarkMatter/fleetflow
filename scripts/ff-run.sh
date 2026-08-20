@@ -26,6 +26,7 @@ Usage: ff-run.sh resume  --run NAME [--repo PATH]
        ff-run.sh wave    --run NAME --posture P [--attend none|land|each]
                          [--gate WAVE=POLICY]... [--wave +perf,-a11y]
                          [--fix-rounds N] [--severity-floor S]
+                         [--target diff|staging=URL]
                          [--dry-run] [--continue] [--repo PATH]
 
   resume --run NAME   replay every packet in <run>/manifest.json through
@@ -45,7 +46,11 @@ Usage: ff-run.sh resume  --run NAME [--repo PATH]
                       --fix-rounds N (default 2) bounds the fix/re-verify loop;
                       0 degrades to report-only. --severity-floor S
                       (low|medium|high|critical, default medium) is auto-fixed
-                      at/below, escalated above. --dry-run resolves the plan
+                      at/below, escalated above. --target (default diff) aims
+                      the finder waves: diff inspects the change; staging=URL
+                      drives the running product at URL - full interaction
+                      permitted, but lanes NEVER deploy/restart/reconfigure
+                      the target service (ADR-032). --dry-run resolves the plan
                       and generates finder packets into <run>/dryrun/ without
                       spawning. --continue resumes from manifest wave state
                       (first non-done wave; clears a pending gate).
@@ -68,6 +73,7 @@ EXAMPLES
   ff-run.sh wave --run audit --posture tested --attend land
   ff-run.sh wave --run audit --posture hardened --gate fix=review --fix-rounds 1
   ff-run.sh wave --run audit --posture tested --dry-run
+  ff-run.sh wave --run audit --posture tested --target staging=https://audit.staging.example
   ff-run.sh wave --run audit --continue
 EOF
 }
@@ -97,15 +103,15 @@ subst_template() {
 
 wave_main() {
 RUN="" REPO="" POSTURE="" ATTEND="none" DRYRUN=0 CONTINUE=0
-FIX_ROUNDS=2 SEV_FLOOR="medium" GATES="" WAVEADJ=""
-FIX_ROUNDS_SET=0 SEV_FLOOR_SET=0 POSTURE_SET=0
+FIX_ROUNDS=2 SEV_FLOOR="medium" GATES="" WAVEADJ="" TARGET="diff"
+FIX_ROUNDS_SET=0 SEV_FLOOR_SET=0 POSTURE_SET=0 TARGET_SET=0
 while [ $# -gt 0 ]; do
   # flags that take a value: fail loudly instead of leaving $1 unconsumed - a
   # bare `shift 2` with only one argument left silently no-ops (shift errors
   # but the loop doesn't check it), which spins forever re-matching the same
   # flag. Guard every value-taking flag before the dispatch below.
   case "$1" in
-    --run|--repo|--posture|--attend|--gate|--wave|--fix-rounds|--severity-floor)
+    --run|--repo|--posture|--attend|--gate|--wave|--fix-rounds|--severity-floor|--target)
       [ $# -ge 2 ] || { err "missing value for $1"; usage >&2; exit 2; }
       ;;
   esac
@@ -118,6 +124,7 @@ while [ $# -gt 0 ]; do
     --wave) WAVEADJ="$2"; shift 2 ;;
     --fix-rounds) FIX_ROUNDS="$2"; FIX_ROUNDS_SET=1; shift 2 ;;
     --severity-floor) SEV_FLOOR="$2"; SEV_FLOOR_SET=1; shift 2 ;;
+    --target) TARGET="$2"; TARGET_SET=1; shift 2 ;;
     --dry-run) DRYRUN=1; shift ;;
     --continue) CONTINUE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -133,6 +140,14 @@ echo "$RUN" | grep -qE '^[a-z0-9-]+$' || { err "invalid or missing --run"; exit 
 case "$ATTEND" in none|land|each) ;; *) err "invalid --attend '$ATTEND' (none|land|each)"; exit 2 ;; esac
 echo "$FIX_ROUNDS" | grep -qE '^[0-9]+$' || { err "invalid --fix-rounds (non-negative integer)"; exit 2; }
 case "$SEV_FLOOR" in low|medium|high|critical) ;; *) err "invalid --severity-floor '$SEV_FLOOR'"; exit 2 ;; esac
+# --target (ADR-032): `diff` (inspect the change - today's behaviour) or
+# `staging=<http(s) url>` (drive the running product at that URL). Nothing
+# else - no prod tier, no environment names; each waits for evidence of need.
+case "$TARGET" in
+  diff) ;;
+  staging=http://?*|staging=https://?*) ;;
+  *) err "invalid --target '$TARGET' (diff | staging=<http(s)://url>)"; exit 2 ;;
+esac
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$HERE/ff-spawn.sh"
@@ -204,6 +219,9 @@ if [ "$CONTINUE" = 1 ] || [ "${HAS_WAVES:-0}" -gt 0 ]; then
   if [ "$SEV_FLOOR_SET" = 0 ]; then
     msf="$(jqr '.severity_floor // empty' "$MANIFEST")"; [ -n "$msf" ] && SEV_FLOOR="$msf"
   fi
+  if [ "$TARGET_SET" = 0 ]; then
+    mtg="$(jqr '.target // empty' "$MANIFEST")"; [ -n "$mtg" ] && TARGET="$mtg"
+  fi
 fi
 
 wave_status() { jqr --arg n "$1" '(.waves[] | select(.name==$n) | .status) // "pending"' "$MANIFEST"; }
@@ -232,8 +250,8 @@ if [ "$EXISTING_COUNT" -gt 0 ]; then
   while IFS= read -r n; do FINDERS+=("$n"); done < <(jqr '.[] | select(.kind=="finder") | .name' <<<"$EXISTING_WAVES")
   WAVES_JSON="$EXISTING_WAVES"
   if [ "$DRYRUN" != 1 ]; then
-    jq --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-      '.posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
+    jq --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" --arg tg "$TARGET" \
+      '.posture = $posture | .fix_rounds = $fr | .severity_floor = $sf | .target = $tg' \
       "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
   fi
 else
@@ -324,8 +342,8 @@ else
 
   if [ "$DRYRUN" != 1 ]; then
     # sibling-key upsert (ADR-017 pattern): `phases`/`packets` untouched.
-    jq --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-      '.waves = $waves | .posture = $posture | .fix_rounds = $fr | .severity_floor = $sf' \
+    jq --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" --arg tg "$TARGET" \
+      '.waves = $waves | .posture = $posture | .fix_rounds = $fr | .severity_floor = $sf | .target = $tg' \
       "$MANIFEST" > "$MANIFEST.tmp" && mv -f "$MANIFEST.tmp" "$MANIFEST"
   else
     # dry-run must not freeze the RESOLVED plan (that's the side effect that
@@ -356,19 +374,19 @@ if [ "$DRYRUN" = 1 ]; then
     n=1
     while [ "$n" -le "$lanes" ]; do
       subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
-        FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$RUNDIR/dryrun/${f}-${n}.task.md"
+        TARGET "$TARGET" FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$RUNDIR/dryrun/${f}-${n}.task.md"
       n=$((n+1))
     done
   done
   if [ "$DRYRUN_FAIL" = 1 ]; then
     err "dry-run: plan is INVALID - one or more selected waves have no template; nothing spawned, packets partial/absent under $RUNDIR/dryrun/"
-    jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-      '{dry_run:true,valid:false,posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves}'
+    jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" --arg tg "$TARGET" \
+      '{dry_run:true,valid:false,posture:$posture,fix_rounds:$fr,severity_floor:$sf,target:$tg,waves:$waves}'
     return 2
   fi
   err "dry-run: resolved $(jq 'length' <<<"$WAVES_JSON") wave(s) for posture '$POSTURE', packets under $RUNDIR/dryrun/"
-  jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-    '{dry_run:true,valid:true,posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves}'
+  jq -nc --argjson waves "$WAVES_JSON" --arg posture "$POSTURE" --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" --arg tg "$TARGET" \
+    '{dry_run:true,valid:true,posture:$posture,fix_rounds:$fr,severity_floor:$sf,target:$tg,waves:$waves}'
   return 0
 fi
 
@@ -409,8 +427,10 @@ fi
 spawn_finder_lane() {
   local name="$1" lid="$2" model="$3" tmpl="$4" maxturns="$5" effort="$6" pf rc=0
   pf="$RUNDIR/packets/${lid}.task.md"
+  # TARGET is a run-level input like BASE_SHA (never a timestamp, same for
+  # every lane of the run), so embedding it stays ADR-012 cache-key clean.
   subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$REPO_BASE_SHA" \
-    FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
+    TARGET "$TARGET" FINDINGS_JSON "[]" SEVERITY_RUBRIC "$SEV_RUBRIC" > "$pf"
   bash "$SPAWN" --run "$RUN" --id "$lid" --model "$model" --phase "$name" \
     --prompt-file "$pf" --max-turns "$maxturns" --repo "$REPO" --worktree \
     ${effort:+--effort "$effort"} --schema "$SCHEMA" >/dev/null 2>>"$RUNDIR/$lid.spawn.err" || rc=$?
@@ -646,8 +666,10 @@ run_fix_wave() {
           rvpf="$RUNDIR/packets/${rvid}.task.md"
           # ADR-012 purity: strip ledger-only fields before embedding, same
           # as the fix packet above; fp stays.
+          # TARGET here too: re-verify replays the FINDER's template, which
+          # carries %%TARGET%% - without it the placeholder survives raw.
           subst_template "$WAVE_ROOT/$tmpl" RUN "$RUN" REPO_HINT "$REPO" BASE_SHA "$base_sha" \
-            FINDINGS_JSON "$(jq -c '[. | del(.ts,.id,.lane,.status,.round)]' <<<"$finding")" \
+            TARGET "$TARGET" FINDINGS_JSON "$(jq -c '[. | del(.ts,.id,.lane,.status,.round)]' <<<"$finding")" \
             SEVERITY_RUBRIC "$SEV_RUBRIC" > "$rvpf"
           # --base pins the re-verify worktree to the FIXED tree (this
           # finding's group's committed branch), not ff-spawn's `main` default.
@@ -779,8 +801,8 @@ print_summary() {
   fi
   jq -nc --argjson waves "$(jq -c '.waves // []' "$MANIFEST")" --argjson findings "$findings_counts" \
     --argjson waived "$waived" --argjson costs "$costs" --arg posture "$POSTURE" \
-    --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" \
-    '{posture:$posture,fix_rounds:$fr,severity_floor:$sf,waves:$waves,
+    --argjson fr "$FIX_ROUNDS" --arg sf "$SEV_FLOOR" --arg tg "$TARGET" \
+    '{posture:$posture,fix_rounds:$fr,severity_floor:$sf,target:$tg,waves:$waves,
       skipped:[$waves[] | select(.status=="skipped") | .name],
       findings:$findings,waived:$waived,cost_by_wave:$costs}'
 }

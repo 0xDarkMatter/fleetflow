@@ -1308,6 +1308,40 @@ else
   echo "  SKIP  waves stop gate (sequencer absent)"
 fi
 
+# --- wave --target (ADR-032): diff default, staging URL, recorded in plan -----
+# Default (no flag) coverage is the wlegacy --dry-run test above: it passes with
+# no --target, which IS the diff default's compatibility contract.
+if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ]; then
+  check "waves target: bogus value -> 2" 2 \
+    bash "$S/ff-run.sh" wave --run wtarget --repo "$WREPO" --posture tested --target bogus --dry-run
+  check "waves target: staging without http(s) URL -> 2" 2 \
+    bash "$S/ff-run.sh" wave --run wtarget --repo "$WREPO" --posture tested --target staging=notaurl --dry-run
+  WTGT="$(bash "$S/ff-run.sh" wave --run wtarget --repo "$WREPO" --posture tested \
+    --target staging=http://127.0.0.1:9 --dry-run 2>/dev/null)"; WTGTRC=$?
+  [ "$WTGTRC" = "0" ] && ok "waves target: staging URL accepted by --dry-run" \
+    || bad "waves target: staging dry-run rc=$WTGTRC"
+  printf '%s' "$WTGT" | jq -e '.target=="staging=http://127.0.0.1:9"' >/dev/null 2>&1 \
+    && ok "waves target: dry-run plan JSON carries target" \
+    || bad "waves target: target missing from plan JSON"
+  grep -q 'staging=http://127.0.0.1:9' "$WREPO/.fleetflow/wtarget/dryrun/qa-1.task.md" 2>/dev/null \
+    && ok "waves target: %%TARGET%% substituted into the qa dry-run packet" \
+    || bad "waves target: qa dry-run packet lacks the staging URL"
+else
+  echo "  SKIP  waves target (sequencer or catalogue absent)"
+fi
+# static pin: the three target-aware templates each carry the placeholder the
+# sequencer substitutes - a dropped %%TARGET%% ships packets with no target.
+for t in qa visual-qa perf; do
+  TPL="$HERE/../assets/wave-packets/$t.tmpl.md"
+  if [ -f "$TPL" ]; then
+    grep -q '%%TARGET%%' "$TPL" \
+      && ok "waves target: $t.tmpl.md carries %%TARGET%%" \
+      || bad "waves target: $t.tmpl.md lost %%TARGET%%"
+  else
+    echo "  SKIP  waves target pin ($t.tmpl.md absent)"
+  fi
+done
+
 # --- ff-archive: label parity, orchestrator carry-through ---------------------
 # The dashboard renders live and archived runs side by side, so an archived
 # record must not change identity or lose facts the live half shows.
