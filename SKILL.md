@@ -128,7 +128,7 @@ routing table, and before/after snippets:
 ## The run lifecycle
 
 ```
-plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) → fleet-ops land → clean up
+ff-plan (draft → lint → refute) → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) → fleet-ops land → clean up
 ```
 
 1. **Plan packets that are file-disjoint.** No two lanes may touch the same file
@@ -141,10 +141,43 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    [The docs contract](#the-docs-contract--plans-cite-adrs-own-reference-states):
    in a repo with `docs/adr/`, check what governs the paths a packet touches
    *before* authoring it, and paste governing BLUFs into the packet.
-2. **Preflight:** `scripts/ff-doctor.sh --live` — probes every provider (GLM
+2. **Plan the run:** `scripts/ff-plan.sh draft --run NAME --spec FILE`
+   scaffolds the plan doc, one packet stub per lane, and the manifest —
+   `ff-spawn` consumes packet entries rather than creating them
+   ([ADR-026](docs/adr/ADR-026-ff-plan-authors-the-manifest-spawn-consumes-it.md)). Packets declare `role:` and draft
+   prepends the persona card (Architect … Warden) carrying that lane's
+   behaviour contract
+   ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)). `lint` is the
+   gate before spawn — scope conflicts, dependency edges, ADR-BLUF presence,
+   routing sanity — exit 10 on findings, every check reporting `armed` or
+   `disarmed`, and it also runs as a section of `ff-doctor --offline`
+   ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)). `refute` then spawns one
+   cross-provider Adversary lane to attack the decomposition before any
+   build lane spawns
+   ([ADR-028](docs/adr/ADR-028-the-plan-is-refuted-before-the-fleet-spawns.md)); the decomposition itself stays
+   pipeline-first — lanes flow to their own downstream, and a barrier is
+   legal only when the plan names its join
+   ([ADR-027](docs/adr/ADR-027-pipeline-first-decomposition-barriers-name-their-join.md)). Exit codes follow the sibling
+   family: `0` ok, `2` usage, `3` missing, `10` findings.
+
+   ```bash
+   bash scripts/ff-plan.sh draft  --run demo --spec spec/demo.md
+   bash scripts/ff-plan.sh lint   --run demo   # exit 10 = findings; fix before doctor
+   bash scripts/ff-plan.sh refute --run demo   # cross-provider Adversary attacks the plan
+   ```
+
+   Planning checklist — what `draft` expects and `lint` enforces:
+
+   - file-disjoint `owns:` — no two packets own the same path;
+   - `depends_on:` are edges between packets, not wave numbers;
+   - every barrier names its join (integrated-tree refute, cross-lane dedup, land);
+   - governing ADR BLUFs pasted into each packet per `adr-touching`;
+   - lint green before doctor — findings (exit 10) block the run.
+
+3. **Preflight:** `scripts/ff-doctor.sh --live` — probes every provider (GLM
    endpoint, `codex login status`, Anthropic model availability incl. Fable) and
    reports the orchestrator tier. Don't spawn a fleet a doctor won't bless.
-3. **Spawn:** `scripts/ff-spawn.sh --run <name> --id <id> --model <model>
+4. **Spawn:** `scripts/ff-spawn.sh --run <name> --id <id> --model <model>
    --prompt-file <f> --worktree` from the orchestrator's Bash tool with
    `run_in_background: true`, one call per lane. ff-spawn creates the worktree
    lane (`fleetflow/<run>/<id>` at `.fleetflow/<run>/wt-<id>`, repo top — never
@@ -157,13 +190,13 @@ plan packets → ff-doctor → ff-spawn (×N, background) → ff-collect (gate) 
    there once destroyed the packet and launched a task-less worker that still
    passed every gate. See
    [docs/adr/ADR-012](docs/adr/ADR-012-packet-cache-key-purity.md).
-4. **Collect + gate:** `scripts/ff-collect.sh --run <run> --id <id>` — flags,
+5. **Collect + gate:** `scripts/ff-collect.sh --run <run> --id <id>` — flags,
    not positionals (a positional invocation is rejected with exit 2) — per-model success
    semantics (Claude JSON `is_error`; Codex exit + last-message), then the
    orchestrator reviews the three-dot diff (`git diff main...fleetflow/<run>/<id>`)
    and runs the lane's tests. **Always finish with
    `ff-collect.sh --check-main-clean`** — the escape guard (see Safety).
-5. **Land** through fleet-ops (sequential, test-gated). Delete lanes and
+6. **Land** through fleet-ops (sequential, test-gated). Delete lanes and
    `.fleetflow/<run>/` after landing.
 
 **A manually spawned chip is a lane too — open it before you click it.**
@@ -564,6 +597,7 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
 
 | Script | Purpose |
 |---|---|
+| [scripts/ff-plan.sh](scripts/ff-plan.sh) | `draft --run NAME --spec FILE [--shape SHAPE]` scaffolds the plan doc + packet stubs + the manifest `ff-spawn` consumes; `expand --generator NAME --vars FILE` stamps generator-backed packets; `lint --run NAME [--json]` gates the spawn — scope-conflict matrix, dependency/DAG checks, ADR-BLUF presence, routing — exit 10 on findings, each check reporting `armed`/`disarmed`, also a section of `ff-doctor --offline`; `refute --run NAME [--model M]` spawns one cross-provider Adversary against the decomposition; `estimate --run NAME` prices lanes and wall-clock ([ADR-026](docs/adr/ADR-026-ff-plan-authors-the-manifest-spawn-consumes-it.md), [ADR-027](docs/adr/ADR-027-pipeline-first-decomposition-barriers-name-their-join.md), [ADR-028](docs/adr/ADR-028-the-plan-is-refuted-before-the-fleet-spawns.md), [ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)) |
 | [scripts/ff-doctor.sh](scripts/ff-doctor.sh) | `--offline` structural preflight (+ which `windows.sandbox` mode codex lanes will get); `--live` probes GLM endpoint, Codex auth, Grok key, Anthropic models, the `windows.sandbox` key tripwire, and reports orchestrator tier (fable/opus) |
 | [scripts/ff-spawn.sh](scripts/ff-spawn.sh) | uniform spawner: worktree lane + guard preamble (+ heartbeat clause for worktree lanes) + journal + per-model launch (GLM via fleet-worker, Codex via `codex exec`, Grok via `grok -p`, Pi via `pi -p` stdin + event-stream distillation, Anthropic via `claude -p`); pins `windows.sandbox=unelevated` for Codex on Windows |
 | [scripts/ff-collect.sh](scripts/ff-collect.sh) | per-model result gate; strips ```json fences before `--schema` validation; `--repair` respawns a `<id>-repair` lane on validation failure; `--auto-commit` commits a dirty lane tree after a PASS so landing has a HEAD (opt-in, never changes the verdict); `--check-main-clean` escape guard |
