@@ -1,7 +1,9 @@
 <!-- assets/plan.tmpl.md - the frozen v1 run-plan template. `ff-plan draft`
-     scaffolds docs/plans/<RUN>.md from this file by substituting the
-     {{BRACES}} placeholders; the tests lane checks template parity (section
-     set, lane-table columns, machine header). Spec:
+     scaffolds docs/plans/<RUN>.md from this file, substituting only
+     {{RUN}}, {{DATE}}, and {{SPEC_PATH}}; every other {{BRACES}} slot is
+     deliberately left for the plan author to fill (draft emits structure,
+     never invents scope). The tests check template parity (section set,
+     lane-table columns, machine header). Spec:
      docs/plans/FFPLAN-2026-08.md section 7; ADR-026, ADR-027, ADR-028. -->
 
 # Run plan: `{{RUN}}` - {{TITLE}}

@@ -67,7 +67,11 @@ fm_scalar() {
   awk -v wanted="$wanted" '
     {sub(/\r$/,"")} $0=="---"{marks++;if(marks==2)exit;next}
     marks==1 && $0~"^"wanted":[[:space:]]*"{
-      v=$0;sub("^[^:]+:[[:space:]]*","",v);sub(/[[:space:]]+#.*$/, "",v)
+      v=$0;sub("^[^:]+:[[:space:]]*","",v)
+      # A blank scalar whose line carries only a trailing comment must read
+      # as empty, not as the comment text (the packet template writes every
+      # placeholder line in exactly that style).
+      if(v~/^#/){v=""}else{sub(/[[:space:]]+#.*$/, "",v)}
       gsub(/^[[:space:]]+|[[:space:]]+$/, "",v);if(v!="[]"&&v!="null")print v;exit
     }' "$file" | tr -d '\r'
 }
@@ -132,7 +136,9 @@ draft_cmd() {
       id="${entry%%=*}"; rhs="${entry#*=}"
       if [ "$id" = "$entry" ] || [[ "$rhs" != */*/* ]]; then err "invalid --packets entry '$entry'"; return 2; fi
       role="${rhs%%/*}"; rhs="${rhs#*/}"; class="${rhs%%/*}"; model="${rhs#*/}"
-      if ! valid_run "$id" || [ -z "$role$class$model" ] || [[ "$model" == */* ]]; then err "invalid --packets entry '$entry'"; return 2; fi
+      # Each field must be individually non-empty; concatenation hides a blank.
+      if ! valid_run "$id" || [ -z "$role" ] || [ -z "$class" ] || [ -z "$model" ] || [[ "$model" == */* ]]; then err "invalid --packets entry '$entry'"; return 2; fi
+      for value in "${ids[@]}"; do [ "$value" != "$id" ] || { err "duplicate packet id '$id' in --packets"; return 2; }; done
       ids+=("$id"); roles+=("$role"); classes+=("$class"); models+=("$model")
     done
   fi
@@ -179,7 +185,8 @@ expand_cmd() {
     -h|--help) usage; return 0;; *) err "unknown expand argument: $1"; usage; return 2;; esac; done
   require_run "$run"; [ -n "$generator" ] && [ -n "$vars" ] || { err "expand requires --generator and --vars"; return 2; }
   repo="$(resolve_repo "$repo_arg")" || return 2; require_repo "$repo"
-  [ -f "$(repo_file "$repo" "$vars")" ] || { err "vars file missing: $vars"; return 3; }
+  # --vars accepts a path as given (absolute or cwd-relative) or repo-relative.
+  [ -f "$vars" ] || [ -f "$(repo_file "$repo" "$vars")" ] || { err "vars file missing: $vars"; return 3; }
   [ -f "$(repo_file "$repo" ".fleetflow/$run/manifest.json")" ] || { err "manifest missing for run $run"; return 3; }
   registry="$SCRIPT_DIR/../references/generator-registry.md"; [ -f "$registry" ] || { err "generator registry missing"; return 3; }
   while IFS=$'\t' read -r name row_status; do known="${known:+$known, }$name"; [ "$name" = "$generator" ] && status="$row_status"; done < <(registry_rows "$registry")
@@ -442,7 +449,14 @@ pricing_record() {
     def pick($key): if type=="object" then .[$key] else null end;
     def direct($key): (. | pick($key)) // (.models? | pick($key)) // (.pricing? | pick($key)) // (.rates? | pick($key));
     def aliased: (.aliases? | pick($model) // empty) as $a | if ($a|type)=="string" then direct($a) else empty end;
-    direct($model) // aliased //
+    # Spawn aliases (sonnet, opus, haiku, fable) resolve by prefix against the
+    # pricing file'\''s full Claude ids (claude-sonnet-4-6, ...) so a model
+    # version bump does not silently unprice the alias. Non-Anthropic aliases
+    # (glm/codex/grok/pi) have no entries there and stay honestly unpriced.
+    def prefixed: ((.models? // .pricing? // .rates? // {}) as $m
+      | if ($m|type)=="object" then ($m | keys | map(select(startswith("claude-" + $model + "-") or .=="claude-"+$model)) | sort | last) as $k
+        | if $k then $m[$k] else empty end else empty end);
+    direct($model) // aliased // prefixed //
       ([.models?[]?,.pricing?[]?,.rates?[]?] | map(select(type=="object" and ((.alias? // .id? // .model? // .name? //"")==$model)))[0]) // empty
   ' "$1" 2>/dev/null | tr -d '\r'
 }
@@ -458,7 +472,12 @@ estimate_value() {
         |(nf(["output_per_million","output_per_mtok","output","completion"])) as $or
         |($packet.estimated_input_tokens//$packet.tokens_in//($packet.estimate? |if type=="object" then .input_tokens else null end)//null) as $it
         |($packet.estimated_output_tokens//$packet.tokens_out//($packet.estimate? |if type=="object" then .output_tokens else null end)//null) as $ot
-        |if $ir!=null and $or!=null and $it!=null and $ot!=null then (((($it*$ir)+($ot*$or))/1000000)|tostring) else "unpriced" end
+        |if $ir!=null and $or!=null and $it!=null and $ot!=null then (((($it*$ir)+($ot*$or))/1000000)|tostring)
+         # Rates known but no per-packet token estimate: print the rates
+         # rather than invent a number (honest-costs, ADR-010/015) or lie
+         # with "unpriced" when the model IS priced.
+         elif $ir!=null and $or!=null then "in:\($ir)/M out:\($or)/M (no token estimate)"
+         else "unpriced" end
        end
     end' | tr -d '\r'
 }

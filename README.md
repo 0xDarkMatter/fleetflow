@@ -48,7 +48,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 389 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 442 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Quickstart
@@ -217,11 +217,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[24 ADRs](docs/adr/) covering everything from why the dashboard is one
+[31 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 389-assertion test gate: a malformed decision
+`adr-lint` runs inside the 442-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -295,7 +295,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-389 assertions over the scripts, monitor, dashboard wiring, and import/resume
+442 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

@@ -2341,6 +2341,41 @@ jq -e '(.phases|type)=="array" and all(.phases[]; type=="string")' "$PM" >/dev/n
   && ok "ff-plan: phases stays an array of strings" \
   || bad "ff-plan: phases is not an array of strings"
 
+# --- C5/C6/C7: refute (stubbed spawn/collect), estimate, expand ------------------
+FFSTUB="$TMP/ffplan-stubs"; mkdir -p "$FFSTUB"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FFSTUB/spawn-ok.sh"
+printf '#!/usr/bin/env bash\necho "VERDICT: stands"\n' > "$FFSTUB/collect-stands.sh"
+printf '#!/usr/bin/env bash\necho "FINDING: high two packets both need src/shared.txt"\necho "VERDICT: refuted"\n' > "$FFSTUB/collect-findings.sh"
+chmod +x "$FFSTUB"/*.sh
+check "ff-plan: refute with VERDICT stands -> 0" 0 \
+  env FFPLAN_SPAWN="$FFSTUB/spawn-ok.sh" FFPLAN_COLLECT="$FFSTUB/collect-stands.sh" \
+  bash "$PLAN" refute --run pdraft --repo "$PREPO"
+check "ff-plan: refute with FINDING lines -> 10" 10 \
+  env FFPLAN_SPAWN="$FFSTUB/spawn-ok.sh" FFPLAN_COLLECT="$FFSTUB/collect-findings.sh" \
+  bash "$PLAN" refute --run pdraft --repo "$PREPO"
+PFC="$(bash "$S/ff-findings.sh" count --run pdraft --repo "$PREPO" --wave plan 2>/dev/null | tr -d '\r')"
+printf '%s' "$PFC" | jq -e '(.open // 0) >= 1' >/dev/null 2>&1 \
+  && ok "ff-plan: refute findings appended to the ledger under wave plan" \
+  || bad "ff-plan: refute findings not in ledger (got: $PFC)"
+printf '{"models":{"claude-sonnet-4-6":{"input_per_mtok":3.0,"output_per_mtok":15.0}}}\n' > "$FFSTUB/pricing.json"
+bash "$PLAN" draft --run pest --spec "$PSPEC" --packets "a=Builder/build/sonnet,b=Builder/build/glm" --repo "$PREPO" >/dev/null 2>&1
+PEST="$(FFPLAN_PRICING="$FFSTUB/pricing.json" bash "$PLAN" estimate --run pest --repo "$PREPO" 2>/dev/null | tr -d '\r')"; PESTRC=$?
+{ [ "$PESTRC" = "0" ] \
+  && printf '%s\n' "$PEST" | grep -q '^a sonnet in:3' \
+  && printf '%s\n' "$PEST" | grep -q '^b glm unpriced' \
+  && printf '%s\n' "$PEST" | grep -q '^BOUNDS: '; } \
+  && ok "ff-plan: estimate prices aliased claude models, honestly unprices glm, prints BOUNDS" \
+  || bad "ff-plan: estimate output wrong (rc=$PESTRC): $PEST"
+PESTM="$(FFPLAN_PRICING="$FFSTUB/does-not-exist.json" bash "$PLAN" estimate --run pest --repo "$PREPO" 2>/dev/null | tr -d '\r')"; PESTMRC=$?
+{ [ "$PESTMRC" = "0" ] && printf '%s\n' "$PESTM" | grep -q '^a sonnet unpriced'; } \
+  && ok "ff-plan: estimate degrades to unpriced (exit 0) when pricing file is missing" \
+  || bad "ff-plan: estimate missing-pricing degradation wrong (rc=$PESTMRC)"
+printf 'k=v\n' > "$FFSTUB/vars.txt"
+check "ff-plan: expand unknown generator -> 3" 3 \
+  bash "$PLAN" expand --run pest --generator nonesuch --vars "$FFSTUB/vars.txt" --repo "$PREPO"
+check "ff-plan: expand pending generator (forma) -> 3" 3 \
+  bash "$PLAN" expand --run pest --generator forma --vars "$FFSTUB/vars.txt" --repo "$PREPO"
+
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
 # archive-before-remove (ADR-011) writes throwaway `rc` runs into the history
