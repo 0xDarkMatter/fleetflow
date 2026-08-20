@@ -1997,6 +1997,346 @@ bash "$S/ff-run.sh" resume --run ch --repo "$CHR" 2>/dev/null \
   && ok "ff-run resume: chip packets reported skipped (not replayed, not dropped)" \
   || bad "ff-run resume: chip packets mishandled"
 
+# === ff-plan (ADR-026..031) ===
+# Written BLIND against the frozen contract (C1 surface, C2 lint JSON/text,
+# C3 frontmatter checks, C4 draft) — the implementation lands in a parallel
+# lane, so assertions exercising lint/draft are EXPECTED to fail against the
+# seeded stub here (subcommands exit 3) and are gated at integration.
+# NB: ff-plan is deliberately NOT added to the syntax/help loop at the top of
+# this file — that loop greps stdout only, while the stub (conformantly)
+# prints usage to stderr; C1 says "stdout+stderr contains EXAMPLES", so the
+# help grep below must capture both streams.
+PLAN="$S/ff-plan.sh"
+PREPO="$TMP/planrepo"
+mkdir -p "$PREPO" && git -C "$PREPO" init -q -b main
+git -C "$PREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+# packet writer: frontmatter stays inside the restricted YAML subset C3
+# parses (flat scalars + two-space "- item" lists between --- fences)
+plan_pkt() { # run id, packet bytes on stdin
+  mkdir -p "$PREPO/.fleetflow/$1/packets"
+  cat > "$PREPO/.fleetflow/$1/packets/$2.task.md"
+}
+
+# static pins on the seeded templates (draft/roles lanes own the bytes; these
+# pin the markers ff-plan draft is contracted to use — ADR-031)
+grep -qF '<!-- role card prepended here by ff-plan draft -->' "$HERE/../assets/packet.tmpl.md" \
+  && ok "ff-plan: packet.tmpl.md carries the role-card prepend marker" \
+  || bad "ff-plan: role-card prepend marker missing from packet.tmpl.md"
+[ "$(ls "$HERE/../assets/roles/"*.role.md 2>/dev/null | wc -l | tr -d ' ')" = "12" ] \
+  && ok "ff-plan: twelve role cards seeded in assets/roles" \
+  || bad "ff-plan: assets/roles does not hold 12 role cards"
+
+bash -n "$PLAN" 2>/dev/null && ok "syntax ff-plan.sh" || bad "syntax ff-plan.sh"
+
+# --- C1: surface + exit codes --------------------------------------------------
+PLANHELP="$(bash "$PLAN" --help 2>&1)"; PLANRC=$?
+{ [ "$PLANRC" = "0" ] && printf '%s' "$PLANHELP" | grep -q "EXAMPLES"; } \
+  && ok "ff-plan: --help exits 0 with EXAMPLES on stdout+stderr" \
+  || bad "ff-plan: --help rc=$PLANRC or EXAMPLES missing from stdout+stderr"
+check "ff-plan: bogus subcommand -> 2" 2 bash "$PLAN" bogus
+
+# --- C3 fixtures: one concern per run; packets only (lint's substrate is the
+# packets dir — no manifest is contractually required) --------------------------
+plan_pkt pconf a1 <<'PKT'
+---
+id: a1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/a.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+Build A. FINAL REPLY: one line.
+PKT
+plan_pkt pconf a2 <<'PKT'
+---
+id: a2
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/a.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+Build B on the SAME file. FINAL REPLY: one line.
+PKT
+plan_pkt pdis d1 <<'PKT'
+---
+id: d1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/d1.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+Build D1. FINAL REPLY: one line.
+PKT
+plan_pkt pdis d2 <<'PKT'
+---
+id: d2
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/d2.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+Build D2. FINAL REPLY: one line.
+PKT
+plan_pkt pcyc c1 <<'PKT'
+---
+id: c1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/c1.txt
+modifies: []
+registries: []
+depends_on:
+  - c2
+---
+
+Build C1 after C2. FINAL REPLY: one line.
+PKT
+plan_pkt pcyc c2 <<'PKT'
+---
+id: c2
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/c2.txt
+modifies: []
+registries: []
+depends_on:
+  - c1
+---
+
+Build C2 after C1. FINAL REPLY: one line.
+PKT
+plan_pkt pdang g1 <<'PKT'
+---
+id: g1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/g1.txt
+modifies: []
+registries: []
+depends_on:
+  - ghost
+---
+
+Wait for a lane that does not exist. FINAL REPLY: one line.
+PKT
+plan_pkt prole r1 <<'PKT'
+---
+id: r1
+role: Pirate
+class: build
+model: sonnet
+owns:
+  - src/r1.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+A role outside the twelve. FINAL REPLY: one line.
+PKT
+plan_pkt preg e1 <<'PKT'
+---
+id: e1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/e1.txt
+modifies: []
+registries:
+  - pyproject.toml
+depends_on: []
+---
+
+E1. FINAL REPLY: one line.
+PKT
+plan_pkt preg e2 <<'PKT'
+---
+id: e2
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/e2.txt
+modifies: []
+registries:
+  - pyproject.toml
+depends_on: []
+---
+
+E2 racing E1 on the registry. FINAL REPLY: one line.
+PKT
+plan_pkt pwarn w1 <<'PKT'
+---
+id: w1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/w.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+W1 owns the file. FINAL REPLY: one line.
+PKT
+plan_pkt pwarn w2 <<'PKT'
+---
+id: w2
+role: Scholar
+class: build
+model: sonnet
+owns:
+  - src/other.txt
+modifies:
+  - src/w.txt
+registries: []
+depends_on: []
+---
+
+W2 only modifies it. FINAL REPLY: one line.
+PKT
+plan_pkt proute t1 <<'PKT'
+---
+id: t1
+role: Inspector
+class: verify
+model: glm
+owns:
+  - src/t1.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+Verify on glm. FINAL REPLY: one line.
+PKT
+plan_pkt pbare naked <<'PKT'
+No frontmatter at all — a legacy packet body, pre-ADR-026. FINAL REPLY: one
+line. Frontmatter-dependent checks must report disarmed, not fail.
+PKT
+
+# --- C2: lint JSON on the conflict fixture --------------------------------------
+check "ff-plan: lint conflicting owns exits 10" 10 \
+  bash "$PLAN" lint --run pconf --repo "$PREPO" --json
+PJ="$(bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null)"; PJRC=$?
+{ [ "$PJRC" = "10" ] \
+  && printf '%s' "$PJ" | jq -e 'any(.findings[]; .check=="scope-conflict" and .severity=="hard")' >/dev/null; } \
+  && ok "ff-plan: owns x owns overlap is a hard scope-conflict finding" \
+  || bad "ff-plan: no hard scope-conflict finding (rc=$PJRC)"
+printf '%s' "$PJ" | jq -e '(.findings|length)>=1 and all(.findings[];
+    has("check") and has("severity") and has("packets") and has("files") and has("detail")
+    and (.severity=="hard" or .severity=="warn")
+    and ((.packets|type)=="array") and ((.files|type)=="array"))' >/dev/null 2>&1 \
+  && ok "ff-plan: every finding carries the C2 key set" \
+  || bad "ff-plan: finding objects deviate from the C2 shape"
+printf '%s' "$PJ" | jq -e '(.checks|length)>=1 and all(.checks[];
+    has("name") and has("armed") and has("reason") and ((.armed|type)=="boolean"))' >/dev/null 2>&1 \
+  && ok "ff-plan: checks report name/armed/reason with a boolean armed" \
+  || bad "ff-plan: checks array deviates from the C2 shape (ADR-030 armed status)"
+# text mode: FINDING/CHECK lines (strip \r — Windows jq/bash emit CRLF); grep
+# both streams since only the contract for stdout is "data", not its certainty
+PTXT="$(bash "$PLAN" lint --run pconf --repo "$PREPO" 2>&1 | tr -d '\r')"
+{ printf '%s\n' "$PTXT" | grep -q '^FINDING scope-conflict' \
+  && printf '%s\n' "$PTXT" | grep -qE '^CHECK [A-Za-z0-9._-]+ armed'; } \
+  && ok "ff-plan: text mode prints FINDING and CHECK armed lines" \
+  || bad "ff-plan: text-mode FINDING/CHECK armed lines missing"
+
+# --- C2/C3: clean fixture, then one hard rule per fixture ------------------------
+DJ="$(bash "$PLAN" lint --run pdis --repo "$PREPO" --json 2>/dev/null)"; DJRC=$?
+{ [ "$DJRC" = "0" ] && printf '%s' "$DJ" | jq -e '(.findings|length)==0' >/dev/null; } \
+  && ok "ff-plan: disjoint owns lint clean (exit 0, findings empty)" \
+  || bad "ff-plan: disjoint fixture not clean (rc=$DJRC)"
+CJ="$(bash "$PLAN" lint --run pcyc --repo "$PREPO" --json 2>/dev/null)"; CJRC=$?
+{ [ "$CJRC" = "10" ] \
+  && printf '%s' "$CJ" | jq -e 'any(.findings[]; .check=="dep-edges" and .severity=="hard")' >/dev/null; } \
+  && ok "ff-plan: dependency cycle is a hard dep-edges finding" \
+  || bad "ff-plan: cycle not reported as hard dep-edges (rc=$CJRC)"
+GJ="$(bash "$PLAN" lint --run pdang --repo "$PREPO" --json 2>/dev/null)"; GJRC=$?
+{ [ "$GJRC" = "10" ] \
+  && printf '%s' "$GJ" | jq -e 'any(.findings[]; .check=="dep-edges" and .severity=="hard")' >/dev/null; } \
+  && ok "ff-plan: depends_on a missing id is a hard dep-edges finding" \
+  || bad "ff-plan: dangling dependency not reported (rc=$GJRC)"
+RJ="$(bash "$PLAN" lint --run prole --repo "$PREPO" --json 2>/dev/null)"; RJRC=$?
+{ [ "$RJRC" = "10" ] \
+  && printf '%s' "$RJ" | jq -e 'any(.findings[]; .check=="packet-contract")' >/dev/null; } \
+  && ok "ff-plan: role outside the twelve is a packet-contract finding" \
+  || bad "ff-plan: bad role not reported (rc=$RJRC)"
+EGJ="$(bash "$PLAN" lint --run preg --repo "$PREPO" --json 2>/dev/null)"; EGRC=$?
+{ [ "$EGRC" = "10" ] \
+  && printf '%s' "$EGJ" | jq -e 'any(.findings[]; .check=="scope-conflict" and .severity=="hard")' >/dev/null; } \
+  && ok "ff-plan: shared registries entry is a hard scope-conflict (ADR-030)" \
+  || bad "ff-plan: registries overlap not hard (rc=$EGRC)"
+WJ="$(bash "$PLAN" lint --run pwarn --repo "$PREPO" --json 2>/dev/null)"; WJRC=$?
+{ [ "$WJRC" = "10" ] \
+  && printf '%s' "$WJ" | jq -e 'any(.findings[]; .check=="scope-conflict" and .severity=="warn")' >/dev/null; } \
+  && ok "ff-plan: owns x modifies overlap is a warn scope-conflict" \
+  || bad "ff-plan: owns/modifies warn missing (rc=$WJRC)"
+RTJ="$(bash "$PLAN" lint --run proute --repo "$PREPO" --json 2>/dev/null)"; RTRC=$?
+{ [ "$RTRC" = "10" ] \
+  && printf '%s' "$RTJ" | jq -e 'any(.findings[]; .check=="routing" and .severity=="warn")' >/dev/null; } \
+  && ok "ff-plan: verify/judge class on glm is a warn routing finding" \
+  || bad "ff-plan: glm routing warn missing (rc=$RTRC)"
+BJ="$(bash "$PLAN" lint --run pbare --repo "$PREPO" --json 2>/dev/null)"; BJRC=$?
+{ [ "$BJRC" = "0" ] \
+  && printf '%s' "$BJ" | jq -e '(.findings|length)==0 and any(.checks[]; .armed==false)' >/dev/null; } \
+  && ok "ff-plan: frontmatter-less packet -> no finding, a check reports disarmed" \
+  || bad "ff-plan: bare packet mishandled (rc=$BJRC)"
+BTXT="$(bash "$PLAN" lint --run pbare --repo "$PREPO" 2>&1 | tr -d '\r')"
+printf '%s\n' "$BTXT" | grep -qE '^CHECK [A-Za-z0-9._-]+ disarmed' \
+  && ok "ff-plan: text mode reports the disarmed check" \
+  || bad "ff-plan: no CHECK disarmed line for the bare packet"
+
+# --- C4: draft scaffolds the plan, refuses to clobber ----------------------------
+check "ff-plan: draft with missing spec -> 3" 3 \
+  bash "$PLAN" draft --run pmiss --spec "$TMP/no-such-spec.md" --repo "$PREPO"
+PSPEC="$TMP/plan-spec.md"
+printf '# Spec: shopfront\n\nBuild the shopfront.\n## Requirements\n- it works\n' > "$PSPEC"
+bash "$PLAN" draft --run pdraft --spec "$PSPEC" --repo "$PREPO" >/dev/null 2>&1; PDRC=$?
+PDDOC="$PREPO/docs/plans/PDRAFT-$(date +%Y-%m).md"
+{ [ "$PDRC" = "0" ] && [ -f "$PDDOC" ] && [ -d "$PREPO/.fleetflow/pdraft/packets" ]; } \
+  && ok "ff-plan: draft creates plan doc (uppercased run, YYYY-MM) + packets dir" \
+  || bad "ff-plan: draft scaffolding wrong (rc=$PDRC doc=$PDDOC)"
+PM="$PREPO/.fleetflow/pdraft/manifest.json"
+jq -e '.created_by=="ff-plan"' "$PM" >/dev/null 2>&1 \
+  && ok "ff-plan: manifest created_by is ff-plan" \
+  || bad "ff-plan: manifest created_by wrong"
+jq -e '(.plan|type)=="object" and (.plan|has("shape")) and (.plan|has("bounds"))' "$PM" >/dev/null 2>&1 \
+  && ok "ff-plan: manifest plan key carries shape and bounds" \
+  || bad "ff-plan: manifest plan key missing shape/bounds"
+check "ff-plan: re-draft without --force -> 2" 2 \
+  bash "$PLAN" draft --run pdraft --spec "$PSPEC" --repo "$PREPO"
+jq -e '(.phases|type)=="array" and all(.phases[]; type=="string")' "$PM" >/dev/null 2>&1 \
+  && ok "ff-plan: phases stays an array of strings" \
+  || bad "ff-plan: phases is not an array of strings"
+
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
 # archive-before-remove (ADR-011) writes throwaway `rc` runs into the history
