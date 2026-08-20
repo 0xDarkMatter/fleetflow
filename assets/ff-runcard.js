@@ -23,11 +23,11 @@
                                     // rather than guessing (see orchBadge).
      waves: array|undefined,       // non-empty => "wave" badge shown
      summary: {
-       state: "running"|"stalled"|"failed"|"done"|other,
+       state: "running"|"stalled"|"abandoned"|"failed"|"done"|other,
        idle_s: number,             // FINAL — caller has already folded any
                                     // live "how long since last activity"
                                     // age into this; only used when state is
-                                    // "stalled".
+                                    // "stalled" or "abandoned".
        elapsed_s: number,          // FINAL likewise — already includes live
                                     // age for in-flight runs.
        counts: { running?, stalled?, failed?, ... },
@@ -131,6 +131,9 @@ var ffRunCard, FF_RUNCARD_CSS;
   function stateTag(state, idle) {
     if (state === "running") return '<span class="ffrc-tag ffrc-tag-run">running</span>';
     if (state === "stalled") return '<span class="ffrc-tag ffrc-tag-stall">stalled ' + fmt(idle) + '</span>';
+    /* abandoned (ADR-025): final, not in flight — muted tag, never the amber
+       stall styling, so a long-dead run stops reading as live risk. */
+    if (state === "abandoned") return '<span class="ffrc-tag">abandoned ' + fmt(idle) + ' silent</span>';
     if (state === "failed") return '<span class="ffrc-tag ffrc-tag-fail">failed</span>';
     if (state === "done") return '<span class="ffrc-tag">done</span>';
     return "";
@@ -191,6 +194,7 @@ var ffRunCard, FF_RUNCARD_CSS;
     var waves = (runDoc && runDoc.waves) || [];
     var counts = s.counts || {};
     var running = counts.running || 0, stalled = counts.stalled || 0, failed = counts.failed || 0;
+    var abandoned = counts.abandoned || 0;
     var models = s.models || [], modelIds = s.model_ids || [];
     var i;
 
@@ -238,6 +242,7 @@ var ffRunCard, FF_RUNCARD_CSS;
       + costCell
       + (running ? '<div class="ffrc-stat ffrc-stat-ok"><b>' + running + '</b><span>running</span></div>' : "")
       + (stalled ? '<div class="ffrc-stat ffrc-stat-warn"><b>' + stalled + '</b><span>stalled</span></div>' : "")
+      + (abandoned ? '<div class="ffrc-stat"><b>' + abandoned + '</b><span>abandoned</span></div>' : "")
       + (failed ? '<div class="ffrc-stat ffrc-stat-bad"><b>' + failed + '</b><span>failed</span></div>' : "")
       + '</div></div>';
   };
@@ -302,5 +307,7 @@ var ffRunCard, FF_RUNCARD_CSS;
     ".ffrc-sq.running{background:var(--ffc-run);animation:ffrcPulse 1.1s ease-in-out infinite;}" +
     ".ffrc-sq.done{background:var(--ffc-ok);}.ffrc-sq.failed{background:var(--ffc-bad);}" +
     ".ffrc-sq.stalled{background:var(--ffc-warn);}" +
+    ".ffrc-sq.abandoned{background:var(--ffc-warn);opacity:.35;}" +
+    ".ffrc-bar.abandoned{outline:1.5px solid var(--ffc-warn);outline-offset:-1.5px;opacity:.5;}" +
     "@keyframes ffrcPulse{50%{opacity:.3}}";
 })();

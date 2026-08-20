@@ -513,6 +513,48 @@ if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
     && ok "status: --exit-stalled still emits the full JSON" || bad "status: --exit-stalled ate the data"
 fi
 
+# --- abandonment (ADR-025): hours of total silence demote an in-flight lane ----
+check "status: rejects non-integer FLEETFLOW_ABANDON_SECONDS" 2 \
+  env FLEETFLOW_ABANDON_SECONDS=abc bash "$S/ff-status.sh" --run r5 --repo "$REPO"
+bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null | jq -e '.abandon_seconds==21600' >/dev/null \
+  && ok "status: default abandonment threshold is 21600s (6h)" \
+  || bad "status: abandon_seconds default wrong"
+# a finished lane is never abandoned, however long ago it finished
+FLEETFLOW_ABANDON_SECONDS=1 bash "$S/ff-status.sh" --run r5 --repo "$REPO" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="z")|.state=="done"' >/dev/null \
+  && ok "status: done lane never abandons" || bad "status: done lane wrongly abandoned"
+if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
+  # r6 wedged (2.7h silent, live stream): under the 6h default it is STALLED, not
+  # abandoned - the two thresholds are independent verdicts.
+  bash "$S/ff-status.sh" --run r6 --repo "$REPO" 2>/dev/null \
+    | jq -e '.lanes[]|select(.id=="wedged")|.state=="stalled"' >/dev/null \
+    && ok "status: silence under the abandon threshold stays stalled" \
+    || bad "status: stalled lane demoted too early"
+  # past the threshold a stalled lane demotes to abandoned; state carries the
+  # verdict, so the stalled flag drops with it
+  FLEETFLOW_ABANDON_SECONDS=100 bash "$S/ff-status.sh" --run r6 --repo "$REPO" 2>/dev/null \
+    | jq -e '.lanes[]|select(.id=="wedged")|.state=="abandoned" and .stalled==false' >/dev/null \
+    && ok "status: stalled lane past the abandon threshold reads abandoned" \
+    || bad "status: stalled lane not demoted to abandoned"
+  # a lane still writing NEVER abandons, whatever the threshold
+  FLEETFLOW_ABANDON_SECONDS=100 bash "$S/ff-status.sh" --run r6 --repo "$REPO" 2>/dev/null \
+    | jq -e '.lanes[]|select(.id=="livewire")|.state=="running"' >/dev/null \
+    && ok "status: live lane never abandons" || bad "status: live lane wrongly abandoned"
+  # THE key new capability: abandonment applies even where live_signal=false -
+  # lanes the stall detector can never cover (grok, non-worktree claude) finally
+  # get a terminal verdict instead of reading running forever (ADR-025).
+  HOME="$TMP/fakehome" FLEETFLOW_ABANDON_SECONDS=1000 bash "$S/ff-status.sh" --run r7 --repo "$REPO" 2>/dev/null \
+    | jq -e '.lanes[]|select(.id=="grk")|.state=="abandoned" and .live_signal==false' >/dev/null \
+    && ok "status: uncovered (live_signal=false) lane abandons past the threshold" \
+    || bad "status: uncovered lane still running past the abandon threshold"
+  # an abandonment demotion trips the --exit-stalled watchdog: for uncovered
+  # lanes it is the FIRST silence verdict a watchdog can ever get
+  check "status: --exit-stalled exits 14 on an abandoned lane" 14 \
+    env FLEETFLOW_ABANDON_SECONDS=100 bash "$S/ff-status.sh" --run r6 --repo "$REPO" --exit-stalled
+else
+  echo "  SKIP  abandonment demotion (touch -d @epoch unsupported here)"
+fi
+
 # --- reap anchors (ff-spawn proc records + ff-clean --reap) --------------------
 jq -e 'select(.type=="proc" and .id=="a") | has("pid") and has("winpid") and has("at")' \
   "$REPO/.fleetflow/r1/journal.jsonl" >/dev/null 2>&1 \
@@ -570,6 +612,19 @@ grep -q 'data-size="s"' "$HERE/../assets/ff-monitor.html" \
   && ok "monitor: card-size control present + persisted" \
   || bad "monitor: card-size control missing"
 
+# --- abandoned state (ADR-025): every surface renders it, ranks stay in step ----
+# STATE_RANK has FIVE hand-synced copies (ff-aggregate.py, ff-widget.sh jq,
+# dashboard sort, monitor sort, plus ff-status's implicit derivation order);
+# pin the abandoned slot in each so they cannot drift apart silently.
+grep -q '"stalled", "running", "failed", "abandoned", "done", "unknown"' "$S/ff-aggregate.py" \
+  && ok "aggregate: STATE_RANK carries abandoned between failed and done" \
+  || bad "aggregate: STATE_RANK missing abandoned"
+grep -q '"stalled","running","failed","abandoned","done"' "$S/ff-widget.sh" \
+  && ok "widget: jq rank carries abandoned" || bad "widget: jq rank missing abandoned"
+grep -q '\.sq\.abandoned' "$HERE/../assets/ff-monitor.html" \
+  && grep -q 'abandoned:3' "$HERE/../assets/ff-monitor.html" \
+  && ok "monitor: abandoned pip styled + ranked" || bad "monitor: abandoned state missing"
+
 # --- dashboard: polish invariants -----------------------------------------------
 DASH="$HERE/../assets/ff-dashboard.html"
 # The zero-dependency rule IS the dashboard's architecture - one external URL
@@ -626,6 +681,43 @@ grep -q 'PAL_DARK' "$DASH" && grep -q 'DARK.matches' "$DASH" \
   || bad "dashboard: palettes are light-only"
 grep -q '\.mix {' "$DASH" \
   && bad "dashboard: dead .mix CSS is back" || ok "dashboard: no dead .mix CSS"
+# abandoned (ADR-025): faded amber, NEVER animated, never counted in flight -
+# and its rank matches ff-aggregate.py's STATE_RANK.
+grep -q '\.sq\.abandoned' "$DASH" \
+  && ok "dashboard: abandoned pip has its own style" || bad "dashboard: abandoned pip style missing"
+grep -q '"abandoned","abandoned"' "$DASH" \
+  && ok "dashboard: abandoned state chip filterable" || bad "dashboard: abandoned missing from STATES"
+grep -q 'abandoned:3, done:4' "$DASH" \
+  && ok "dashboard: sort rank carries abandoned in the STATE_RANK slot" \
+  || bad "dashboard: sort rank out of step with ff-aggregate STATE_RANK"
+grep -q 's === "running" || s === "stalled"' "$DASH" \
+  && ok "dashboard: abandoned is NOT in flight (inflight stays running|stalled)" \
+  || bad "dashboard: inflight definition changed - abandoned must stay out of it"
+
+# --- time-window lens (reporting granularity) -------------------------------------
+# The window filters every view and roll-up; selection persists under ffd.*
+# (ADR-013 - the monitor owns ff.*); weeks start MONDAY; the custom range is an
+# in-page control, never a native prompt() (both bans test-enforced elsewhere).
+grep -q '"ffd.window"' "$DASH" && grep -q '"ffd.winFrom"' "$DASH" \
+  && ok "dashboard: time window persisted under ffd.* keys" \
+  || bad "dashboard: time window keys missing or mis-namespaced"
+grep -q '"thisquarter"' "$DASH" && grep -q '"lastweek"' "$DASH" && grep -q '"custom"' "$DASH" \
+  && ok "dashboard: week/month/quarter/custom windows present" \
+  || bad "dashboard: window options missing"
+grep -q 'getDay() + 6) % 7' "$DASH" \
+  && ok "dashboard: weeks start Monday" || bad "dashboard: Monday week-start math missing"
+grep -q 'id="winfrom"' "$DASH" && grep -q 'id="winto"' "$DASH" \
+  && ok "dashboard: custom range is an in-page control" \
+  || bad "dashboard: custom range inputs missing"
+# the lens is applied ONCE, upstream of every render path
+grep -q 'doc = windowDoc(rawDoc)' "$DASH" \
+  && ok "dashboard: window lens applied upstream of all views" \
+  || bad "dashboard: windowDoc not wired into render()"
+# blend pools must stay window-independent or a month's blended costs stop
+# summing to the fee (see computePlanPools's guard comment)
+grep -q 'rawDoc.runs || \[\]' "$DASH" \
+  && ok "dashboard: plan-blend pools read the unfiltered document" \
+  || bad "dashboard: plan pools follow the window - blended costs now lie"
 
 # --- dashboard: fleet inventory view --------------------------------------------
 grep -q 'const HARNESS' "$DASH" && grep -q 'function fleetView' "$DASH" \
@@ -1367,11 +1459,16 @@ bash "$S/ff-sweep.sh" --repo "$SWL" --include-untracked --json 2>/dev/null \
 # guard at the end of the section backstops the real caches themselves.
 unset FLEETFLOW_ROOTS
 real_sweep_state_snap() { # checksum the real store/roots/caches this section must not touch
+  # aggregate-cache.json is deliberately NOT in this list: nothing in the sweep
+  # section can write it (only ff-serve/ff-aggregate do, and the suite's
+  # FLEETFLOW_HOME redirect keeps those away from the real one) - but the LIVE
+  # fleetflow service rewrites the real file whenever an open dashboard tab
+  # polls it, so snapshotting it across this section's multi-minute window made
+  # the gate fail any time somebody had https://fleetflow.lab open.
   local f out=""
   for f in "${HOME:-}/.fleetflow/history.jsonl" \
            "${HOME:-}/.fleetflow/roots.txt" \
-           "${HOME:-}/.fleetflow/cache/sweep-sizes.json" \
-           "${HOME:-}/.fleetflow/cache/aggregate-cache.json"; do
+           "${HOME:-}/.fleetflow/cache/sweep-sizes.json"; do
     if [ -f "$f" ]; then out="${out}$(cksum "$f" 2>/dev/null | awk '{print $2":"$1}')"$'\n'
     else out="${out}none:$f"$'\n'; fi
   done

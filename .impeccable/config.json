@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-08-01T05:16:22.000Z",
         "reason": "False positive: the page uses TWO families, and the rule fires on the line that proves it. Sans (Segoe UI/Helvetica Neue/ui-sans-serif) is chrome; mono (ui-monospace/Cascadia Code/Consolas) is data - defined once as --font-mono at :root and applied in 11 CSS rules and 26 markup sites (run ids, paths, token counts, stats, spec values, history + models tables). The detector reads literal font stacks and does not resolve var(--font-mono) back to :root, so it sees one stack. The sans/mono split IS the hierarchy device, reinforced by weight (500/600/700), size (9-19px) and uppercase tracked micro-labels. The suggested fix - a distinctive display font - is architecturally unavailable: this file has a hard zero-dependency rule (no CDN, no @font-face, enforced by a test in tests/run.sh) because it must work offline, from file://, and in a preview pane with no network. Both families are system stacks for that reason. Sibling waiver: ff-monitor.html carries flat-type-hierarchy for the same doctrine, still recorded in claude-mods' config from before the extraction."
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "assets/ff-monitor.html"
+        ],
+        "createdAt": "2026-08-20T10:37:53.239Z",
+        "reason": "Monitor is a dense telemetry instrument: compressed 10-13px scale is intentional; hierarchy carried by weight/case/color (user-confirmed 2026-08-20)"
       }
     ]
   }

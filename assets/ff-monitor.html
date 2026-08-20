@@ -46,6 +46,9 @@
   /* stalled = still nominally running but its signal froze: amber and, crucially,
      NOT animated - a frozen pip next to pulsing ones is the whole tell. */
   .sq.stalled { background:var(--warn); }
+  /* abandoned (ADR-025) = silent past the abandonment threshold: final, not in
+     flight - faded amber, never animated. */
+  .sq.abandoned { background:var(--warn); opacity:.35; }
   @keyframes pulse { 50% { opacity:.3 } }
   .phase { margin-bottom:10px; }
   .phase-h { display:flex; align-items:center; gap:8px; padding:2px 2px 6px;
@@ -106,7 +109,7 @@ const open = new Set();
 let misses = 0, last = null;
 // sort doctrine: "active" is the DEFAULT — in-flight lanes (running, then
 // stalled) float to the top so the work you're watching never scrolls away.
-const STATE_RANK = { running:0, stalled:1, failed:2, done:3 };
+const STATE_RANK = { running:0, stalled:1, failed:2, abandoned:3, done:4 };
 const SORTS = {
   active: (a,b) => (STATE_RANK[a.state] ?? 9) - (STATE_RANK[b.state] ?? 9)
     || (a.started || 0) - (b.started || 0) || a.id.localeCompare(b.id),
@@ -140,12 +143,14 @@ function render(d) {
   const inflight = s => s === "running" || s === "stalled";
   const running = lanes.filter(l => l.state === "running").length;
   const stalled = lanes.filter(l => l.state === "stalled").length;
+  const abandoned = lanes.filter(l => l.state === "abandoned").length;
   document.getElementById("run").textContent = d.run;
   const oldest = Math.min(...lanes.map(l => l.started).filter(Boolean));
   const bits = [lanes.length + " agents"];
   if (running) bits.push(running + " running");
   if (stalled) bits.push(stalled + " stalled");
-  if (!running && !stalled) bits.push("finished");
+  if (abandoned) bits.push(abandoned + " abandoned");
+  if (!running && !stalled) bits.push(abandoned ? "abandoned" : "finished");
   if (oldest) bits.push(fmt(d.generated_at - oldest));
   document.getElementById("meta").textContent = bits.join(" · ");
   document.getElementById("sqs").innerHTML = lanes.map(l =>
