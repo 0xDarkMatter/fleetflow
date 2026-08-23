@@ -1,4 +1,4 @@
-<svg viewBox="0 0 960 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-roles-title ff-roles-desc" font-family="ui-sans-serif,'Segoe UI',Helvetica,Arial,sans-serif">
+<svg viewBox="0 0 960 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-roles-title ff-roles-desc" font-family="ui-sans-serif,'Segoe UI','Helvetica Neue',Helvetica,sans-serif">
 <title id="ff-roles-title">fleetflow agent roles by work class</title>
 <desc id="ff-roles-desc">Work flows from a frontier orchestrator that plans and judges, to five independent builder lanes including GLM and the wildcard Pi, to a cross-provider verify tier of an Opus judge, refuters, and a wildcard Pi seat, whose verdicts return to the orchestrator; a wide mechanical and scout band on the same cheap models carries the volume work underneath.</desc>
 <defs>

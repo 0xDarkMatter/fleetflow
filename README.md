@@ -108,10 +108,7 @@ cannot self-commit; Grok has no live stream by design) are in
 
 How the roles compose in a typical run:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/roles-dark.svg">
-  <img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; GLM-5.3, Sonnet, Codex, Grok, and Pi build independently; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens at least of the cost" src="docs/diagrams/roles-light.svg">
-</picture>
+<img alt="agent roles by work class: a frontier orchestrator authors packets and makes land decisions; GLM-5.3, Sonnet, Codex, Grok, and Pi build independently; the verify tier seats an Opus judge, cross-provider refuters, and a wildcard Pi lane; GLM and Haiku volume lanes carry most of the tokens, least of the cost" src="docs/diagrams/roles-light.svg">
 
 Behaviour per seat is a versioned **role card**
 ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)): twelve
@@ -120,10 +117,7 @@ mandate, stance rules, bounds, and reply shape — prepended into packets by
 `ff-plan draft` so the doctrine ships with the work instead of being retyped
 per run.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/role-cards-dark.svg">
-  <img alt="the twelve role-card seats grouped by run tier: plan-and-discover seats (Architect, Oracle, Scout, Surveyor, Scholar) author packets; build seats (Builder, Inspector, Warden) write and test in exclusive scopes; verify-and-consolidate seats (Adversary, Judge, Critic, Composer) attack, score, and merge, with findings looping back to build" src="docs/diagrams/role-cards-light.svg">
-</picture>
+<img alt="the twelve role-card seats grouped by run tier: plan-and-discover seats (Architect, Oracle, Scout, Surveyor, Scholar) author packets; build seats (Builder, Inspector, Warden) write and test in exclusive scopes; verify-and-consolidate seats (Adversary, Judge, Critic, Composer) attack, score, and merge, with findings looping back to build" src="docs/diagrams/role-cards-light.svg">
 
 ### A word on Pi
 
@@ -151,25 +145,16 @@ refutes the decomposition before any lane runs. Lane behaviour comes from
 versioned role cards in a trade-guild persona register, Architect through
 Warden ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)).
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/ffplan-dark.svg">
-  <img alt="the pre-spawn planning gate: ff-plan draft authors the plan, packets, and manifest; lint exits 10 on findings that loop back into the draft; a cross-provider Adversary refutes the decomposition, findings loop back as fixes, and a plan refuted twice escalates to a human gate; a clean plan passes ff-doctor preflight and ff-spawn launches the fleet" src="docs/diagrams/ffplan-light.svg">
-</picture>
+<img alt="the pre-spawn planning gate: ff-plan draft authors the plan, packets, and manifest; lint exits 10 on findings that loop back into the draft; a cross-provider Adversary refutes the decomposition, findings loop back as fixes, and a plan refuted twice escalates to a human gate; a clean plan passes ff-doctor preflight and ff-spawn launches the fleet" src="docs/diagrams/ffplan-light.svg">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
-  <img alt="hub-and-spoke architecture: orchestrator spawns four cross-provider worker lanes in git worktrees; one collect gate returns results; journal enables resume; a dashboard observes" src="docs/diagrams/architecture-light.svg">
-</picture>
+<img alt="hub-and-spoke architecture: orchestrator spawns four cross-provider worker lanes in git worktrees; one collect gate returns results; journal enables resume; a dashboard observes" src="docs/diagrams/architecture-light.svg">
 
 A run is a pipeline with verification built in, not bolted on. `ff-doctor`
 refuses to bless a fleet a provider can't serve; the collect gate applies
 per-model success semantics plus an escape guard on the primary checkout; and
 teardown archives before it removes, so a run's history outlives its directory.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lifecycle-dark.svg">
-  <img alt="run lifecycle: doctor preflight, spawn, collect gate, cross-provider verify with a fix loop, test-gated landing, archive-then-remove cleanup" src="docs/diagrams/lifecycle-light.svg">
-</picture>
+<img alt="run lifecycle: doctor preflight, spawn, collect gate, cross-provider verify with a fix loop, test-gated landing, archive-then-remove cleanup" src="docs/diagrams/lifecycle-light.svg">
 
 In-run telemetry and mid-run steering ride
 [raven](https://github.com/0xDarkMatter/raven), a zero-infra SQLite message
@@ -179,10 +164,7 @@ graceful wind-downs mid-flight (ADR-022/ADR-023).
 
 Zoomed to a single lane, the safety mechanics look like this:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lane-dark.svg">
-  <img alt="anatomy of one worker lane: a task packet with its role card prepended enters an isolated worktree lane holding the guard preamble, heartbeat file, transcript stream, and working-tree artifacts; a journal records started and result keyed by content hash; the collect gate applies per-model semantics plus the escape guard and returns the final reply to the orchestrator; a dashed opt-in edge feeds the raven telemetry bus" src="docs/diagrams/lane-light.svg">
-</picture>
+<img alt="anatomy of one worker lane: a task packet with its role card prepended enters an isolated worktree lane holding the guard preamble, heartbeat file, transcript stream, and working-tree artifacts; a journal records started and result keyed by content hash; the collect gate applies per-model semantics plus the escape guard and returns the final reply to the orchestrator; a dashed opt-in edge feeds the raven telemetry bus" src="docs/diagrams/lane-light.svg">
 
 **Why not Claude Code's built-in orchestration?** Use it, when one provider
 suffices. Its agents run in-process, so they all share `ANTHROPIC_BASE_URL`;

@@ -1,4 +1,4 @@
-<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-arch-title ff-arch-desc" font-family="ui-sans-serif,'Segoe UI',Helvetica,Arial,sans-serif">
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-arch-title ff-arch-desc" font-family="ui-sans-serif,'Segoe UI','Helvetica Neue',Helvetica,sans-serif">
 <title id="ff-arch-title">fleetflow hub-and-spoke architecture</title>
 <desc id="ff-arch-desc">An orchestrator session spawns four cross-provider worker lanes, each an OS process in its own git worktree; results return through one collect gate, runs are journalled for resume, and a dashboard observes without being a second source of truth.</desc>
 <defs>

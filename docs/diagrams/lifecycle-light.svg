@@ -1,4 +1,4 @@
-<svg viewBox="0 0 960 328" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-life-title ff-life-desc" font-family="ui-sans-serif,'Segoe UI',Helvetica,Arial,sans-serif">
+<svg viewBox="0 0 960 328" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ff-life-title ff-life-desc" font-family="ui-sans-serif,'Segoe UI','Helvetica Neue',Helvetica,sans-serif">
 <title id="ff-life-title">fleetflow run lifecycle</title>
 <desc id="ff-life-desc">A run flows left to right from provider preflight through spawn, the collect gate, cross-provider adversarial verification, test-gated landing, and archive-then-remove cleanup; findings loop back into fix lanes until verification passes.</desc>
 <defs>
