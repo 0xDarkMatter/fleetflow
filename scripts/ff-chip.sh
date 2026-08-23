@@ -176,7 +176,7 @@ EOF
   # enable replay: a chip is launched by a human click, so a cache hit could
   # never be acted on. ff-run resume skips chip packets for that reason.
   OPTS="turns=0|wt=1|schema=|effort=|model="
-  KEY="v2:$( { printf '%s\n' "chip"; cat "$SENT"; printf '%s' "$OPTS"; } | sha256sum | cut -d' ' -f1)"
+  KEY="v2:$( { printf '%s\n' "chip"; cat "$SENT"; printf '%s' "$OPTS"; } | ff_sha256 | cut -d' ' -f1)"
 
   [ -n "$BASE" ] || BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"
   [ -n "$BASE" ] && [ "$BASE" != "null" ] || BASE="main"

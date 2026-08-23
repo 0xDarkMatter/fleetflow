@@ -15,12 +15,14 @@
 # strip, sendPrompt buttons) that stay outside the shared module by design.
 #
 # Self-containment (mirrors ADR-003's zero-external-references doctrine): the
-# ONLY external reference this fragment ever emits is the literal
-# "https://fleetflow.lab" anchor href in the footer. Tabler icon classes
+# ONLY external reference this fragment ever emits is the dashboard anchor href
+# in the footer, whose origin is FLEETFLOW_DASHBOARD_URL (default
+# http://127.0.0.1:8161). Tabler icon classes
 # (`ti ti-...`) on the chat-only controls are NOT a fetch here - the host page
 # loads the Tabler font, this fragment only references its CSS classes.
-# `tests/run.sh` greps this script's output for http(s) occurrences and
-# expects exactly that one hit.
+# `tests/run.sh` greps this script's output for http(s) occurrences and expects
+# exactly that one hit - it pins the COUNT and the configured origin, never a
+# particular hostname.
 #
 # Data sources, all optional-degrading per the ADR:
 #   ff-status.sh --run   (required - no run, no fragment)
@@ -315,7 +317,13 @@ if [ -n "$GATED_WAVE" ]; then
 fi
 REPO_ENC="$(jq -nr --arg r "$REPO" '$r|@uri')"
 RUN_ENC="$(jq -nr --arg r "$RUN" '$r|@uri')"
-DASHBOARD_URL="https://fleetflow.lab/?repo=${REPO_ENC}&run=${RUN_ENC}"
+# Dashboard anchor base. `fleetflow.lab` is the AUTHOR'S portless alias, NOT a
+# public host - it resolves for nobody else, so it cannot be the default or every
+# install ships a dead link. Default is ff-serve.py's own default origin, which is
+# what `python scripts/ff-serve.py` gives a fresh install; point
+# FLEETFLOW_DASHBOARD_URL at a proxy/.lab/remote origin to override.
+DASH_BASE="${FLEETFLOW_DASHBOARD_URL:-http://127.0.0.1:8161}"
+DASHBOARD_URL="${DASH_BASE%/}/?repo=${REPO_ENC}&run=${RUN_ENC}"
 
 # --- emit: ffrc-host + style + marker-delimited module + beneath-card controls
 cat <<HTMLEOF

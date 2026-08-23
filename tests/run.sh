@@ -665,7 +665,7 @@ grep -q 'caret\[data-card\]' "$DASH" \
   && ok "dashboard: per-card caret is bound" || bad "dashboard: caret rendered but unbound"
 # The sparkline must render BEFORE <div class="body">, or collapsing a card
 # blanks the chart - which is exactly the signal collapse is meant to preserve.
-python - "$DASH" <<'PY' && ok "dashboard: sparkline survives card collapse (outside .body)" \
+ff_python - "$DASH" <<'PY' && ok "dashboard: sparkline survives card collapse (outside .body)" \
   || bad "dashboard: sparkline is inside .body - collapse would hide every chart"
 import re, sys
 s = open(sys.argv[1], encoding="utf-8").read()
@@ -852,7 +852,7 @@ grep -q 'class Doctor' "$SRV" \
 grep -q 'threading.Thread(target=self._run' "$SRV" \
   && ok "ff-serve: live doctor probe is backgrounded" \
   || bad "ff-serve: live probe would block the request"
-python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$SRV" \
+ff_python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$SRV" \
   && ok "ff-serve: parses" || bad "ff-serve: syntax error"
 
 # --- roost integration (optional capability, conditional section) ----------------
@@ -935,8 +935,8 @@ printf '%s' "$RRN" | jq -e 'any(.[]; .id=="a01cb5f01fadf5610" and .status=="impo
 # --- ADR conformance (the docs contract, eaten at home) -------------------------
 # adr-lint ships with the adr-ops skill, not this repo; skip (loudly) if absent.
 ADRL="$HOME/.claude/skills/adr-ops/scripts/adr-lint.py"
-if [ -f "$ADRL" ] && command -v python >/dev/null 2>&1; then
-  python "$ADRL" --strict --dir "$HERE/../docs/adr" >/dev/null 2>&1 \
+if [ -f "$ADRL" ] && ff_have_python; then
+  ff_python "$ADRL" --strict --dir "$HERE/../docs/adr" >/dev/null 2>&1 \
     && ok "adr: docs/adr conforms (adr-lint --strict)" \
     || bad "adr: adr-lint --strict has findings (run it directly for detail)"
 else
@@ -1077,12 +1077,19 @@ if [ -f "$WIDGET" ]; then
   [ "$WHRC" = "0" ] && [ -s "$WHTML_FILE" ] \
     && ok "waves widget: fixture renders an HTML fragment" \
     || bad "waves widget: render failed (rc=$WHRC)"
-  HTTPS_N="$(printf '%s' "$WHTML" | grep -o 'https://' | wc -l | tr -d ' ')"
-  { [ "$HTTPS_N" = "1" ] && printf '%s' "$WHTML" | grep -q 'href="https://fleetflow\.lab/'; } \
-    && ok "waves widget: sole https occurrence is fleetflow.lab anchor" \
-    || bad "waves widget: expected one fleetflow.lab https anchor (got $HTTPS_N)"
-  printf '%s' "$WHTML" | grep -q 'http://' \
-    && bad "waves widget: http URL emitted" || ok "waves widget: zero http occurrences"
+  # ADR-003 doctrine: the fragment emits exactly ONE external reference - the
+  # dashboard anchor. Its ORIGIN is configurable (FLEETFLOW_DASHBOARD_URL), so pin
+  # the COUNT and the CONFIGURED value. Pinning a private hostname here is what
+  # previously gate-enforced the author's .lab alias into every user's output.
+  URL_N="$(printf '%s' "$WHTML" | grep -oE 'https?://' | wc -l | tr -d ' ')"
+  { [ "$URL_N" = "1" ] && printf '%s' "$WHTML" | grep -q 'href="http://127\.0\.0\.1:8161/'; } \
+    && ok "waves widget: sole external reference is the default dashboard anchor" \
+    || bad "waves widget: expected one default dashboard anchor (got $URL_N)"
+  WHTML_OV="$(FLEETFLOW_DASHBOARD_URL=https://dash.example bash "$WIDGET" --run wwidget --repo "$WREPO" 2>/dev/null)"
+  OV_N="$(printf '%s' "$WHTML_OV" | grep -oE 'https?://' | wc -l | tr -d ' ')"
+  { [ "$OV_N" = "1" ] && printf '%s' "$WHTML_OV" | grep -q 'href="https://dash\.example/'; } \
+    && ok "waves widget: FLEETFLOW_DASHBOARD_URL overrides the anchor origin" \
+    || bad "waves widget: dashboard origin override not honoured (got $OV_N)"
   printf '%s' "$WHTML" | grep -qE '(alert|confirm|prompt)[[:space:]]*\(' \
     && bad "waves widget: native browser dialog call emitted" \
     || ok "waves widget: no alert/confirm/prompt calls"
@@ -1117,7 +1124,7 @@ else
   # Extract marker-delimited bytes without decoding or newline conversion. The
   # marker LINES are removed; every byte between them is preserved for cmp.
   extract_runcard_body() {
-    python - "$1" "$2" <<'PY'
+    ff_python - "$1" "$2" <<'PY'
 import pathlib
 import sys
 
@@ -1195,7 +1202,7 @@ PY
   # DATA is emitted as JSON assigned to a JS variable. Extract a balanced object
   # so nested counts/lanes do not fool a regex, then let jq enforce the wire shape.
   RUNCARD_DATA="$TMP/runcard-data.json"
-  if python - "$WHTML_FILE" "$RUNCARD_DATA" <<'PY'
+  if ff_python - "$WHTML_FILE" "$RUNCARD_DATA" <<'PY'
 import pathlib
 import re
 import sys
@@ -1243,7 +1250,7 @@ PY
     bad "runcard widget: DATA object missing or malformed"
   fi
 
-  python - "$WHTML_FILE" <<'PY'
+  ff_python - "$WHTML_FILE" <<'PY'
 import pathlib
 import sys
 

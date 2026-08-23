@@ -321,7 +321,7 @@ OPTS="turns=$MAX_TURNS|wt=$WORKTREE|schema=$( [ -n "$SCHEMA" ] && basename "$SCH
 # "|acp=0" to every key would invalidate every cached run on the machine for a
 # mode they don't use (the exact blast the heartbeat clause's opt-in avoids).
 [ "$ACP" = 1 ] && OPTS="$OPTS|acp=1"
-KEY="v2:$( { printf '%s\n' "$MODEL"; cat "$SENT"; printf '%s' "$OPTS"; } | sha256sum | cut -d' ' -f1)"
+KEY="v2:$( { printf '%s\n' "$MODEL"; cat "$SENT"; printf '%s' "$OPTS"; } | ff_sha256 | cut -d' ' -f1)"
 JOURNAL="$RUNDIR/journal.jsonl"
 
 # --- run manifest (orchestrator-side packet metadata; ff-run replays it) ----

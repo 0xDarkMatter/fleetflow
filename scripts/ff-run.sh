@@ -500,7 +500,7 @@ run_triage_wave() {
     fi
     if [ "$esc" = 0 ] && [ "$USE_ADR" = 1 ] && [ -n "$files_text" ]; then
       local touched=""
-      touched="$(printf '%s' "$files_text" | tr ' ' '\n' | xargs -I{} python "$ADR_TOOL" --repo "$REPO" {} 2>/dev/null || true)"
+      touched="$(printf '%s' "$files_text" | tr ' ' '\n' | xargs -I{} "$FF_PYTHON" "$ADR_TOOL" --repo "$REPO" {} 2>/dev/null || true)"
       [ -n "$touched" ] && esc=1
     fi
     if [ "$esc" = 1 ]; then

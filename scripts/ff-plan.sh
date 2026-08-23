@@ -301,7 +301,7 @@ lint_cmd() {
     for ((i=0;i<${#fm_files[@]};i++)); do
       file="${fm_files[$i]}"; id="${ids[$i]}"; mapfile -t owned < <(fm_list "$file" owns)
       if [ "${#owned[@]}" -eq 0 ]; then adr_disarmed="${adr_disarmed:+$adr_disarmed, }$id(no owned paths)"; continue; fi
-      set +e; adr_output="$(python "$adr_script" --json "${owned[@]}" 2>&1)"; rc=$?; set -e
+      set +e; adr_output="$(ff_python "$adr_script" --json "${owned[@]}" 2>&1)"; rc=$?; set -e
       if [ "$rc" -eq 0 ] || [ "$rc" -eq 10 ]; then adr_armed=$((adr_armed+1)); fi
       if [ "$rc" -eq 10 ] && ! grep -qi "constraints from standing decisions" "$file"; then
         add_finding adr-constraints hard "$(json_array "$id")" "$(json_array "${owned[@]}")" "governing ADRs found but packet lacks the Constraints from standing decisions heading"

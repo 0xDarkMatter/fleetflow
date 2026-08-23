@@ -44,19 +44,28 @@ say() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- structural ---------------------------------------------------------------
-for bin in git jq sha256sum; do
+for bin in git jq; do
   if command -v "$bin" >/dev/null; then say "bin-$bin" ok "found"; else say "bin-$bin" fail "missing"; FAIL=1; fi
 done
+# sha256: any of coreutils/shasum/openssl satisfies ff_sha256 (see scripts/_env.sh).
+# Reported by IMPLEMENTATION, not by the coreutils name, so macOS reads ok not fail.
+if ff_have_sha256; then
+  for _impl in sha256sum shasum openssl; do command -v "$_impl" >/dev/null 2>&1 && break; done
+  say "bin-sha256" ok "$_impl"
+else say "bin-sha256" fail "need one of sha256sum, shasum, or openssl"; FAIL=1; fi
+# python: probed by execution - a PATH-resolvable Windows Store alias is not an interpreter.
+if ff_have_python; then say "bin-python" ok "$FF_PYTHON"
+else say "bin-python" advisory "missing - ADR constraint checks and some tests degrade"; fi
 if command -v claude >/dev/null; then say "bin-claude" ok "found"; else say "bin-claude" fail "missing"; FAIL=1; fi
-if command -v codex >/dev/null; then say "bin-codex" ok "$(codex --version 2>/dev/null | head -1)"; else say "bin-codex" advisory "missing - codex model unavailable"; fi
+if command -v codex >/dev/null; then say "bin-codex" ok "$(codex --version 2>/dev/null | head -1)"; else say "bin-codex" advisory "missing - --model codex exits 5; install: https://github.com/openai/codex"; fi
 GROK="${FLEETFLOW_GROK_BIN:-grok}"
-if command -v "$GROK" >/dev/null; then say "bin-grok" ok "$("$GROK" --version 2>/dev/null | head -1)"; else say "bin-grok" advisory "missing - grok model unavailable"; fi
+if command -v "$GROK" >/dev/null; then say "bin-grok" ok "$("$GROK" --version 2>/dev/null | head -1)"; else say "bin-grok" advisory "missing - --model grok exits 5; set FLEETFLOW_GROK_BIN or install the xAI grok CLI"; fi
 PIBIN="${FLEETFLOW_PI_BIN:-pi}"
 # -f fallback matches ff-spawn: bash runs a .cmd shim but command -v rejects it
-if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then say "bin-pi" ok "pi $("$PIBIN" --version 2>/dev/null | head -1)"; else say "bin-pi" advisory "missing - pi model unavailable (set FLEETFLOW_PI_BIN)"; fi
+if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then say "bin-pi" ok "pi $("$PIBIN" --version 2>/dev/null | head -1)"; else say "bin-pi" advisory "missing - --model pi exits 5; set FLEETFLOW_PI_BIN or install https://github.com/earendil-works/pi"; fi
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
-if [ -f "$FW" ]; then say "fleet-worker" ok "$FW"; else say "fleet-worker" advisory "not installed - glm model unavailable"; fi
+if [ -f "$FW" ]; then say "fleet-worker" ok "$FW"; else say "fleet-worker" advisory "not installed - --model glm exits 5; mount claude-mods skills/fleet-worker or set FLEETFLOW_FLEET_WORKER"; fi
 
 # --- which windows.sandbox mode will codex lanes actually get? -----------------
 # Config read only (no execution) - the behavioural tripwire is in --live below.
@@ -99,8 +108,8 @@ if [ -d "$INST" ]; then
     for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.sh; do
       [ -f "$HERE/$s" ] || continue            # not shipped here; skip
       if [ ! -f "$INST/$s" ]; then DIFF=1; break; fi
-      h1="$(sha256sum "$HERE/$s" | cut -d' ' -f1)"
-      h2="$(sha256sum "$INST/$s" | cut -d' ' -f1)"
+      h1="$(ff_sha256 "$HERE/$s" | cut -d' ' -f1)"
+      h2="$(ff_sha256 "$INST/$s" | cut -d' ' -f1)"
       [ "$h1" = "$h2" ] || { DIFF=1; break; }
     done
     if [ "$DIFF" = 0 ]; then say "install-sync" ok "repo and installed copies match"

@@ -290,7 +290,7 @@ append)
     FILES_SORTED_JSON="$(printf '%s' "$FILES" | jq -c 'sort')"
     FILES_SORTED="$(printf '%s' "$FILES_SORTED_JSON" | jq -r 'join(",")')"
     CLAIM_NORM="$(printf '%s' "$CLAIM" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')"
-    FP="$(printf '%s\n%s\n%s' "$WAVE" "$FILES_SORTED" "$CLAIM_NORM" | sha256sum | cut -c1-12)"
+    FP="$(printf '%s\n%s\n%s' "$WAVE" "$FILES_SORTED" "$CLAIM_NORM" | ff_sha256 | cut -c1-12)"
 
     MATCH_IDX="$(printf '%s' "$EXISTING" | jq -r --arg fp "$FP" '[.[] | .fp] | index($fp) // -1' 2>/dev/null)"
     if [ -n "$MATCH_IDX" ] && [ "$MATCH_IDX" != "-1" ] && [ "$MATCH_IDX" != "null" ]; then
