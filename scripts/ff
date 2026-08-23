@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# ff - the fleetflow dispatcher: one entry point over the ff-*.sh scripts.
+#
+# `ff spawn ...` forwards to scripts/ff-spawn.sh verbatim; bash scripts stay the
+# canonical interface (docs and tests address them directly - this is sugar, not
+# a layer, so NO logic that changes a forwarded command's behaviour belongs here).
+# Native conveniences that have no script of their own live inline below:
+#   ff env    - the FLEETFLOW_* registry, columnised (ff-doctor --env is the data)
+#   ff open   - open the dashboard for this repo ($FLEETFLOW_DASHBOARD_URL)
+#   ff logs   - tail one lane's artifacts without knowing the run-dir layout
+#   ff watch  - terminal live view of a run (ff-status --watch is file-targeted,
+#               for the HTML monitor; this loop is the human-in-a-terminal case)
+# stdout: forwarded command's stdout / human-readable views. stderr: chatter.
+# Exit codes: forwarded commands keep their own; native: 0 ok, 2 usage.
+set -u
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/_env.sh"
+
+SCRIPTS="plan doctor spawn collect status run clean sweep chip archive findings widget import"
+PYS="serve aggregate"
+
+usage() {
+  cat <<'USAGE'
+Usage: ff <command> [args...]
+
+Forwarded to scripts/ff-<command>.sh (each has its own --help):
+  plan doctor spawn collect status run clean sweep chip archive findings widget import
+Forwarded to python (scripts/ff-<command>.py):
+  serve aggregate
+
+Native conveniences:
+  ff env                          FLEETFLOW_* tunables: name, current, default, purpose
+  ff open [--repo PATH]           open the dashboard for this repo in a browser
+  ff logs RUN ID [--repo PATH] [-n LINES] [--follow]
+                                  tail one lane's artifacts (err, result, transcript tail)
+  ff watch RUN [--repo PATH] [--interval SECONDS]
+                                  terminal live view; exits when every lane is final
+  ff status --run X --watch       alias for `ff watch X` (terminal; ff-status's own
+                                  --watch is file-targeted and needs --out)
+
+EXAMPLES
+  ff doctor --offline
+  ff plan lint --run demo
+  ff watch demo
+  ff logs demo build -n 40
+USAGE
+}
+
+err() { printf 'ff: %s\n' "$*" >&2; }
+
+repo_of() {  # $1: explicit --repo value or empty
+  if [ -n "${1:-}" ]; then printf '%s' "$1"; else git rev-parse --show-toplevel 2>/dev/null; fi
+}
+
+cmd="${1:-}"; [ -n "$cmd" ] || { usage >&2; exit 2; }
+shift || true
+case "$cmd" in
+  -h|--help|help) usage; exit 0 ;;
+
+  env)
+    if command -v column >/dev/null 2>&1; then
+      bash "$HERE/ff-doctor.sh" --env | column -t -s "$(printf '\t')"
+    else
+      bash "$HERE/ff-doctor.sh" --env
+    fi
+    exit $? ;;
+
+  open)
+    REPO=""; while [ $# -gt 0 ]; do case "$1" in --repo) REPO="${2:-}"; shift 2;; *) err "unknown arg: $1"; exit 2;; esac; done
+    REPO="$(repo_of "$REPO")" || { err "not inside a git repo (pass --repo)"; exit 2; }
+    URL="${FLEETFLOW_DASHBOARD_URL:-http://127.0.0.1:8161}"
+    URL="${URL%/}/?repo=$(jq -nr --arg r "$REPO" '$r|@uri')"
+    printf '%s\n' "$URL"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*) cmd.exe /c start "" "$URL" >/dev/null 2>&1 ;;
+      Darwin) open "$URL" ;;
+      *) xdg-open "$URL" >/dev/null 2>&1 ;;
+    esac
+    exit 0 ;;
+
+  logs)
+    RUN="${1:-}"; ID="${2:-}"; [ -n "$RUN" ] && [ -n "$ID" ] || { err "usage: ff logs RUN ID [--repo PATH] [-n LINES] [--follow]"; exit 2; }
+    shift 2; REPO=""; N=20; FOLLOW=0
+    while [ $# -gt 0 ]; do case "$1" in
+      --repo) REPO="${2:-}"; shift 2;; -n) N="${2:-20}"; shift 2;; --follow|-f) FOLLOW=1; shift;;
+      *) err "unknown arg: $1"; exit 2;; esac; done
+    REPO="$(repo_of "$REPO")" || { err "not inside a git repo (pass --repo)"; exit 2; }
+    RD="$REPO/.fleetflow/$RUN"
+    [ -d "$RD" ] || { err "no run dir: $RD"; exit 2; }
+    if [ "$FOLLOW" = 1 ]; then
+      [ -f "$RD/$ID.err" ] || { err "nothing to follow: $RD/$ID.err"; exit 2; }
+      exec tail -f "$RD/$ID.err"
+    fi
+    found=0
+    for f in "$ID.err" "$ID.result.json" "$ID.last.txt" "$ID.spawn.err" "$ID.invalid.txt"; do
+      [ -s "$RD/$f" ] || continue
+      found=1
+      printf '== %s (%s bytes) ==\n' "$RD/$f" "$(wc -c < "$RD/$f" | tr -d ' ')"
+      tail -n "$N" "$RD/$f"; printf '\n'
+    done
+    [ -d "$RD/wt-$ID" ] && printf '== worktree: %s ==\n' "$RD/wt-$ID"
+    [ "$found" = 1 ] || err "no artifacts yet for lane '$ID' (files appear once the lane runs)"
+    exit 0 ;;
+
+  watch)
+    RUN="${1:-}"; [ -n "$RUN" ] || { err "usage: ff watch RUN [--repo PATH] [--interval SECONDS]"; exit 2; }
+    shift; REPO=""; IV=5
+    while [ $# -gt 0 ]; do case "$1" in
+      --repo) REPO="${2:-}"; shift 2;; --interval|-i) IV="${2:-5}"; shift 2;;
+      *) err "unknown arg: $1"; exit 2;; esac; done
+    REPO="$(repo_of "$REPO")" || { err "not inside a git repo (pass --repo)"; exit 2; }
+    while :; do
+      DOC="$(bash "$HERE/ff-status.sh" --run "$RUN" --repo "$REPO" 2>/dev/null)" || { err "ff-status failed for run '$RUN'"; exit 2; }
+      printf '\033[2J\033[H'
+      printf '%s' "$DOC" | jq -r '
+        "run \(.run // "?")  ·  \(.lanes|length) lanes  ·  " +
+          ([.lanes[].state] | group_by(.) | map("\(.[0])=\(length)") | join("  ")),
+        "",
+        (["LANE","MODEL","STATE","ELAPSED","TOKENS"] | @tsv),
+        (.lanes[] | [.id, (.model // "-"), .state,
+                     ((.elapsed_s // 0) | tostring) + "s",
+                     ((.tokens // 0) | tostring)] | @tsv)' \
+        | column -t -s "$(printf '\t')"
+      ACTIVE="$(printf '%s' "$DOC" | jq -r '[.lanes[].state | select(. == "running" or . == "stalled")] | length')"
+      if [ "$ACTIVE" = "0" ] && [ "$(printf '%s' "$DOC" | jq -r '.lanes|length')" != "0" ]; then
+        printf '\nall lanes final - watch done\n'; exit 0
+      fi
+      sleep "$IV"
+    done ;;
+
+  status)
+    # terminal watch alias: `ff status --run X --watch` (no --out). ff-status's own
+    # --watch is file-targeted for the HTML monitor and requires --out.
+    has_watch=0; has_out=0; RUNARG=""
+    prev=""
+    for a in "$@"; do
+      [ "$a" = "--watch" ] && has_watch=1
+      [ "$a" = "--out" ] && has_out=1
+      [ "$prev" = "--run" ] && RUNARG="$a"
+      prev="$a"
+    done
+    if [ "$has_watch" = 1 ] && [ "$has_out" = 0 ] && [ -n "$RUNARG" ]; then
+      exec "$0" watch "$RUNARG"
+    fi
+    exec bash "$HERE/ff-status.sh" "$@" ;;
+
+  *)
+    for s in $SCRIPTS; do
+      [ "$cmd" = "$s" ] && exec bash "$HERE/ff-$s.sh" "$@"
+    done
+    for pcmd in $PYS; do
+      [ "$cmd" = "$pcmd" ] && { ff_have_python || { err "python needed for '$pcmd'"; exit 2; }; exec "$FF_PYTHON" "$HERE/ff-$pcmd.py" "$@"; }
+    done
+    err "unknown command: $cmd"; usage >&2; exit 2 ;;
+esac

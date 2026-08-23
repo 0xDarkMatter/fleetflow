@@ -2417,6 +2417,54 @@ check "ff-plan: expand unknown generator -> 3" 3 \
 check "ff-plan: expand pending generator (forma) -> 3" 3 \
   bash "$PLAN" expand --run pest --generator forma --vars "$FFSTUB/vars.txt" --repo "$PREPO"
 
+# --- ff dispatcher + env registry ----------------------------------------------
+FF="$HERE/../scripts/ff"
+DOCTOR="$HERE/../scripts/ff-doctor.sh"
+
+check "ff: unknown command -> 2" 2 bash "$FF" nonesuch
+bash "$FF" help 2>/dev/null | grep -q "ff watch"   && ok "ff: help lists the native conveniences"   || bad "ff: help missing native commands"
+FWD1="$(bash "$FF" doctor --offline 2>/dev/null | head -1)"
+printf '%s' "$FWD1" | grep -q "^bin-git	"   && ok "ff: forwards doctor verbatim (first row is bin-git)"   || bad "ff: doctor forward broken (got: $FWD1)"
+check "ff logs: missing args -> 2" 2 bash "$FF" logs
+check "ff watch: missing run -> 2" 2 bash "$FF" watch
+
+# registry shape: every row is exactly 4 tab-separated fields
+ENVROWS="$(bash "$DOCTOR" --env 2>/dev/null)"
+ENVN="$(printf '%s
+' "$ENVROWS" | grep -c .)"
+BADSHAPE="$(printf '%s
+' "$ENVROWS" | awk -F'	' 'NF != 4 {n++} END {print n+0}')"
+{ [ "$ENVN" -ge 20 ] && [ "$BADSHAPE" = "0" ]; }   && ok "ff-doctor --env: $ENVN rows, all 4-field TSV"   || bad "ff-doctor --env: shape wrong ($ENVN rows, $BADSHAPE malformed)"
+
+# drift gate A: every FLEETFLOW_* var any script references appears in the registry
+MISSING_REG=""
+for v in $(grep -rhoE 'FLEETFLOW_[A-Z_]+' "$HERE/../scripts/"*.sh "$HERE/../scripts/"*.py | sort -u); do
+  printf '%s
+' "$ENVROWS" | cut -f1 | grep -qx "$v" || MISSING_REG="$MISSING_REG $v"
+done
+[ -z "$MISSING_REG" ]   && ok "env registry: every script-referenced FLEETFLOW_* var is registered"   || bad "env registry: unregistered vars:$MISSING_REG (add rows to ff-doctor env_rows)"
+
+# drift gate B: every registry row appears in docs/REFERENCE.md
+MISSING_DOC=""
+for v in $(printf '%s
+' "$ENVROWS" | cut -f1); do
+  grep -q "\`$v\`" "$HERE/../docs/REFERENCE.md" || MISSING_DOC="$MISSING_DOC $v"
+done
+[ -z "$MISSING_DOC" ]   && ok "docs/REFERENCE.md: mirrors every registry variable"   || bad "docs/REFERENCE.md: missing rows for:$MISSING_DOC"
+
+# --- ff-collect end-of-run summary ----------------------------------------------
+SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"
+mkdir -p "$SUMRD" && ( cd "$SUMREPO" && git init -q -b main . )
+printf '%s
+'   '{"type":"started","key":"k1","id":"a","model":"sonnet"}'   '{"type":"result","key":"k1","id":"a","rc":0,"artifact":"a.result.json"}'   '{"type":"started","key":"k2","id":"b","model":"sonnet"}'   '{"type":"result","key":"k2","id":"b","rc":10,"artifact":"b.result.json"}' > "$SUMRD/journal.jsonl"
+printf '{"type":"result","subtype":"success","is_error":false,"result":"done"}' > "$SUMRD/a.result.json"
+SUMERR="$(bash "$HERE/../scripts/ff-collect.sh" --run sumrun --id a --repo "$SUMREPO" 2>&1 >/dev/null)"
+printf '%s' "$SUMERR" | grep -q "run 'sumrun' complete: 2 lane(s) - 1 ok, 1 failed"   && ok "ff-collect: end-of-run summary fires when every packet has a result"   || bad "ff-collect: summary missing or wrong (stderr: $SUMERR)"
+printf '%s
+' '{"type":"started","key":"k3","id":"c","model":"sonnet"}' >> "$SUMRD/journal.jsonl"
+SUMERR2="$(bash "$HERE/../scripts/ff-collect.sh" --run sumrun --id a --repo "$SUMREPO" 2>&1 >/dev/null)"
+printf '%s' "$SUMERR2" | grep -q "complete:"   && bad "ff-collect: summary fired on an incomplete run"   || ok "ff-collect: no summary while a packet is still unresolved"
+
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
 # archive-before-remove (ADR-011) writes throwaway `rc` runs into the history

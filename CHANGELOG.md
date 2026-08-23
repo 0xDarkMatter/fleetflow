@@ -8,6 +8,21 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- `ff` dispatcher (`scripts/ff`): one entry point over the scripts - `ff plan
+  lint`, `ff doctor --offline` - plus native conveniences with no script of
+  their own: `ff env` (the tunables registry, columnised), `ff open` (dashboard
+  for this repo), `ff logs RUN ID` (tail a lane's artifacts without knowing the
+  run-dir layout), `ff watch RUN` (terminal live view that exits when every
+  lane is final). Bash tab-completion in `completions/ff.bash` (subcommands,
+  models, run names read live from `.fleetflow/`).
+- `ff-doctor --env`: every `FLEETFLOW_*` tunable as name/current/default/purpose
+  TSV. The registry is gate-checked both ways: every script-referenced variable
+  must be registered, and every registered variable must appear in
+  `docs/REFERENCE.md` (which also carries the semantic exit-code table).
+- End-of-run summary: when a collect passes and every started packet has a
+  result, ff-collect reports lane counts on stderr - counts only, totals stay
+  ff-status's job.
+- README glossary: the sixteen load-bearing terms, one line each.
 - `--target diff|staging=<url>` on `ff-run wave` aims the finder waves: `diff`
   (default) inspects the change, `staging=<url>` drives a running deployment.
   Lanes may interact fully but never deploy, restart, or reconfigure it (ADR-032).

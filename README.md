@@ -48,7 +48,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 450 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 460 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -101,6 +101,15 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -T
 
 ```bash
 ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
+```
+
+Optional but recommended: put the `ff` dispatcher on your PATH and source the
+completion, and every command below shortens to `ff <cmd>` with tab-completion
+for subcommands, models, and run names:
+
+```bash
+ln -s "<path-to-your-clone>/scripts/ff" ~/.local/bin/ff
+echo 'source "<path-to-your-clone>/completions/ff.bash"' >> ~/.bashrc
 ```
 
 ## Quickstart
@@ -295,7 +304,7 @@ fleetflow eats its own cooking. This repo carries
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 450-assertion test gate: a malformed decision
+`adr-lint` runs inside the 460-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -376,6 +385,32 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 📊 **One run-card renderer** shared byte-identically by the dashboard and
   the chat widget ([ADR-019](docs/adr/ADR-019-one-run-card-renderer-two-embedded-copies.md)).
 
+## Glossary
+
+The vocabulary is compact but load-bearing; every doc assumes it.
+
+| Term | Meaning |
+|---|---|
+| **run** | one named fleet job: a plan, its packets, its lanes, its findings — everything under `.fleetflow/<run>/` |
+| **packet** | the task brief one lane receives: role card + constraints + scope, a markdown file |
+| **lane** | one worker process executing one packet, usually caged in its own git worktree (`wt-<id>`) |
+| **manifest** | the run's machine-readable plan: phases, packets, routing — authored by `ff-plan`, consumed by `ff-spawn` |
+| **journal** | append-only `started`/`result` records keyed by content hash; the resume cache |
+| **collect gate** | per-model success check a lane's FINAL REPLY must pass before the orchestrator trusts it |
+| **escape guard** | the collect-time check that no worker wrote outside its lane into the main checkout |
+| **wave** | one post-build QA pass (security, a11y, docs-parity, …) emitting findings into the ledger |
+| **posture** | which finder waves run: `baseline` → `tested` → `hardened` → `complete` |
+| **attendance / gate** | who watches: `none`, one review at `land`, or a human gate after `each` wave |
+| **findings ledger** | append-only, fingerprint-deduped record of everything the waves found |
+| **refuter / Adversary** | a cross-provider lane prompted to attack a claim, plan, or fix rather than confirm it |
+| **role card** | a versioned persona contract (mandate, stance, bounds, reply shape) prepended into a packet |
+| **seat** | a role card slot in a run: Architect through Warden, twelve in all |
+| **chip** | a human-clicked Claude Code session adopted as an ordinary lane via `ff chip open` |
+| **stalled / abandoned** | a running lane gone silent past `FLEETFLOW_STALL_SECONDS` / demoted final past `FLEETFLOW_ABANDON_SECONDS` |
+
+Operational reference — every `FLEETFLOW_*` tunable and the semantic exit codes —
+is [docs/REFERENCE.md](docs/REFERENCE.md) (`ff env` prints the live values).
+
 ## Ecosystem
 
 fleetflow composes with a small family of tools, most of them skills in
@@ -396,7 +431,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-450 assertions over the scripts, monitor, dashboard wiring, and import/resume
+460 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

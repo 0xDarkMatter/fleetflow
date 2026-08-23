@@ -18,15 +18,18 @@ FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
-Usage: ff-doctor.sh [--offline | --live]
+Usage: ff-doctor.sh [--offline | --live | --env]
 
   --offline   structural checks only (default; CI-safe)
   --live      also probe GLM endpoint, Codex auth, Anthropic models;
               reports orchestrator tier (fable|opus)
+  --env       print every FLEETFLOW_* tunable: name, current value, default,
+              and what it does (TSV; the live source docs/REFERENCE.md cites)
 
 EXAMPLES
   ff-doctor.sh --offline
   ff-doctor.sh --live
+  ff-doctor.sh --env | column -t -s "$(printf '	')"
 EOF
 }
 
@@ -34,11 +37,57 @@ MODE="offline"
 case "${1:-}" in
   --offline|"") MODE="offline" ;;
   --live) MODE="live" ;;
+  --env) MODE="env" ;;
   -h|--help) usage; exit 0 ;;
   *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
 esac
 
 FAIL=0; UNREACH=0
+
+# --- --env: the FLEETFLOW_* tunables registry -----------------------------------
+# One row per variable: name<TAB>current<TAB>default<TAB>what it tunes.
+# This list is the SOURCE OF TRUTH for docs/REFERENCE.md, and a test asserts every
+# FLEETFLOW_* variable referenced by any script appears here - add the row in the
+# same commit as the variable or the gate fails.
+env_rows() {
+  cat <<'ROWS'
+FLEETFLOW_HOME	$HOME/.fleetflow	machine-level store root: history.jsonl, dashboard cache (ff-archive/clean/sweep/serve)
+FLEETFLOW_ROOTS	(unset)	path-separator-joined roots for machine-wide discovery; overrides ~/.fleetflow/roots.txt (ff-serve, ff-aggregate, ff-sweep)
+FLEETFLOW_STALL_SECONDS	600	live-stream silence before a running lane reads stalled (ff-status, ADR-008)
+FLEETFLOW_ABANDON_SECONDS	21600	silence before a running/stalled lane is demoted to final abandoned (ff-status, ADR-025)
+FLEETFLOW_CACHE_ROOT	$HOME/.fleet-worker/cache	per-lane tmp + uv cache root, redirected OUT of worktrees (ff-spawn, ff-clean)
+FLEETFLOW_CFG_BASE	$HOME/.fleet-worker	fleet-worker config-dir base ff-status scans for glm lane transcripts
+FLEETFLOW_DASHBOARD_URL	http://127.0.0.1:8161	dashboard origin for the widget anchor and the SKILL.md pane ritual
+FLEETFLOW_BUS	0	=1 opts lanes into raven bus heartbeats (ff-spawn, ADR-022)
+FLEETFLOW_ORCHESTRATOR	(unset)	orchestrator label recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator
+FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permission mode for claude-family lanes; default differs by lane kind
+FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
+FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
+FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
+FLEETFLOW_GROK_BIN	grok	grok binary or launcher path
+FLEETFLOW_GROK_MODEL	(harness default)	grok -m override for grok lanes
+FLEETFLOW_PI_BIN	pi	pi binary or launcher path
+FLEETFLOW_PI_PROVIDER	(pi config default)	pi --provider override; recorded in the lane alias
+FLEETFLOW_PI_MODEL	(provider default)	pi --model override
+FLEETFLOW_ACP_AGENT_JS	(auto-resolved)	path to the claude-code-acp agent JS for --acp lanes
+FLEETFLOW_WAVE_ROOT	(repo root)	asset root for the wave pipeline (ff-run wave)
+FLEETFLOW_WAVE_CATALOGUE	$WAVE_ROOT/assets/wave-catalogue.json	wave catalogue override
+FLEETFLOW_WAVE_SCHEMA	$WAVE_ROOT/assets/findings.schema.json	findings schema override
+FLEETFLOW_FINDINGS_BIN	scripts/ff-findings.sh	findings CLI override (ff-run, ff-widget)
+FLEETFLOW_REPAIR_DRYRUN	(unset)	non-empty = ff-collect --repair respawns with --dry-run (test the loop without spending)
+FLEETFLOW_PATH_PREPEND	(unset)	colon-separated dirs _env.sh prepends to PATH before tool discovery
+ROWS
+}
+if [ "$MODE" = "env" ]; then
+  env_rows | while IFS=$(printf '	') read -r name dflt desc; do
+    eval "cur=\${$name-__FF_UNSET__}"
+    [ "$cur" = "__FF_UNSET__" ] && cur="(unset)"
+    printf '%s	%s	%s	%s
+' "$name" "$cur" "$dflt" "$desc"
+  done
+  exit 0
+fi
+
 say() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

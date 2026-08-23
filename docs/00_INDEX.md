@@ -6,6 +6,7 @@ CLASS of document appears or disappears, not per file.
 
 | Where | What | Mutability |
 |---|---|---|
+| [REFERENCE.md](REFERENCE.md) | Operating reference: every `FLEETFLOW_*` tunable (mirrors `ff-doctor --env`, gate-checked both ways) and the semantic exit-code table. | living |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the shipped system works — components, data stores, the run pipeline, the invariant map. Drift is a bug. | living |
 | [adr/](adr/) | Architecture Decision Records — the WHY behind every standing rule. `ls docs/adr/` is the index; [adr/README.md](adr/README.md) carries the conventions. Lint-gated by `tests/run.sh`. | append-only |
 | [plans/](plans/) | Run plans — one per fleet run, self-declared status, disposable once landed. `ls docs/plans/`. | disposable |

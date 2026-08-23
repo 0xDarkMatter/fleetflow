@@ -102,12 +102,17 @@ auto_commit_lane() {
   fi
   return 0
 }
+# ONE EXIT trap for the whole script. A second `trap ... EXIT` REPLACES this
+# one silently (bash keeps one handler per signal) - fold exit-time work in
+# here; ff_run_summary learned that the hard way.
 on_exit() {
   rc=$?
   if [ "$rc" = 0 ] && [ "$AUTO_COMMIT" = 1 ] && [ "$CHECK_CLEAN" = 0 ] \
      && [ -n "${RUNDIR:-}" ] && [ -n "$ID" ]; then
     auto_commit_lane
   fi
+  [ "$rc" = 0 ] && ff_run_summary
+  return 0
 }
 trap on_exit EXIT
 
@@ -169,6 +174,26 @@ fi
 [ -n "$RUN" ] && [ -n "$ID" ] || { err "--run and --id required"; usage >&2; exit 2; }
 RUNDIR="$REPO/.fleetflow/$RUN"
 JOURNAL="$RUNDIR/journal.jsonl"
+
+# --- end-of-run summary (stderr chatter) ----------------------------------------
+# When THIS collect passes and every started packet now has a result, tell the
+# human at the terminal the run is done - counts only, no totals. Token totals
+# stay ff-status's job on purpose: this file must not grow a copy of that logic
+# (same reasoning as the STATE_RANK no-fifth-copy rule). Distinct started keys,
+# because a --repair respawn re-appends started for the same packet.
+ff_run_summary() {
+  [ -f "${JOURNAL:-}" ] || return 0
+  _sum="$(jq -sr '
+    ([.[] | select(.type=="started") | .key] | unique) as $s |
+    ([.[] | select(.type=="result")] | map({(.key): .rc}) | add // {}) as $r |
+    if ($s|length) > 0 and ([$s[] | select($r[.] == null)] | length) == 0 then
+      "\([$s[] | select($r[.] == 0)] | length) \([$s[] | select($r[.] != null and $r[.] != 0)] | length)"
+    else empty end' "$JOURNAL" 2>/dev/null)"
+  [ -n "$_sum" ] || return 0
+  _ok="${_sum%% *}"; _bad="${_sum##* }"
+  err "run '$RUN' complete: $((_ok+_bad)) lane(s) - $_ok ok, $_bad failed. Totals: ff status --run $RUN"
+}
+
 
 MODEL=""
 [ -f "$JOURNAL" ] && \

@@ -22,6 +22,7 @@ back through one collect gate, and the orchestrator decides what happens next.
 | Component | Kind | Role |
 |---|---|---|
 | Orchestrator session | interactive Claude Code | plans packets, makes verdicts, commits Codex lanes ([ADR-006](adr/ADR-006-codex-lanes-never-self-commit.md)), lands via fleet-ops |
+| `scripts/ff` | bash CLI | dispatcher: forwards `ff <cmd>` to the scripts verbatim (sugar, never a layer); native `env` / `open` / `logs` / `watch` conveniences live inline |
 | `scripts/ff-plan.sh` | bash CLI | pre-spawn planning stage: drafts plan/packets/manifest, lints them (gate, [ADR-030](adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)), refutes the plan cross-provider ([ADR-028](adr/ADR-028-the-plan-is-refuted-before-the-fleet-spawns.md)), estimates cost, expands generators ([ADR-029](adr/ADR-029-generator-backed-packets-registry-owns-expansions.md)) |
 | `scripts/ff-doctor.sh` | bash CLI | preflight: binaries, provider auth, live model probes; refuses to bless an unservable fleet |
 | `scripts/ff-spawn.sh` | bash CLI | uniform spawner: worktree lane + guard preamble + journal record + per-model launch (GLM via fleet-worker, `codex exec`, `grok -p`, `pi -p`, `claude -p`) |
@@ -91,7 +92,7 @@ the pipeline terminates at land.
 
 ## Invariant map — what the test gate pins
 
-`tests/run.sh` (450 hermetic assertions; exports its own `FLEETFLOW_HOME`)
+`tests/run.sh` (460 hermetic assertions; exports its own `FLEETFLOW_HOME`)
 mechanically enforces the invariants prose alone would lose: dashboard
 zero-external-references, run-card byte parity, STATE_RANK consistency across
 its five copies, pricing/HARNESS register entries, legacy `brain`→`model`
