@@ -5,6 +5,42 @@ All notable changes to fleetflow are documented here. The format follows
 Decision rationale lives in [docs/adr/](docs/adr/) — entries here say WHAT
 shipped, the ADRs own WHY.
 
+## [Unreleased]
+
+### Added
+- `--target diff|staging=<url>` on `ff-run wave` aims the finder waves: `diff`
+  (default) inspects the change, `staging=<url>` drives a running deployment.
+  Lanes may interact fully but never deploy, restart, or reconfigure it (ADR-032).
+- `FLEETFLOW_DASHBOARD_URL` overrides the dashboard origin used by the chat
+  widget anchor and the SKILL.md pane ritual. Defaults to `http://127.0.0.1:8161`,
+  ff-serve's own default, so a fresh install links somewhere real.
+- README **Requirements** and **Install** sections: the hard tool set, the
+  per-model optional set, and what each missing tool actually costs you.
+- `docs/diagrams/stores-light.svg` — the run-state stores and the teardown
+  boundary, embedded in ARCHITECTURE.md.
+
+### Changed
+- Portable `ff_sha256` / `ff_python` helpers in `scripts/_env.sh`, used by every
+  call site. `sha256sum` now falls back to `shasum`/`openssl`, and the Python
+  probe EXECUTES its candidates so a Windows App Execution Alias stub is not
+  mistaken for an interpreter.
+- README Quickstart starts at `ff-plan draft` (matching ADR-026) and uses real
+  packet paths, so it runs verbatim from a fresh clone.
+- `ARCHITECTURE.md` and `SECURITY.md` moved into `docs/`; ARCHITECTURE.md now
+  embeds five diagrams. Diagram set is light-only and free of webfont imports.
+- AGENTS.md landmines that depend on the author's skill junction or supervised
+  dashboard now state that precondition instead of asserting it universally.
+- `adr-ops` declared in `depends-on` — `ff-plan lint` and the test gate call it.
+
+### Fixed
+- Journal cache keys could silently collapse to `v2:` on hosts without
+  coreutils, making every lane after the first a false cache hit (ADR-012).
+- The chat widget hardcoded a private `.lab` host as the run card's primary
+  link, and the test suite pinned that hostname; both now follow the configured
+  dashboard origin.
+- `ff-doctor` advisories name the exit code and the remedy, so a missing
+  per-model harness is no longer a bare "unavailable".
+
 ## [0.2.0] — 2026-08-20
 
 The planning stage. Runs are now planned, linted, and refuted before they

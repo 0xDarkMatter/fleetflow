@@ -48,31 +48,52 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 442 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 450 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
-## Quickstart
+## Requirements
+
+fleetflow is bash plus a small set of tools. Nothing is vendored, so check this
+list before the Quickstart - `ff-doctor` reports every row below by name.
+
+**Needed for any run at all:**
+
+| Tool | Why |
+|---|---|
+| `bash` + POSIX coreutils | every `ff-*` script |
+| `git` | worktree lanes are the isolation boundary |
+| `jq` | run state is JSON end to end |
+| a SHA-256 tool | keys the resume cache. Any of `sha256sum` (coreutils), `shasum` (macOS), or `openssl` |
+| `claude` | the harness for Anthropic lanes, and the orchestrator you drive fleetflow from |
+
+**Needed only for the thing they power:**
+
+| Tool | Unlocks |
+|---|---|
+| `python3` | ADR-constraint checks in `ff-plan lint`, the dashboard server, parts of the test suite |
+| [fleet-worker](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-worker) | `--model glm`. Mount the skill, or point `FLEETFLOW_FLEET_WORKER` at its launcher |
+| [`codex`](https://github.com/openai/codex) | `--model codex` |
+| xAI `grok` CLI | `--model grok` (or set `FLEETFLOW_GROK_BIN`) |
+| [`pi`](https://github.com/earendil-works/pi) | `--model pi` (or set `FLEETFLOW_PI_BIN`) |
+| `node` | `--acp` steerable lanes only |
+| [raven](https://github.com/0xDarkMatter/raven) | opt-in bus telemetry (`FLEETFLOW_BUS=1`) |
+| [adr-ops](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/adr-ops) | arms the ADR-constraint lint check and `adr-lint` in the test gate |
+
+A missing optional tool never breaks a run: the affected lane exits 5 with a
+named reason, and lint reports the check as `disarmed` rather than passing it
+silently. **Anything absent here is reported by `ff-doctor` as an advisory that
+names the exit code**, so read its output before you spawn.
+
+## Install
 
 ```bash
-# 1. preflight: don't spawn a fleet a doctor won't bless
-bash scripts/ff-doctor.sh --live
-
-# 2. author a task packet, then spawn a lane per packet (repeat per model)
-bash scripts/ff-spawn.sh --run demo --id build --model glm   --prompt-file packets/build.task.md --worktree
-bash scripts/ff-spawn.sh --run demo --id refute --model codex --prompt-file packets/refute.task.md --worktree
-
-# 3. gate each lane, then check the whole run
-bash scripts/ff-collect.sh --run demo --id build
-bash scripts/ff-status.sh  --run demo
-
-# 4. land through your merge gate, then reclaim
-bash scripts/ff-clean.sh --run demo
+git clone https://github.com/0xDarkMatter/fleetflow.git
+cd fleetflow
+bash scripts/ff-doctor.sh --offline     # structural only: no network, no tokens spent
 ```
 
-The full playbook (model routing, packet discipline, safety rules, the
-decision gate for when *not* to use fleetflow) is [SKILL.md](SKILL.md). This
-repo is simultaneously a Claude Code **skill** (mount it at
-`~/.claude/skills/fleetflow`) and the home of the dashboard service.
+This repo is simultaneously a Claude Code **skill** and the home of the
+dashboard service, so mount the clone at `~/.claude/skills/fleetflow`:
 
 ```powershell
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -Target "<path-to-your-clone>"
@@ -81,6 +102,46 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\fleetflow" -T
 ```bash
 ln -s "<path-to-your-clone>" ~/.claude/skills/fleetflow
 ```
+
+## Quickstart
+
+Runs are planned before they spawn, so the first command is `ff-plan`, not
+`ff-spawn` - `draft` writes the plan doc, the task packets, and the manifest
+that `ff-spawn` later consumes ([ADR-026](docs/adr/ADR-026-ff-plan-authors-the-manifest-spawn-consumes-it.md)).
+
+```bash
+# 1. preflight. --offline is structural and free; --live probes providers and spends tokens
+bash scripts/ff-doctor.sh --offline
+
+# 2. plan the run: scaffolds .fleetflow/demo/packets/*.task.md + manifest.json
+bash scripts/ff-plan.sh draft --run demo --spec spec/your-spec.md --shape feature \
+     --packets "build=Builder/build/glm,verify=Adversary/verify/codex"
+
+# 3. fill in the drafted packets, then gate the plan (exit 10 = findings to fix)
+bash scripts/ff-plan.sh lint --run demo
+
+# 4. spawn a lane per packet. --worktree gives each one its own isolated checkout
+bash scripts/ff-spawn.sh --run demo --id build  --model glm   --prompt-file .fleetflow/demo/packets/build.task.md  --worktree
+bash scripts/ff-spawn.sh --run demo --id verify --model codex --prompt-file .fleetflow/demo/packets/verify.task.md --worktree
+
+# 5. gate each lane, then check the whole run
+bash scripts/ff-collect.sh --run demo --id build --check-main-clean
+bash scripts/ff-status.sh  --run demo
+
+# 6. land through your merge gate, then reclaim (archives before it removes)
+bash scripts/ff-clean.sh --run demo
+```
+
+Step 2 needs a spec file to plan from - any markdown describing what you want
+built. Step 4's models are illustrative: swap in `sonnet` or `haiku` if you have
+not installed the GLM and Codex harnesses, since those need no extra binaries
+beyond `claude`.
+
+The full playbook (model routing, packet discipline, safety rules, the decision
+gate for when *not* to use fleetflow) is [SKILL.md](SKILL.md). How the shipped
+system is actually wired - components, data stores, the invariant map - is
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/](docs/00_INDEX.md)
+indexes the rest.
 
 ## Supported models and harnesses
 
@@ -186,6 +247,10 @@ re-verifies every fix. Two dials control it:
 - `--attend none|land|each` sets who is watching: fully autonomous, one
   review gate at landing, or a human gate after every wave. Per-wave
   `--gate WAVE=auto|review|stop` overrides the macro.
+- `--target diff|staging=<url>` aims the finders: the default `diff` inspects
+  the change, while `staging=<url>` points them at a running deployment. Lanes
+  may interact with it fully but never deploy, restart, or reconfigure it
+  ([ADR-032](docs/adr/ADR-032-qa-waves-accept-a-target-diff-or-staging-url.md)).
 
 ```bash
 # tested posture, review gate after every wave
@@ -193,6 +258,9 @@ bash scripts/ff-run.sh wave --run v0-2 --posture tested --attend each
 
 # hardened, gated only at landing; preview the plan first
 bash scripts/ff-run.sh wave --run v0-2 --posture hardened --attend land --dry-run
+
+# aim the finder waves at a running staging deployment instead of the diff
+bash scripts/ff-run.sh wave --run audit --posture tested --target staging=https://staging.example
 ```
 
 Findings at or below `--severity-floor` (default `medium`) auto-fix; anything
@@ -223,11 +291,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[31 ADRs](docs/adr/) covering everything from why the dashboard is one
+[32 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 442-assertion test gate: a malformed decision
+`adr-lint` runs inside the 450-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -328,7 +396,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-442 assertions over the scripts, monitor, dashboard wiring, and import/resume
+450 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

@@ -12,7 +12,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (442 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (450 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
@@ -30,7 +30,14 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 ## Landmines
 
-- **`C:\Users\Mack\.claude\skills\fleetflow` is a JUNCTION to this repo.** Edits
+Some of these are **conditional on how this checkout is mounted**, not universal:
+the skill junction and the supervised dashboard service are this author's setup.
+Each such landmine states its precondition - check it holds before obeying it. On
+a plain clone with neither, the git rules relax to ordinary practice.
+
+- **If this repo is mounted as a skill (README -> Install), that mount is a
+  junction/symlink INTO this checkout** - on the author's box,
+  `C:\Users\Mack\.claude\skills\fleetflow`. Where that holds, edits
   here are live in every Claude session's skill copy immediately. Renaming or
   moving root files breaks skill resolution. **Any skills-sync/installer that
   copies INTO the skills dir writes THROUGH the junction into this repo** — the
@@ -40,18 +47,19 @@ operational playbook — read it first; this file only carries repo mechanics.
   deleted, tracked files get silently REVERTED. After any sync event, diff
   against the newest authoring transcript, not just git.
 - **Never `git add -A` / `git add .` here — stage explicit paths.** Because the
-  repo root is a live skill behind that junction, other sessions edit these same
-  files while you work, and `-A` silently annexes their in-flight changes into
+  repo root may be a live skill behind that mount, other sessions can edit these
+  same files while you work, and `-A` silently annexes their in-flight changes into
   your commit. `0a83f5d` and `0bca912` (2026-08-01) each carry a slice of an
   unrelated prompt-file aliasing guard (`ff-spawn.sh`, `tests/run.sh`,
   `references/worker-contracts.md`) for exactly this reason. History was left
   as-is — the content is correct and tested, only the attribution is wrong — so
   do not be misled by those two commit messages when reading `git log -p` for
   the aliasing guard's rationale.
-- **The `fleetflow` Process Compose service (https://fleetflow.lab, port 8161)
-  runs `scripts/ff-serve.py` FROM THIS REPO** with this repo as CWD. Editing
+- **If you run the dashboard as a supervised service pointed at this checkout**
+  (the author does: port 8161, behind `https://fleetflow.lab`), that service runs
+  `scripts/ff-serve.py` FROM THIS REPO with this repo as CWD. Editing
   `ff-dashboard.html` changes the live page on the next request; editing
-  `ff-serve.py` needs `process restart fleetflow`. The repo dir is therefore
+  `ff-serve.py` needs a service restart. The repo dir is therefore
   CWD-locked while the service runs — nothing may delete/rename the repo root.
 - **Scripts follow the Skill Resource Protocol**: stdout is data, chatter on
   stderr, semantic exit codes (`0` ok, `2` usage, `3` cached/missing, `7`
@@ -140,12 +148,11 @@ operational playbook — read it first; this file only carries repo mechanics.
   the pages can share one origin and `ff.sort` means different things to
   each; the split is load-bearing, not cosmetic.
   See [docs/adr/ADR-013](docs/adr/ADR-013-localstorage-namespace-split.md).
-- **Never `git switch` / checkout a branch in the repo root.** The junction
-  `C:\Users\Mack\.claude\skills\fleetflow` → this repo means the checked-out
-  branch IS the live skill every session loads, and the `fleetflow` Process
-  Compose service holds this dir as CWD. All development happens in worktree
-  lanes; `main` stays parked on `main`. See [Landmines](AGENTS.md#landmines)
-  incident notes (junctions, service CWD-lock).
+- **Where either precondition above holds, never `git switch` / checkout a
+  branch in the repo root.** A skill mount means the checked-out branch IS the
+  live skill every session loads, and a supervised dashboard holds this dir as
+  CWD. All development happens in worktree lanes; `main` stays parked on `main`.
+  On a plain clone with neither, branch normally.
 - **Windows `jq.exe` emits CRLF — strip `\r` on EVERY `jq -r` capture.**
   A raw `$(jq -r …)` or `< <(jq -r …)` carries a trailing `\r` that silently
   breaks `=` comparisons, `[ -f ]` checks, `case` matches, and `--fp` lookups.

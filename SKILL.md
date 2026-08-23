@@ -6,7 +6,7 @@ license: MIT
 allowed-tools: "Read Write Edit Bash Glob Grep Task"
 metadata:
   author: claude-mods
-  depends-on: "fleet-worker, fleet-ops"
+  depends-on: "fleet-worker, fleet-ops, adr-ops"
   related-skills: "loop-ops, iterate, claude-code-ops"
 ---
 
@@ -25,9 +25,12 @@ anything else.** Two steps, both cheap:
    trust the local proxy's CA and fails with exit 7 / status 000 against HTTPS,
    which reads exactly like a dead service and is not one.
 2. If it answers, open it in the Browser pane (`preview_start`) at
-   **`https://fleetflow.lab/?repo=<git toplevel of cwd>`**. The pane wants the
-   **`.lab` URL**, not loopback — browsers do trust the CA, and it is the address
-   the user knows.
+   **`$FLEETFLOW_DASHBOARD_URL/?repo=<git toplevel of cwd>`**, defaulting to
+   `http://127.0.0.1:8161`. Where the dashboard sits behind an HTTPS proxy,
+   prefer that origin in the pane over loopback - browsers trust the proxy CA
+   where `curl` does not, and it is the address the user knows. (On this
+   author's box that is `https://fleetflow.lab`; yours is wherever you serve
+   `ff-serve.py`.)
 
    The `?repo=` deep-link is what makes this useful rather than decorative: a
    bare URL opens the machine-wide overview, so you would land on 50-odd runs
@@ -52,12 +55,16 @@ Skip dashboard and widget silently when there is no Browser pane (headless `clau
 CI, a non-desktop host) — the skill's value does not depend on it. Do not narrate
 the steps; just have the dashboard there and the card in chat when available.
 
-If the health check fails, say so and offer the one-liner rather than opening a
-pane onto nothing:
+If the health check fails, say so and offer the start command rather than
+opening a pane onto nothing. Portable form - any supervisor, or plain foreground:
 
-```powershell
-& "X:\00_Orchestration\compose-portless\bin\process-compose.exe" process start fleetflow
+```bash
+python scripts/ff-serve.py --port 8161
 ```
+
+Under a process supervisor, start whatever service name wraps that command.
+On this author's box that is `process-compose process start fleetflow`, from
+the stack at `X:\00_Orchestration\compose-portless` - yours will differ.
 
 Claude Code's native **Workflow tool** is a superb orchestration harness with one
 structural limit: every agent it spawns runs **in-process**, so they all share one
@@ -476,8 +483,14 @@ escalates, never retried ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-se
 ff-run.sh wave --run NAME --posture baseline|tested|hardened|complete \
                [--attend none|land|each] [--gate WAVE=auto|review|stop]... \
                [--fix-rounds N=2] [--severity-floor S=medium] [--repo PATH] \
-               [--dry-run|--continue]
+               [--target diff|staging=<url>] [--dry-run|--continue]
 ```
+
+`--target` aims the finder waves ([ADR-032](docs/adr/ADR-032-qa-waves-accept-a-target-diff-or-staging-url.md)).
+Default `diff` inspects the change itself. `staging=<url>` points the finders at
+a running deployment instead: lanes may interact with it fully, but they NEVER
+deploy, restart, or reconfigure it — the value is substituted into every finder
+packet, so it changes what the wave *reads*, never what it may *do*.
 
 Run names are `[a-z0-9-]+` — no dots (`v0.2` is rejected; `v0-2` is fine).
 
