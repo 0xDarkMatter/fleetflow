@@ -336,6 +336,27 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ## Recent Updates
 
+### v0.3.0 · 2026-08-24 · the install story
+
+- 📦 **Requirements + Install + a Quickstart that runs verbatim** from a fresh
+  clone: plan → lint → spawn → collect → clean, with the hard and per-model
+  tool sets stated instead of discovered by failure.
+- 🚦 **`ff` dispatcher + tab-completion**: `ff plan lint`, `ff watch RUN`
+  (terminal live view), `ff logs RUN ID`, `ff open`, `ff env` — sugar over the
+  scripts, never a layer.
+- 🧭 **Drift-gated tunables registry**: `ff-doctor --env` documents all 27
+  `FLEETFLOW_*` variables; tests pin registry ↔ scripts ↔
+  [docs/REFERENCE.md](docs/REFERENCE.md) both ways, alongside the semantic
+  exit-code table and a sixteen-term glossary.
+- 🩹 **Portability**: SHA-256 falls back to `shasum`/`openssl` (an absent
+  hasher silently collapsed every lane onto one cache key), the Python probe
+  executes candidates rather than trusting PATH, and the dashboard origin is
+  configurable (`FLEETFLOW_DASHBOARD_URL`) instead of hardcoded.
+- 🗺️ **Docs restructure**: ARCHITECTURE + SECURITY into `docs/`, five diagrams
+  embedded in ARCHITECTURE.md including the new run-state stores map;
+  machine-conditional AGENTS.md landmines now state their preconditions.
+- ✅ Suite grown to 460 hermetic assertions.
+
 ### v0.2.0 · 2026-08-20 · the planning stage
 
 - 📐 **`ff-plan` — runs are planned before they spawn**: `draft` authors the

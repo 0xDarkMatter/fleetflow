@@ -5,7 +5,13 @@ All notable changes to fleetflow are documented here. The format follows
 Decision rationale lives in [docs/adr/](docs/adr/) — entries here say WHAT
 shipped, the ADRs own WHY.
 
-## [Unreleased]
+## [0.3.0] — 2026-08-24
+
+The install story. Written from the point of view of someone who has just
+cloned the repo: a Requirements/Install/Quickstart path verified by running it
+verbatim in a fresh clone, portability fixes for the two dependencies that
+failed silently off the author's machine, the `ff` dispatcher with terminal
+QOL, and a drift-gated tunables registry.
 
 ### Added
 - `ff` dispatcher (`scripts/ff`): one entry point over the scripts - `ff plan
