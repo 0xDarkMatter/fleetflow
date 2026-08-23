@@ -30,7 +30,7 @@ tested-posture QA (findings: 8 fixed, 1 waived, 0 open).
   lane to a final state; dashboards stop animating and re-polling dead runs.
 - Dashboard time-window lens: this/last week · month · quarter, custom, all
   time — scopes every view and roll-up (`ffd.window`).
-- `ARCHITECTURE.md` — living current-state map of components, data stores,
+- `docs/ARCHITECTURE.md` — living current-state map of components, data stores,
   and the invariant gate.
 - Role-cards diagram (`docs/diagrams/role-cards-light.svg`).
 

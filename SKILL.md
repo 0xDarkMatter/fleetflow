@@ -333,7 +333,7 @@ doc; ATDW-MCP's `00_INDEX.md` filing criterion is the reference implementation):
 |---|---|---|
 | `AGENTS.md` + Landmines | entry doc; one-line warnings linking to ADRs | living, lean |
 | `docs/reference/`, `api/` | specs of record, parity tables, measured facts | living — drift is a bug |
-| `ARCHITECTURE.md` | how the shipped system works | living |
+| `docs/ARCHITECTURE.md` | how the shipped system works | living |
 | `docs/adr/` | decisions: BLUF, alternatives, consequences | append-only |
 | `docs/plans/` | run plans, wave tables, handoffs — self-declared status | disposable |
 | `docs/reports/` | measured outcomes, audits | point-in-time |

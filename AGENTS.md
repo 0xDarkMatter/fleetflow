@@ -23,7 +23,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 | `SKILL.md` | The skill: doctrine, lifecycle, routing, safety. Single source of truth. |
 | `scripts/` | `ff-plan` / `ff-doctor` / `ff-spawn` / `ff-collect` / `ff-status` / `ff-run` / `ff-clean` / `ff-sweep` / `ff-chip` / `ff-archive` / `ff-findings` / `ff-widget` / `ff-import` (bash, Skill Resource Protocol) + `ff-aggregate.py` / `ff-serve.py` (dashboard) |
 | `assets/` | `ff-monitor.html` (single-run live monitor), `ff-dashboard.html` (machine-wide dashboard), `guard-preamble.txt` (worker guard), `plan.tmpl.md` + `packet.tmpl.md` (ff-plan templates), `roles/` (twelve role cards, ADR-031), `wave-packets/` (finder templates) |
-| `ARCHITECTURE.md` | how the shipped system works — components, data stores, invariant map. Living; drift is a bug |
+| `docs/ARCHITECTURE.md` | how the shipped system works — components, data stores, invariant map. Living; drift is a bug |
 | `references/` | worker contracts (per-model launch/collect/auth), native Workflow extraction notes, model routing |
 | `docs/adr/` | Architecture Decision Records — the append-only WHY behind every standing rule below. The directory is the index; `adr-lint --strict` runs inside the test gate |
 | `tests/` | `run.sh` — the one gate; run it before landing anything |
