@@ -322,6 +322,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 | Piece | What it does |
 |---|---|
 | [SKILL.md](SKILL.md) | Operational doctrine: decision gate, model routing, run lifecycle, safety (escape guard, stall detector, sandbox rules) |
+| [scripts/ff](scripts/ff) | The dispatcher: `ff <cmd>` forwards to the scripts verbatim, plus `ff env` / `ff open` / `ff logs` / `ff watch`; tab-completion in [completions/](completions/) |
 | [scripts/ff-plan.sh](scripts/ff-plan.sh) | Planning stage: `draft` scaffolds the plan doc + manifest, `lint` gates the spawn (exit 10 on findings), `refute` attacks the decomposition cross-provider before any lane runs (ADR-026/028/030) |
 | `scripts/ff-doctor` → `ff-clean` | The run lifecycle: preflight → spawn → collect/gate → status → resume → clean. Bash, semantic exit codes, `--help` with examples |
 | [scripts/ff-sweep.sh](scripts/ff-sweep.sh) | Machine-wide housekeeping: verdicts on every leftover run dir (`reclaimable` / `holds-work` / `active`), reclaim only what is provably safe; verdicts computed live, never cached (ADR-020/024) |
@@ -330,6 +331,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 | [assets/ff-monitor.html](assets/ff-monitor.html) | Single-run live monitor: tethered summary header, active-first sort, S/M/L card sizes, stall-aware pips |
 | [assets/ff-dashboard.html](assets/ff-dashboard.html) | Machine-wide dashboard UI (all runs, live + archived) |
 | [references/](references/) | Per-model worker contracts, native Workflow internals extraction, model-routing doctrine |
+| [docs/REFERENCE.md](docs/REFERENCE.md) | Operating reference: every `FLEETFLOW_*` tunable (mirrors `ff env`, drift-gated) and the semantic exit-code table |
 | [docs/adr/](docs/adr/) | Architecture Decision Records: the append-only WHY behind the standing rules (one process, escape guard, stall detection, pricing, …); lint-gated by the test suite |
 
 ## Recent Updates

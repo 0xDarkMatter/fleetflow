@@ -46,6 +46,10 @@ shipped, the ADRs own WHY.
 - AGENTS.md landmines that depend on the author's skill junction or supervised
   dashboard now state that precondition instead of asserting it universally.
 - `adr-ops` declared in `depends-on` — `ff-plan lint` and the test gate call it.
+- SKILL.md carries the dispatcher: a `scripts/ff` row leads the scripts table
+  (with the sugar-never-a-layer rule stated), the doctor row documents `--env`,
+  the collect row documents the end-of-run summary, and the frontmatter roster
+  gains Pi.
 
 ### Fixed
 - Journal cache keys could silently collapse to `v2:` on hosts without
