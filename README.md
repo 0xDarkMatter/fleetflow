@@ -1,6 +1,10 @@
 # fleetflow
 
-**Heterogeneous cross-provider agent fleets from one Claude Code session.**
+[![version](https://img.shields.io/github/v/tag/0xDarkMatter/fleetflow?label=version&color=2d3142)](https://github.com/0xDarkMatter/fleetflow/tags)
+[![license](https://img.shields.io/github/license/0xDarkMatter/fleetflow?color=4f5d75)](LICENSE)
+[![ADRs](https://img.shields.io/badge/ADRs-33-4f5d75)](docs/adr/)
+
+**Heterogeneous cross-provider agent fleets from one orchestrator session.**
 GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
 Sonnet/Haiku/Opus, as OS-process workers with cross-model adversarial
 verification, journalled resume, and a machine-wide dashboard.
@@ -48,7 +52,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 460 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 465 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -64,7 +68,7 @@ list before the Quickstart - `ff-doctor` reports every row below by name.
 | `git` | worktree lanes are the isolation boundary |
 | `jq` | run state is JSON end to end |
 | a SHA-256 tool | keys the resume cache. Any of `sha256sum` (coreutils), `shasum` (macOS), or `openssl` |
-| `claude` | the harness for Anthropic lanes, and the orchestrator you drive fleetflow from |
+| `claude` | the harness for Anthropic and GLM lanes. Required by default; a fleet with none of those may be blessed claude-less via `ff doctor --for` ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)) |
 
 **Needed only for the thing they power:**
 
@@ -300,11 +304,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[32 ADRs](docs/adr/) covering everything from why the dashboard is one
+[33 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 460-assertion test gate: a malformed decision
+`adr-lint` runs inside the 465-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -355,7 +359,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 🗺️ **Docs restructure**: ARCHITECTURE + SECURITY into `docs/`, five diagrams
   embedded in ARCHITECTURE.md including the new run-state stores map;
   machine-conditional AGENTS.md landmines now state their preconditions.
-- ✅ Suite grown to 460 hermetic assertions.
+- ✅ Suite grown to 465 hermetic assertions.
 
 ### v0.2.0 · 2026-08-20
 
@@ -453,7 +457,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-460 assertions over the scripts, monitor, dashboard wiring, and import/resume
+465 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

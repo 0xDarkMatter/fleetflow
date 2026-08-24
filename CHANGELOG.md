@@ -5,6 +5,21 @@ All notable changes to fleetflow are documented here. The format follows
 Decision rationale lives in [docs/adr/](docs/adr/) — entries here say WHAT
 shipped, the ADRs own WHY.
 
+## [Unreleased]
+
+### Added
+- `ff-doctor --for MODEL[,MODEL...]`: preflight scoped to the models a run
+  will spawn - a missing harness for a requested model escalates
+  advisory→fail, and `claude` is required only for claude-family/glm/chip
+  lanes, so a non-Claude orchestrator can bless a claude-less fleet
+  (ADR-033).
+- ADR-033: the orchestrator contract is bash plus judgment - any harness may
+  hold the seat; host conveniences are optional surfaces. Includes the
+  measured Windows constraint: sandboxed codex cannot host Git Bash, so the
+  codex orchestrator posture there is full access, opposite to ADR-007's lane
+  pin.
+- SKILL.md: "Orchestrating from another harness" - the off-host rules.
+
 ## [0.3.0] — 2026-08-24
 
 Written from the point of view of someone who has just cloned the repo: a

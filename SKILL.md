@@ -66,6 +66,26 @@ Under a process supervisor, start whatever service name wraps that command.
 On this author's box that is `process-compose process start fleetflow`, from
 the stack at `X:\00_Orchestration\compose-portless` - yours will differ.
 
+## Orchestrating from another harness
+
+The orchestrator contract is bash plus judgment, not Claude Code
+([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
+Any agent that can execute the `ff-*` scripts and judge their output may hold
+the seat - Codex, Pi, or a human at a terminal. Off-host rules:
+
+- **Read this file as a document.** There is no skill loader elsewhere;
+  AGENTS.md already directs every agent here first.
+- **Skip the host conveniences silently**: the dashboard pane ritual above,
+  the chat widget, `ff chip`, and `--acp` steering are Claude Code surfaces -
+  optional everywhere, load-bearing nowhere.
+- **Preflight with `--for`**: `ff doctor --offline --for codex,grok` gates on
+  the models the run actually spawns - `claude` is required only for
+  claude-family/glm/chip lanes, so a claude-less fleet can be blessed.
+- **Codex seat needs full access on Windows**: a sandboxed codex cannot host
+  Git Bash at all (measured - msys dies at init), so the orchestrator posture
+  is permissive while codex *lanes* stay pinned (ADR-007). The routing
+  doctrine still applies to the seat: frontier judgment or nothing.
+
 Claude Code's native **Workflow tool** is a superb orchestration harness with one
 structural limit: every agent it spawns runs **in-process**, so they all share one
 provider (`ANTHROPIC_BASE_URL` is process-global — only the model *alias slot*

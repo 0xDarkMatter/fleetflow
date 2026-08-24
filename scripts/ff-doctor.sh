@@ -18,29 +18,51 @@ FF_VERSION="1.2.0"
 
 usage() {
   cat <<'EOF'
-Usage: ff-doctor.sh [--offline | --live | --env]
+Usage: ff-doctor.sh [--offline | --live | --env] [--for MODEL[,MODEL...]]
 
   --offline   structural checks only (default; CI-safe)
   --live      also probe GLM endpoint, Codex auth, Anthropic models;
               reports orchestrator tier (fable|opus)
   --env       print every FLEETFLOW_* tunable: name, current value, default,
               and what it does (TSV; the live source docs/REFERENCE.md cites)
+  --for       scope the verdict to the models this run will spawn: a missing
+              harness for a REQUESTED model escalates advisory->fail, and
+              `claude` is required only when a claude-family/glm model (or no
+              --for at all) is in play - an orchestrator on another harness
+              can bless a claude-less codex/grok/pi fleet
 
 EXAMPLES
   ff-doctor.sh --offline
   ff-doctor.sh --live
   ff-doctor.sh --env | column -t -s "$(printf '	')"
+  ff-doctor.sh --offline --for codex,glm
 EOF
 }
 
-MODE="offline"
-case "${1:-}" in
-  --offline|"") MODE="offline" ;;
-  --live) MODE="live" ;;
-  --env) MODE="env" ;;
-  -h|--help) usage; exit 0 ;;
-  *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
-esac
+MODE="offline"; FOR_MODELS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --offline) MODE="offline"; shift ;;
+    --live) MODE="live"; shift ;;
+    --env) MODE="env"; shift ;;
+    --for) FOR_MODELS="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+# wants M -> is model M named in the --for set? With NO --for the historic
+# behaviour holds: claude is hard (the common Claude-orchestrated case), every
+# per-model harness is advisory. wants() is therefore only consulted when a
+# --for set exists; each check site guards on that.
+wants() { case ",$FOR_MODELS," in *",$1,"*) return 0;; *) return 1;; esac; }
+# req NAME OK DETAIL_OK MISSING_DETAIL WANTED -> fail when wanted, advisory when not
+req_bin() {
+  _name="$1"; _ok="$2"; _okd="$3"; _missd="$4"; _wanted="$5"
+  if [ "$_ok" = 1 ]; then say "$_name" ok "$_okd"
+  elif [ "$_wanted" = 1 ]; then say "$_name" fail "$_missd"; FAIL=1
+  else say "$_name" advisory "$_missd"
+  fi
+}
 
 FAIL=0; UNREACH=0
 
@@ -105,16 +127,31 @@ else say "bin-sha256" fail "need one of sha256sum, shasum, or openssl"; FAIL=1; 
 # python: probed by execution - a PATH-resolvable Windows Store alias is not an interpreter.
 if ff_have_python; then say "bin-python" ok "$FF_PYTHON"
 else say "bin-python" advisory "missing - ADR constraint checks and some tests degrade"; fi
-if command -v claude >/dev/null; then say "bin-claude" ok "found"; else say "bin-claude" fail "missing"; FAIL=1; fi
-if command -v codex >/dev/null; then say "bin-codex" ok "$(codex --version 2>/dev/null | head -1)"; else say "bin-codex" advisory "missing - --model codex exits 5; install: https://github.com/openai/codex"; fi
+# claude serves sonnet/haiku/opus/fable lanes AND glm (fleet-worker rides claude -p).
+# Scoped runs that want none of those may be claude-less (ADR-033).
+CLAUDE_WANTED=0
+if [ -z "$FOR_MODELS" ]; then CLAUDE_WANTED=1
+else for _m in sonnet haiku opus fable glm chip; do wants "$_m" && CLAUDE_WANTED=1; done
+fi
+_cok=0; command -v claude >/dev/null && _cok=1
+req_bin "bin-claude" "$_cok" "found" "missing - claude-family and glm lanes unavailable" "$CLAUDE_WANTED"
+_cxok=0; command -v codex >/dev/null && _cxok=1
+_cxw=0; [ -n "$FOR_MODELS" ] && wants codex && _cxw=1
+req_bin "bin-codex" "$_cxok" "$(codex --version 2>/dev/null | head -1)" "missing - --model codex exits 5; install: https://github.com/openai/codex" "$_cxw"
 GROK="${FLEETFLOW_GROK_BIN:-grok}"
-if command -v "$GROK" >/dev/null; then say "bin-grok" ok "$("$GROK" --version 2>/dev/null | head -1)"; else say "bin-grok" advisory "missing - --model grok exits 5; set FLEETFLOW_GROK_BIN or install the xAI grok CLI"; fi
+_gkok=0; command -v "$GROK" >/dev/null && _gkok=1
+_gkw=0; [ -n "$FOR_MODELS" ] && wants grok && _gkw=1
+req_bin "bin-grok" "$_gkok" "$("$GROK" --version 2>/dev/null | head -1)" "missing - --model grok exits 5; set FLEETFLOW_GROK_BIN or install the xAI grok CLI" "$_gkw"
 PIBIN="${FLEETFLOW_PI_BIN:-pi}"
 # -f fallback matches ff-spawn: bash runs a .cmd shim but command -v rejects it
-if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then say "bin-pi" ok "pi $("$PIBIN" --version 2>/dev/null | head -1)"; else say "bin-pi" advisory "missing - --model pi exits 5; set FLEETFLOW_PI_BIN or install https://github.com/earendil-works/pi"; fi
+_piok=0; { command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; } && _piok=1
+_piw=0; [ -n "$FOR_MODELS" ] && wants pi && _piw=1
+req_bin "bin-pi" "$_piok" "pi $("$PIBIN" --version 2>/dev/null | head -1)" "missing - --model pi exits 5; set FLEETFLOW_PI_BIN or install https://github.com/earendil-works/pi" "$_piw"
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
-if [ -f "$FW" ]; then say "fleet-worker" ok "$FW"; else say "fleet-worker" advisory "not installed - --model glm exits 5; mount claude-mods skills/fleet-worker or set FLEETFLOW_FLEET_WORKER"; fi
+_fwok=0; [ -f "$FW" ] && _fwok=1
+_fww=0; [ -n "$FOR_MODELS" ] && wants glm && _fww=1
+req_bin "fleet-worker" "$_fwok" "$FW" "not installed - --model glm exits 5; mount claude-mods skills/fleet-worker or set FLEETFLOW_FLEET_WORKER" "$_fww"
 
 # --- which windows.sandbox mode will codex lanes actually get? -----------------
 # Config read only (no execution) - the behavioural tripwire is in --live below.

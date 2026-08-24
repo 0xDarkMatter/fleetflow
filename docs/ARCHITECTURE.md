@@ -21,10 +21,10 @@ back through one collect gate, and the orchestrator decides what happens next.
 
 | Component | Kind | Role |
 |---|---|---|
-| Orchestrator session | interactive Claude Code | plans packets, makes verdicts, commits Codex lanes ([ADR-006](adr/ADR-006-codex-lanes-never-self-commit.md)), lands via fleet-ops |
+| Orchestrator session | interactive agent session (typically Claude Code; any harness per [ADR-033](adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)) | plans packets, makes verdicts, commits Codex lanes ([ADR-006](adr/ADR-006-codex-lanes-never-self-commit.md)), lands via fleet-ops |
 | `scripts/ff` | bash CLI | dispatcher: forwards `ff <cmd>` to the scripts verbatim (sugar, never a layer); native `env` / `open` / `logs` / `watch` conveniences live inline |
 | `scripts/ff-plan.sh` | bash CLI | pre-spawn planning stage: drafts plan/packets/manifest, lints them (gate, [ADR-030](adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)), refutes the plan cross-provider ([ADR-028](adr/ADR-028-the-plan-is-refuted-before-the-fleet-spawns.md)), estimates cost, expands generators ([ADR-029](adr/ADR-029-generator-backed-packets-registry-owns-expansions.md)) |
-| `scripts/ff-doctor.sh` | bash CLI | preflight: binaries, provider auth, live model probes; refuses to bless an unservable fleet |
+| `scripts/ff-doctor.sh` | bash CLI | preflight: binaries, provider auth, live model probes; refuses to bless an unservable fleet; `--for MODELS` scopes the verdict to the models a run will spawn ([ADR-033](adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)) |
 | `scripts/ff-spawn.sh` | bash CLI | uniform spawner: worktree lane + guard preamble + journal record + per-model launch (GLM via fleet-worker, `codex exec`, `grok -p`, `pi -p`, `claude -p`) |
 | `scripts/ff-collect.sh` | bash CLI | per-model result gate (success semantics differ by harness), schema validation, escape guard (`--check-main-clean`, [ADR-009](adr/ADR-009-escape-guard-and-baseline.md)) |
 | `scripts/ff-status.sh` | bash CLI | the ONE implementation of lane state: running/stalled ([ADR-008](adr/ADR-008-stall-detection-trusts-activity-not-state.md)) /abandoned ([ADR-025](adr/ADR-025-abandonment-demotes-silent-inflight-lanes.md)) /failed/done, tokens, activity |
@@ -92,7 +92,7 @@ the pipeline terminates at land.
 
 ## Invariant map — what the test gate pins
 
-`tests/run.sh` (460 hermetic assertions; exports its own `FLEETFLOW_HOME`)
+`tests/run.sh` (465 hermetic assertions; exports its own `FLEETFLOW_HOME`)
 mechanically enforces the invariants prose alone would lose: dashboard
 zero-external-references, run-card byte parity, STATE_RANK consistency across
 its five copies, pricing/HARNESS register entries, legacy `brain`→`model`

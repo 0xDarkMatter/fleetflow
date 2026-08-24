@@ -2452,6 +2452,16 @@ for v in $(printf '%s
 done
 [ -z "$MISSING_DOC" ]   && ok "docs/REFERENCE.md: mirrors every registry variable"   || bad "docs/REFERENCE.md: missing rows for:$MISSING_DOC"
 
+# --- ff-doctor --for scoping (ADR-033) ------------------------------------------
+# Hermetic: force per-model bins missing via their env overrides, never PATH.
+check "doctor --for: missing wanted harness -> 10" 10   env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for pi
+check "doctor --for: scoped fleet without that model -> 0" 0   env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex
+check "doctor unscoped: missing per-model harness stays advisory -> 0" 0   env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline
+DFOR="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for pi 2>/dev/null)"
+printf '%s' "$DFOR" | grep -q "bin-pi	fail"   && ok "doctor --for: wanted-and-missing reports fail, not advisory"   || bad "doctor --for: expected bin-pi fail row"
+DCX="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex 2>/dev/null)"
+printf '%s' "$DCX" | grep -q "bin-pi	advisory"   && ok "doctor --for: unwanted-and-missing stays advisory"   || bad "doctor --for: expected bin-pi advisory row under --for codex"
+
 # --- ff-collect end-of-run summary ----------------------------------------------
 SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"
 mkdir -p "$SUMRD" && ( cd "$SUMREPO" && git init -q -b main . )

@@ -1,7 +1,8 @@
 # Agent Instructions — fleetflow
 
 Heterogeneous cross-provider agent fleets (GLM / Codex / Grok / Pi / Anthropic)
-orchestrated from one Claude Code session, plus the machine-wide run dashboard.
+orchestrated from one agent session - typically Claude Code, but the seat is
+harness-agnostic (ADR-033) - plus the machine-wide run dashboard.
 Extracted from [claude-mods](https://github.com/0xDarkMatter/claude-mods)
 `skills/fleetflow` on 2026-08-01 with full history (subtree split).
 
@@ -12,7 +13,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| Full behavioural suite (460 assertions) | `bash tests/run.sh` |
+| Full behavioural suite (465 assertions) | `bash tests/run.sh` |
 | Provider preflight | `bash scripts/ff-doctor.sh --offline` (or `--live`) |
 | Dashboard server (supervised only — see landmines) | `python scripts/ff-serve.py --port 8161` |
 
