@@ -55,6 +55,11 @@ done
 # per-model harness is advisory. wants() is therefore only consulted when a
 # --for set exists; each check site guards on that.
 wants() { case ",$FOR_MODELS," in *",$1,"*) return 0;; *) return 1;; esac; }
+# should_probe M -> run the live probe for model M? No --for preserves the
+# historic probe-everything behaviour; with --for, unrequested providers are
+# neither called (no network, no tokens) nor allowed to affect the exit status,
+# but still emit a "not requested" row so the dashboard keeps its full shape.
+should_probe() { [ -z "$FOR_MODELS" ] || wants "$1"; }
 # req NAME OK DETAIL_OK MISSING_DETAIL WANTED -> fail when wanted, advisory when not
 req_bin() {
   _name="$1"; _ok="$2"; _okd="$3"; _missd="$4"; _wanted="$5"
@@ -211,7 +216,9 @@ fi
 
 # --- live probes ----------------------------------------------------------------
 FD="$(dirname "$FW")/fleet-doctor.sh"
-if [ -f "$FD" ]; then
+if ! should_probe glm; then
+  say "glm-endpoint" advisory "not requested (--for)"
+elif [ -f "$FD" ]; then
   if bash "$FD" --live 2>/dev/null | grep -q "live-ping	ok"; then
     say "glm-endpoint" ok "model resolves"
   else
@@ -221,7 +228,9 @@ else
   say "glm-endpoint" advisory "fleet-doctor not installed"
 fi
 
-if command -v codex >/dev/null; then
+if ! should_probe codex; then
+  say "codex-auth" advisory "not requested (--for)"
+elif command -v codex >/dev/null; then
   if timeout 30 codex login status 2>&1 | grep -qi "logged in"; then
     say "codex-auth" ok "$(timeout 30 codex login status 2>&1 | head -1)"
   else
@@ -247,7 +256,9 @@ fi
 # "simplify" this to a sandbox or exec call.
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*)
-    if command -v codex >/dev/null; then
+    if ! should_probe codex; then
+      say "codex-winsandbox" advisory "not requested (--for)"
+    elif command -v codex >/dev/null; then
       WSB_ERR="$(timeout 60 codex debug prompt-input -c windows.sandbox=ff-doctor-invalid 2>&1 >/dev/null)"
       WSB_RC=$?
       if [ "$WSB_RC" = 124 ]; then
@@ -267,7 +278,9 @@ esac
 # grok auth is the GROK_DEPLOYMENT_KEY env var (no login-status subcommand exists,
 # and OAuth on some accounts lacks chat entitlement). We probe key PRESENCE, not
 # validity - a real chat call would burn quota. Only when the binary is installed.
-if command -v "$GROK" >/dev/null; then
+if ! should_probe grok; then
+  say "grok-auth" advisory "not requested (--for)"
+elif command -v "$GROK" >/dev/null; then
   if [ -n "${GROK_DEPLOYMENT_KEY:-}" ]; then
     say "grok-auth" ok "GROK_DEPLOYMENT_KEY set"
   else
@@ -279,7 +292,9 @@ fi
 # ~/.pi/agent/auth.json never applies - the provider's API key env var is the
 # lane's ONLY auth. Probe key PRESENCE for the configured provider, not
 # validity (a real call would burn quota, same doctrine as grok-auth).
-if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
+if ! should_probe pi; then
+  say "pi-auth" advisory "not requested (--for)"
+elif command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
   PIPROV="${FLEETFLOW_PI_PROVIDER:-}"
   if [ -z "$PIPROV" ]; then
     say "pi-auth" advisory "FLEETFLOW_PI_PROVIDER not set - pi lanes would use pi's default provider with no key check"
