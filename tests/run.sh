@@ -2508,6 +2508,9 @@ printf '%s
 ' '{"type":"started","key":"k3","id":"c","model":"sonnet"}' >> "$SUMRD/journal.jsonl"
 SUMERR2="$(bash "$HERE/../scripts/ff-collect.sh" --run sumrun --id a --repo "$SUMREPO" 2>&1 >/dev/null)"
 printf '%s' "$SUMERR2" | grep -q "complete:"   && bad "ff-collect: summary fired on an incomplete run"   || ok "ff-collect: no summary while a packet is still unresolved"
+SUMERR3="$(bash "$HERE/../scripts/ff-collect.sh" --run sumrun --id a --repo "$SUMREPO" --check-main-clean 2>&1 >/dev/null)"
+printf '%s' "$SUMERR3" | grep -q "command not found"   && bad "ff-collect: EXIT trap calls an undefined name on the guard path"   || ok "ff-collect: guard-path exit is clean (summary defined before the trap)"
+
 
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
