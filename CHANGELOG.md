@@ -23,15 +23,15 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
-- Codex lanes could self-commit again: a pre-ADR-006 sandbox carve-out
-  (`--add-dir <git-dir>`, 2026-07-05) survived the ADR that rejected it,
-  granting codex write access to the main repo's entire `.git` - refs,
-  config/hooksPath, other lanes' metadata - none of it visible to the escape
-  guard. Removed; the commit clause moved from the shared guard preamble to
-  per-model injection at spawn (codex: DO NOT COMMIT + FILES_CHANGED report;
-  all others: conventional commits, no push), pinned by tests. Prompt change
-  invalidates pre-change journal cache keys - affected packets replay live
-  once. ADR-006 carries the addendum.
+- Codex lanes now self-commit like every other model - through four SCOPED
+  sandbox grants (lane worktree metadata, object store, own ref dir, own
+  reflog dir), not the whole-git-dir carve-out that a pre-ADR-006 commit
+  (2026-07-05) had left granting write access to `.git/config`/hooksPath,
+  `refs/heads/main`, and other lanes' metadata. ADR-034 supersedes ADR-006
+  (whose addendum records the seven-week drift); verified live with a real
+  codex lane committing and an adversarial `.git/config` write probe being
+  denied. Uniform commit clause restored to the guard preamble; tests pin the
+  exact grant list and that the whole git dir is never granted.
 - `--live` probes now honour `--for`: unrequested providers are neither
   called nor allowed to affect the exit status, reporting "not requested"
   advisory rows instead. Previously a claude-less fleet could exit 7 on

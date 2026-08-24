@@ -1,8 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-08
 supersedes: []
-superseded-by: []
+superseded-by: ["ADR-034"]
 touches:
   - "scripts/ff-spawn.sh"
   - "scripts/ff-collect.sh"
@@ -89,7 +89,10 @@ git dir includes `refs/heads/*`, `config` (`core.hooksPath`), hooks, and
 every other lane's worktree metadata — none of which the escape guard
 (ADR-009) inspects, since it diffs main's working tree, not its refs.
 
-Removed 2026-08-24. The commit clause moved out of the shared guard preamble
+Removed 2026-08-24 (and later that day superseded by ADR-034: the maintainer
+chose uniform self-commit, achieved through SCOPED grants rather than the
+whole-git-dir hole this addendum describes). The commit clause moved out of
+the shared guard preamble
 into per-model injection at spawn (codex: DO NOT COMMIT + FILES_CHANGED;
 everyone else: conventional commits, no push), tests now pin the absence of
 `--add-dir` and the per-model prompts, and `ff-run wave` was verified to

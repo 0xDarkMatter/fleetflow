@@ -536,12 +536,16 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   `--always-approve` (autonomous tools), confined by the lane worktree — no
   config-dir isolation needed (no Claude OAuth to collide with; auth is the
   `GROK_DEPLOYMENT_KEY` env var, read from env, never written to disk).
-- **Codex lanes cannot `git commit` (learned 2026-07-08):** a worktree's git
-  metadata lives outside the lane the sandbox confines Codex to. Convention:
-  Codex packets say "DO NOT COMMIT — leave changes in the working tree", the
-  worker reports `FILES_CHANGED`, and the **orchestrator reviews the diff and
-  commits** (GLM/Anthropic workers are unaffected and may self-commit). See
-  [docs/adr/ADR-006](docs/adr/ADR-006-codex-lanes-never-self-commit.md).
+- **Codex commits ride four scoped git grants — never widen them (ADR-034,
+  supersedes ADR-006):** a worktree's git metadata lives outside the lane the
+  sandbox confines Codex to, so ff-spawn grants exactly the lane's worktree
+  metadata dir, the object store, and the lane branch's ref + reflog dirs.
+  `.git/config` (`core.hooksPath` = code execution), `hooks/`, and
+  `refs/heads/main` stay OUTSIDE the cage - a whole-git-dir `--add-dir` is the
+  hole [ADR-006](docs/adr/ADR-006-codex-lanes-never-self-commit.md)'s addendum
+  documents shipping once already. Verified live with an adversarial
+  config-write probe (denied; commit landed). See
+  [docs/adr/ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md).
 - **Codex on Windows must never depend on an elevation prompt (learned
   2026-07-27):** the `elevated` sandbox mode raises a UAC dialog nobody can
   approve headless, and the lane **hangs instead of failing fast**. `ff-spawn`

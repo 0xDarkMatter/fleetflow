@@ -2462,17 +2462,21 @@ printf '%s' "$DFOR" | grep -q "bin-pi	fail"   && ok "doctor --for: wanted-and-mi
 DCX="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex 2>/dev/null)"
 printf '%s' "$DCX" | grep -q "bin-pi	advisory"   && ok "doctor --for: unwanted-and-missing stays advisory"   || bad "doctor --for: expected bin-pi advisory row under --for codex"
 
-# --- codex non-committing isolation (ADR-006) ------------------------------------
-grep -q "add-dir" "$S/ff-spawn.sh"   && bad "spawn: git-dir carve-out present - codex sandbox includes .git again (ADR-006)"   || ok "spawn: no git-dir carve-out (codex cannot reach main .git)"
-grep -q "Commit your work" "$HERE/../assets/guard-preamble.txt"   && bad "preamble: universal commit clause is back (must be per-model, ADR-006)"   || ok "preamble: commit clause is per-model, not universal"
-ADR6="$TMP/adr6repo"; mkdir -p "$ADR6" && ( cd "$ADR6" && git init -q -b main . )
+# --- codex self-commit via scoped git grants (ADR-034) ---------------------------
+# The grants must be the four scoped dirs and NEVER the whole git dir - the
+# whole-dir grant (config/hooksPath, refs/heads/main, other lanes' metadata) is
+# the hole ADR-006's addendum documents. Prompts are uniform across models.
+grep -q 'CODEX_GIT_GRANTS=( --add-dir "$WTGIT" --add-dir "$MAINGIT/objects" --add-dir "$REFDIR" --add-dir "$LOGDIR" )' "$S/ff-spawn.sh"   && ok "spawn: codex git grants are the four scoped dirs (ADR-034)"   || bad "spawn: scoped grant array changed - re-verify against ADR-034 before trusting"
+grep -qE 'add-dir "[$]MAINGIT"($| )' "$S/ff-spawn.sh"   && bad "spawn: whole git dir granted to codex - the ADR-006-addendum hole is back"   || ok "spawn: whole git dir is never granted"
+grep -q "Commit your work" "$HERE/../assets/guard-preamble.txt"   && ok "preamble: uniform commit clause present for all models"   || bad "preamble: commit clause missing (ADR-034 restored it to the preamble)"
+ADR6="$TMP/adr34repo"; mkdir -p "$ADR6" && ( cd "$ADR6" && git init -q -b main . )
 printf 'do the task
 ' > "$ADR6/pkt.md"
-bash "$S/ff-spawn.sh" --run adr6 --id cx --model codex  --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
-bash "$S/ff-spawn.sh" --run adr6 --id sn --model sonnet --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
-grep -q "DO NOT COMMIT" "$ADR6/.fleetflow/adr6/cx.prompt.txt"   && grep -q "FILES_CHANGED" "$ADR6/.fleetflow/adr6/cx.prompt.txt"   && ok "spawn: codex prompt carries DO NOT COMMIT + FILES_CHANGED"   || bad "spawn: codex prompt missing the non-commit contract"
-grep -q "Commit your work with conventional commits" "$ADR6/.fleetflow/adr6/sn.prompt.txt"   && ok "spawn: non-codex prompt keeps the self-commit instruction"   || bad "spawn: sonnet prompt lost its commit instruction"
-grep -q "DO NOT COMMIT" "$ADR6/.fleetflow/adr6/sn.prompt.txt"   && bad "spawn: sonnet prompt wrongly carries the codex non-commit clause"   || ok "spawn: non-commit clause is codex-only"
+bash "$S/ff-spawn.sh" --run adr34 --id cx --model codex  --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run adr34 --id sn --model sonnet --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
+grep -q "Commit your work with conventional commits" "$ADR6/.fleetflow/adr34/cx.prompt.txt"   && ok "spawn: codex prompt carries the same commit instruction as every model"   || bad "spawn: codex prompt lost the uniform commit clause"
+grep -q "DO NOT COMMIT" "$ADR6/.fleetflow/adr34/cx.prompt.txt"   && bad "spawn: the retired per-model non-commit clause is back in codex prompts"   || ok "spawn: no per-model non-commit clause remains"
+diff <(grep -o "Commit your work.*" "$ADR6/.fleetflow/adr34/cx.prompt.txt")      <(grep -o "Commit your work.*" "$ADR6/.fleetflow/adr34/sn.prompt.txt") >/dev/null   && ok "spawn: commit clause is byte-identical across models"   || bad "spawn: commit clause differs between codex and sonnet"
 
 # --- live probe scoping + orchestrator seat (ADR-033) ---------------------------
 # Hermetic: the only requested provider (grok) is probed by env-var PRESENCE, the

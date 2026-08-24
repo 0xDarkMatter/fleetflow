@@ -2,7 +2,7 @@
 
 [![version](https://img.shields.io/github/v/tag/0xDarkMatter/fleetflow?label=version&color=2d3142)](https://github.com/0xDarkMatter/fleetflow/tags)
 [![license](https://img.shields.io/github/license/0xDarkMatter/fleetflow?color=4f5d75)](LICENSE)
-[![ADRs](https://img.shields.io/badge/ADRs-33-4f5d75)](docs/adr/)
+[![ADRs](https://img.shields.io/badge/ADRs-34-4f5d75)](docs/adr/)
 
 **Heterogeneous cross-provider agent fleets from one orchestrator session.**
 GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
@@ -52,7 +52,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 478 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 479 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -166,7 +166,7 @@ live in [references/worker-contracts.md](references/worker-contracts.md).
 | Alias | Models | Harness | Live stream / stall coverage | Self-commit | Typical role |
 |---|---|---|---|---|---|
 | `glm` | GLM-5.3 (default) · GLM-4.5-Air (small) | `claude -p` → z.ai endpoint, isolated config dir | session transcript | yes | build, mechanical, scout: proven cheap |
-| `codex` | GPT-5.6 family | `codex exec`, OpenAI's own agent harness, OS sandbox | `--json` event stream | no (orchestrator commits) | build, cross-provider dissent |
+| `codex` | GPT-5.6 family | `codex exec`, OpenAI's own agent harness, OS sandbox | `--json` event stream | yes (scoped git grants, [ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)) | build, cross-provider dissent |
 | `grok` | grok-4.5 | `grok -p`, xAI's own agentic CLI | none (buffered to exit); heartbeat file covers stalls | yes | build, cross-provider dissent |
 | `pi` | wildcard: gemini, deepseek, groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | build via any provider; third opinion |
 | `sonnet` / `haiku` | Claude Sonnet / Haiku | `claude -p`, host auth | session transcript | yes | build, scout / mechanical |
@@ -176,8 +176,8 @@ live in [references/worker-contracts.md](references/worker-contracts.md).
 Two execution modes for claude-family lanes: the default one-shot `claude -p`,
 or `--acp` under the [raven](https://github.com/0xDarkMatter/raven) harness
 for lanes that need mid-run steering and graceful wind-down (ADR-023).
-Concurrency guidance, sandbox rules, and per-model gotchas (Codex lanes
-cannot self-commit; Grok has no live stream by design) are in
+Concurrency guidance, sandbox rules, and per-model gotchas (Grok has no
+live stream by design; codex commits ride scoped git grants) are in
 [SKILL.md](SKILL.md).
 
 How the roles compose in a typical run:
@@ -304,11 +304,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[33 ADRs](docs/adr/) covering everything from why the dashboard is one
+[34 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 478-assertion test gate: a malformed decision
+`adr-lint` runs inside the 479-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -359,7 +359,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 🗺️ **Docs restructure**: ARCHITECTURE + SECURITY into `docs/`, five diagrams
   embedded in ARCHITECTURE.md including the new run-state stores map;
   machine-conditional AGENTS.md landmines now state their preconditions.
-- ✅ Suite grown to 478 hermetic assertions.
+- ✅ Suite grown to 479 hermetic assertions.
 
 ### v0.2.0 · 2026-08-20
 
@@ -457,7 +457,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-478 assertions over the scripts, monitor, dashboard wiring, and import/resume
+479 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 
