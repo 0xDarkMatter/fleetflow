@@ -21,7 +21,7 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_CFG_BASE` | `$HOME/.fleet-worker` | fleet-worker config-dir base ff-status scans for glm lane transcripts |
 | `FLEETFLOW_DASHBOARD_URL` | `http://127.0.0.1:8161` | dashboard origin for the widget anchor and the SKILL.md pane ritual |
 | `FLEETFLOW_BUS` | `0` | =1 opts lanes into raven bus heartbeats (ff-spawn, ADR-022) |
-| `FLEETFLOW_ORCHESTRATOR` | `(unset)` | orchestrator label recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator |
+| `FLEETFLOW_ORCHESTRATOR` | `(unset)` | declared orchestrator seat: consumed by ff-doctor (skips the claude auto-probe, ADR-033) and recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator |
 | `FLEETFLOW_PERMISSION_MODE` | `acceptEdits (acp) / bypassPermissions (headless)` | permission mode for claude-family lanes; default differs by lane kind |
 | `FLEETFLOW_FLEET_WORKER` | `$HOME/.claude/skills/fleet-worker/scripts/fleet-worker` | glm launcher path (ff-spawn hard-requires it for --model glm) |
 | `FLEETFLOW_CODEX_MODEL` | `(harness default)` | codex -m override for codex lanes |

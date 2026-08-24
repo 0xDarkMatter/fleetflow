@@ -25,6 +25,13 @@ Usage: ff-doctor.sh [--offline | --live | --env] [--for MODEL[,MODEL...]]
               reports orchestrator tier (fable|opus)
   --env       print every FLEETFLOW_* tunable: name, current value, default,
               and what it does (TSV; the live source docs/REFERENCE.md cites)
+  --orchestrator NAME
+              declare who holds the orchestrator seat (fable|opus|codex|pi|
+              grok|glm|human|...). Skips the Claude auto-probe for non-claude
+              seats: an explicit seat gets cheap validation (binary present;
+              `human` is an operator assertion, never probed) and is persisted
+              to $FLEETFLOW_HOME/orchestrator. Precedence: this flag, then
+              $FLEETFLOW_ORCHESTRATOR, then the Claude auto-probe (ADR-033)
   --for       scope the verdict to the models this run will spawn: a missing
               harness for a REQUESTED model escalates advisory->fail, and
               `claude` is required only when a claude-family/glm model (or no
@@ -39,13 +46,14 @@ EXAMPLES
 EOF
 }
 
-MODE="offline"; FOR_MODELS=""
+MODE="offline"; FOR_MODELS=""; ORCH_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --offline) MODE="offline"; shift ;;
     --live) MODE="live"; shift ;;
     --env) MODE="env"; shift ;;
     --for) FOR_MODELS="${2:-}"; shift 2 ;;
+    --orchestrator) ORCH_ARG="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -86,7 +94,7 @@ FLEETFLOW_CACHE_ROOT	$HOME/.fleet-worker/cache	per-lane tmp + uv cache root, red
 FLEETFLOW_CFG_BASE	$HOME/.fleet-worker	fleet-worker config-dir base ff-status scans for glm lane transcripts
 FLEETFLOW_DASHBOARD_URL	http://127.0.0.1:8161	dashboard origin for the widget anchor and the SKILL.md pane ritual
 FLEETFLOW_BUS	0	=1 opts lanes into raven bus heartbeats (ff-spawn, ADR-022)
-FLEETFLOW_ORCHESTRATOR	(unset)	orchestrator label recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator
+FLEETFLOW_ORCHESTRATOR	(unset)	declared orchestrator seat: consumed by ff-doctor (skips the claude auto-probe, ADR-033) and recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator
 FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permission mode for claude-family lanes; default differs by lane kind
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
@@ -212,6 +220,40 @@ else
   say "install-sync" advisory "no installed copy at $INST"
 fi
 
+# Explicit seat resolution is tokenless, so it runs in BOTH modes; only the
+# Claude auto-probe below stays live-only.
+# Seat resolution (ADR-033): explicit flag, then env, then the Claude
+# auto-probe. An explicit non-claude seat must NOT trigger the claude probe -
+# that probe spends two model calls and would UNREACH-fail a claude-less fleet.
+ORCH="none"
+ORCH_EXPLICIT="${ORCH_ARG:-${FLEETFLOW_ORCHESTRATOR:-}}"
+if [ -n "$ORCH_EXPLICIT" ]; then
+  case "$ORCH_EXPLICIT" in
+    human)
+      ORCH="human"; say "orchestrator" ok "human (operator assertion, not probed)" ;;
+    codex)
+      if command -v codex >/dev/null; then ORCH="codex"; say "orchestrator" ok "codex"
+      else say "orchestrator" unreachable "codex binary missing for declared seat"; UNREACH=1; fi ;;
+    pi)
+      if command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then ORCH="pi"; say "orchestrator" ok "pi"
+      else say "orchestrator" unreachable "pi binary missing for declared seat"; UNREACH=1; fi ;;
+    grok)
+      if command -v "$GROK" >/dev/null; then ORCH="grok"; say "orchestrator" ok "grok"
+      else say "orchestrator" unreachable "grok binary missing for declared seat"; UNREACH=1; fi ;;
+    fable|opus|glm|sonnet|haiku)
+      if command -v claude >/dev/null; then ORCH="$ORCH_EXPLICIT"; say "orchestrator" ok "$ORCH_EXPLICIT (claude harness present; declared, not probed)"
+      else say "orchestrator" unreachable "claude binary missing for declared seat $ORCH_EXPLICIT"; UNREACH=1; fi ;;
+    *)
+      ORCH="$ORCH_EXPLICIT"; say "orchestrator" advisory "declared seat '$ORCH_EXPLICIT' - unknown label, recorded unvalidated" ;;
+  esac
+  if [ "$ORCH" != none ]; then
+    mkdir -p "${FLEETFLOW_HOME:-$HOME/.fleetflow}" 2>/dev/null || true
+    printf '%s\n' "$ORCH" > "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null || true
+  fi
+else
+  ORCH_EXPLICIT=""
+fi
+
 [ "$MODE" = "live" ] || { [ "$FAIL" = 0 ] && exit 0 || exit 10; }
 
 # --- live probes ----------------------------------------------------------------
@@ -322,8 +364,7 @@ elif command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
   fi
 fi
 
-ORCH="none"
-if command -v claude >/dev/null; then
+if [ -z "$ORCH_EXPLICIT" ] && command -v claude >/dev/null; then
   for m in claude-fable-5 opus; do
     R="$(timeout 120 claude -p "reply with exactly: ok" --model "$m" --max-turns 1 --output-format json 2>/dev/null)"
     if [ -n "$R" ] && [ "$(printf '%s' "$R" | jq -r 'if has("is_error") then (.is_error|tostring) else "true" end' 2>/dev/null)" = "false" ]; then
@@ -339,12 +380,14 @@ fi
 # --orchestrator. A best guess recorded as such beats a null nobody can fill in
 # later - but it IS a guess about availability, not proof of what is driving, so
 # an explicit --orchestrator / $FLEETFLOW_ORCHESTRATOR always wins over this file.
-if [ "$ORCH" != none ]; then
-  mkdir -p "${FLEETFLOW_HOME:-$HOME/.fleetflow}" 2>/dev/null || true
-  printf '%s\n' "$ORCH" > "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null || true
+if [ -z "$ORCH_EXPLICIT" ]; then
+  if [ "$ORCH" != none ]; then
+    mkdir -p "${FLEETFLOW_HOME:-$HOME/.fleetflow}" 2>/dev/null || true
+    printf '%s\n' "$ORCH" > "${FLEETFLOW_HOME:-$HOME/.fleetflow}/orchestrator" 2>/dev/null || true
+  fi
+  say "orchestrator" "$([ "$ORCH" = none ] && echo unreachable || echo ok)" "$ORCH"
+  [ "$ORCH" = "none" ] && UNREACH=1
 fi
-say "orchestrator" "$([ "$ORCH" = none ] && echo unreachable || echo ok)" "$ORCH"
-[ "$ORCH" = "none" ] && UNREACH=1
 
 if [ "$FAIL" != 0 ]; then exit 10; fi
 [ "$UNREACH" != 0 ] && exit 7

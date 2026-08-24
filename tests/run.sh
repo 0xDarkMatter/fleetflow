@@ -2462,6 +2462,24 @@ printf '%s' "$DFOR" | grep -q "bin-pi	fail"   && ok "doctor --for: wanted-and-mi
 DCX="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex 2>/dev/null)"
 printf '%s' "$DCX" | grep -q "bin-pi	advisory"   && ok "doctor --for: unwanted-and-missing stays advisory"   || bad "doctor --for: expected bin-pi advisory row under --for codex"
 
+# --- live probe scoping + orchestrator seat (ADR-033) ---------------------------
+# Hermetic: the only requested provider (grok) is probed by env-var PRESENCE, the
+# seat is declared (never probed), and every other provider must be skipped
+# without a call - so this exercises --live with zero network and zero tokens.
+LIVEOUT="$(env GROK_DEPLOYMENT_KEY=present FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for grok --orchestrator human 2>/dev/null)"; LIVERC=$?
+[ "$LIVERC" = 0 ]   && ok "doctor --live --for: scoped run passes without claude/codex/glm/pi"   || bad "doctor --live --for: expected 0, got $LIVERC"
+for row in glm-endpoint codex-auth pi-auth; do
+  printf '%s' "$LIVEOUT" | grep -q "^$row	advisory	not requested"     && ok "doctor --live --for: $row skipped as not requested"     || bad "doctor --live --for: $row was not skipped"
+done
+printf '%s' "$LIVEOUT" | grep -q "^orchestrator	ok	human"   && ok "doctor --orchestrator: human seat is an assertion, reported ok"   || bad "doctor --orchestrator: human seat row missing"
+printf '%s' "$LIVEOUT" | grep -q "model-claude"   && bad "doctor --orchestrator: claude auto-probe fired despite explicit seat"   || ok "doctor --orchestrator: no claude model probe with an explicit seat"
+# Request only claude-family (whose harness the suite already assumes) so the
+# structural gate stays green and the DECLARED-SEAT failure is what exits 7 -
+# requesting grok itself would trip bin-grok structurally (exit 10) first.
+check "doctor --orchestrator: declared seat with missing binary -> 7" 7   env FLEETFLOW_GROK_BIN=/nonexistent FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for sonnet --orchestrator grok
+OZ="$(bash "$DOCTOR" --offline --orchestrator zeus 2>/dev/null)"
+printf '%s' "$OZ" | grep -q "^orchestrator	advisory	declared seat 'zeus'"   && ok "doctor --orchestrator: unknown label recorded unvalidated, offline too"   || bad "doctor --orchestrator: unknown label row missing offline"
+
 # --- ff-collect end-of-run summary ----------------------------------------------
 SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"
 mkdir -p "$SUMRD" && ( cd "$SUMREPO" && git init -q -b main . )
