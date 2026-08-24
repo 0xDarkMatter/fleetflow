@@ -2462,6 +2462,18 @@ printf '%s' "$DFOR" | grep -q "bin-pi	fail"   && ok "doctor --for: wanted-and-mi
 DCX="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex 2>/dev/null)"
 printf '%s' "$DCX" | grep -q "bin-pi	advisory"   && ok "doctor --for: unwanted-and-missing stays advisory"   || bad "doctor --for: expected bin-pi advisory row under --for codex"
 
+# --- codex non-committing isolation (ADR-006) ------------------------------------
+grep -q "add-dir" "$S/ff-spawn.sh"   && bad "spawn: git-dir carve-out present - codex sandbox includes .git again (ADR-006)"   || ok "spawn: no git-dir carve-out (codex cannot reach main .git)"
+grep -q "Commit your work" "$HERE/../assets/guard-preamble.txt"   && bad "preamble: universal commit clause is back (must be per-model, ADR-006)"   || ok "preamble: commit clause is per-model, not universal"
+ADR6="$TMP/adr6repo"; mkdir -p "$ADR6" && ( cd "$ADR6" && git init -q -b main . )
+printf 'do the task
+' > "$ADR6/pkt.md"
+bash "$S/ff-spawn.sh" --run adr6 --id cx --model codex  --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run adr6 --id sn --model sonnet --prompt-file "$ADR6/pkt.md" --repo "$ADR6" --dry-run >/dev/null 2>&1
+grep -q "DO NOT COMMIT" "$ADR6/.fleetflow/adr6/cx.prompt.txt"   && grep -q "FILES_CHANGED" "$ADR6/.fleetflow/adr6/cx.prompt.txt"   && ok "spawn: codex prompt carries DO NOT COMMIT + FILES_CHANGED"   || bad "spawn: codex prompt missing the non-commit contract"
+grep -q "Commit your work with conventional commits" "$ADR6/.fleetflow/adr6/sn.prompt.txt"   && ok "spawn: non-codex prompt keeps the self-commit instruction"   || bad "spawn: sonnet prompt lost its commit instruction"
+grep -q "DO NOT COMMIT" "$ADR6/.fleetflow/adr6/sn.prompt.txt"   && bad "spawn: sonnet prompt wrongly carries the codex non-commit clause"   || ok "spawn: non-commit clause is codex-only"
+
 # --- live probe scoping + orchestrator seat (ADR-033) ---------------------------
 # Hermetic: the only requested provider (grok) is probed by env-var PRESENCE, the
 # seat is declared (never probed), and every other provider must be skipped

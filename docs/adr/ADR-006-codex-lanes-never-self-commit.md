@@ -74,3 +74,23 @@ verdict.
 - SKILL.md § Safety — "Codex lanes cannot `git commit`"
 - `assets/guard-preamble.txt` — the worker-facing contract text
 - `scripts/ff-collect.sh` — `--auto-commit` (post-PASS, opt-in)
+
+## Addendum — 2026-08-24
+
+The rejected alternative survived in code for seven weeks. Three days before
+this ADR was decided, commit `062514b` (2026-07-05) had already "fixed" the
+same lock failure the other way: `--add-dir <absolute-git-dir>`, widening the
+codex sandbox to include the main repo's `.git`. The ADR chose inversion over
+widening — and nobody removed the carve-out, so codex lanes silently
+self-committed from July onward while every document said they could not.
+
+The carve-out was worse than a doc-parity bug: writable access to the whole
+git dir includes `refs/heads/*`, `config` (`core.hooksPath`), hooks, and
+every other lane's worktree metadata — none of which the escape guard
+(ADR-009) inspects, since it diffs main's working tree, not its refs.
+
+Removed 2026-08-24. The commit clause moved out of the shared guard preamble
+into per-model injection at spawn (codex: DO NOT COMMIT + FILES_CHANGED;
+everyone else: conventional commits, no push), tests now pin the absence of
+`--add-dir` and the per-model prompts, and `ff-run wave` was verified to
+already collect with `--auto-commit`, so codex fix lanes lose nothing.

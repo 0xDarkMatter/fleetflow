@@ -248,6 +248,21 @@ PACKET="$(cat "$PROMPT_FILE"; printf x)"; PACKET="${PACKET%x}"
 if [ "$GUARD" = 1 ]; then
   PRE="$(dirname "${BASH_SOURCE[0]}")/../assets/guard-preamble.txt"
   [ -f "$PRE" ] && cat "$PRE" >> "$SENT"
+  # Commit clause is PER-MODEL (ADR-006): codex lanes must NOT self-commit -
+  # their sandbox excludes the main repo's .git (where a worktree's index/HEAD
+  # locks live), and the orchestrator-commits contract is what forces a diff
+  # review on everything codex produces. Every other model self-commits. NB:
+  # like the heartbeat clause below, this changes the effective prompt and so
+  # invalidates pre-change journal cache keys - runs replay live once.
+  if [ "$MODEL" = "codex" ]; then
+    cat >> "$SENT" <<'EOF'
+- DO NOT COMMIT - leave all changes in the working tree. Your sandbox excludes the repository's git metadata, so `git commit` cannot succeed; the orchestrator reviews your diff and commits. Do NOT push. Include "FILES_CHANGED: <n>" in your FINAL REPLY.
+EOF
+  else
+    cat >> "$SENT" <<'EOF'
+- Commit your work with conventional commits. Do NOT push.
+EOF
+  fi
   # Heartbeat clause (worktree lanes only) - rookery's `parcel progress`
   # pattern, filed down to one file: the worker appends a line per major step,
   # ff-status reads the mtime as a live stall signal. This is the ONLY liveness
@@ -511,13 +526,10 @@ else
       command -v codex >/dev/null || { err "codex CLI not found"; exit 5; }
       ART="$RUNDIR/$ID.last.txt"
       # a worktree's git metadata lives in the MAIN repo's .git - outside the
-      # codex sandbox's writable root - so git commit fails without this carve-out
-      GITDIR=""; [ "$WORKTREE" = 1 ] && GITDIR="$(git -C "$REPO" rev-parse --absolute-git-dir)"
       ( cd "$WORKDIR" && \
         UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
         codex exec --full-auto --ephemeral --color never --json \
           ${CODEX_WINSANDBOX:+-c windows.sandbox="$CODEX_WINSANDBOX"} \
-          ${GITDIR:+--add-dir "$GITDIR"} \
           ${FLEETFLOW_CODEX_MODEL:+-m "$FLEETFLOW_CODEX_MODEL"} \
           ${EFFORT:+-c "model_reasoning_effort=$EFFORT"} \
           ${SCHEMA:+--output-schema "$SCHEMA"} \
