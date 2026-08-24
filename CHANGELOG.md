@@ -14,10 +14,11 @@ shipped, the ADRs own WHY.
   lanes, so a non-Claude orchestrator can bless a claude-less fleet
   (ADR-033).
 - ADR-033: the orchestrator contract is bash plus judgment - any harness may
-  hold the seat; host conveniences are optional surfaces. Includes the
-  measured Windows constraint: sandboxed codex cannot host Git Bash, so the
-  codex orchestrator posture there is full access, opposite to ADR-007's lane
-  pin.
+  hold the seat; host conveniences are optional surfaces. Verified with
+  opencode driving `ff plan draft → lint` end-to-end on Windows, unmodified.
+  Includes the measured Windows constraint: sandboxed codex cannot host Git
+  Bash, so the codex orchestrator posture there is full access, opposite to
+  ADR-007's lane pin.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ## [0.3.0] — 2026-08-24

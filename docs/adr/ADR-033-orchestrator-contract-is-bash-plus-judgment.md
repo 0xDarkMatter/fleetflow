@@ -80,9 +80,12 @@ the claim real and states its bounds.
   sandbox denies the cygwin shared-memory section), so every `ff-*` script is
   unreachable from a sandboxed Windows codex. The orchestrator posture there
   is full access or nothing.
-- Verification status: the sandbox constraint above is measured; a
-  permissive-posture `codex exec` driving `ff plan draft → lint` end-to-end
-  has NOT yet run (it requires an operator-launched session — an auto-mode
-  Claude session correctly may not spawn a bypass-sandbox child). Until a
-  full non-Claude-orchestrated run lands, cross-harness support is
-  "mechanically complete, operationally unproven".
+- Verification status, 2026-08-24: **opencode 1.18 drove `ff plan draft →
+  lint` end-to-end on Windows, unmodified** — commands executed in order,
+  lint's exit code and armed/disarmed checks reported accurately, no files
+  touched beyond what the scripts wrote. The seat is proven harness-portable
+  for the planning gate. Still open: a permissive-posture codex run (needs an
+  operator-launched session — an auto-mode Claude session correctly may not
+  spawn a bypass-sandbox child), a WSL-bash-under-codex-sandbox probe
+  (attempted; blocked by an unrelated DNS failure to the codex backend), and
+  a full spawn-to-clean run from any non-Claude seat.
