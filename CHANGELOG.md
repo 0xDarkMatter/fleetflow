@@ -7,11 +7,11 @@ shipped, the ADRs own WHY.
 
 ## [0.3.0] — 2026-08-24
 
-The install story. Written from the point of view of someone who has just
-cloned the repo: a Requirements/Install/Quickstart path verified by running it
-verbatim in a fresh clone, portability fixes for the two dependencies that
-failed silently off the author's machine, the `ff` dispatcher with terminal
-QOL, and a drift-gated tunables registry.
+Written from the point of view of someone who has just cloned the repo: a
+Requirements/Install/Quickstart path verified by running it verbatim in a
+fresh clone, portability fixes for the two dependencies that failed silently
+off the author's machine, the `ff` dispatcher with terminal QOL, and a
+drift-gated tunables registry.
 
 ### Added
 - `ff` dispatcher (`scripts/ff`): one entry point over the scripts - `ff plan
@@ -68,9 +68,9 @@ QOL, and a drift-gated tunables registry.
 
 ## [0.2.0] — 2026-08-20
 
-The planning stage. Runs are now planned, linted, and refuted before they
-spawn; the build of this release itself ran as a codex+glm fleet with
-tested-posture QA (findings: 8 fixed, 1 waived, 0 open).
+Runs are now planned, linted, and refuted before they spawn; the build of
+this release itself ran as a codex+glm fleet with tested-posture QA
+(findings: 8 fixed, 1 waived, 0 open).
 
 ### Added
 - `ff-plan` — `draft` (plan doc + packets + manifest authored up front,
@@ -103,9 +103,8 @@ tested-posture QA (findings: 8 fixed, 1 waived, 0 open).
 
 ## [0.1.0] — 2026-08-14
 
-First public release. Extracted from the claude-mods skills tree with full
-history (subtree split, 2026-08-01); everything below landed in this repo
-since extraction.
+Extracted from the claude-mods skills tree with full history (subtree
+split, 2026-08-01); everything below landed in this repo since extraction.
 
 ### Added
 - The run lifecycle scripts: `ff-doctor`, `ff-spawn`, `ff-collect`,
@@ -130,5 +129,5 @@ since extraction.
 - 389-assertion hermetic behavioural test suite; ADR lint runs inside it.
 
 ### Changed
-- Default GLM worker model is GLM-5.3 (verified live 2026-08-14); reasoning
+- Default GLM worker model is GLM-5.3; reasoning
   levels `low|high|max` documented in the worker contract.

@@ -336,7 +336,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ## Recent Updates
 
-### v0.3.0 · 2026-08-24 · the install story
+### v0.3.0 · 2026-08-24
 
 - 📦 **Requirements + Install + a Quickstart that runs verbatim** from a fresh
   clone: plan → lint → spawn → collect → clean, with the hard and per-model
@@ -357,7 +357,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   machine-conditional AGENTS.md landmines now state their preconditions.
 - ✅ Suite grown to 460 hermetic assertions.
 
-### v0.2.0 · 2026-08-20 · the planning stage
+### v0.2.0 · 2026-08-20
 
 - 📐 **`ff-plan` — runs are planned before they spawn**: `draft` authors the
   plan doc, packets, and manifest up front; `lint` gates the spawn (scope
@@ -384,7 +384,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   a codex+glm fleet with tested-posture QA (findings ledger: 8 fixed, 1
   waived, 0 open).
 
-### v0.1.0 · 2026-08-14 · first public release
+### v0.1.0 · 2026-08-14
 
 - 🚀 **Extracted to a standalone repo** from the claude-mods skills tree with
   full history (subtree split). Everything below landed here since.
@@ -399,9 +399,8 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   feed across providers, and claude lanes that accept mid-run steering and
   graceful wind-down ([ADR-022](docs/adr/ADR-022-raven-bus-optin-telemetry.md),
   [ADR-023](docs/adr/ADR-023-acp-lanes-packet-trusted-verdict-from-telemetry.md)).
-- 🧠 **GLM default is GLM-5.3** (verified live against z.ai the day of
-  rollout), with the 5.3 reasoning levels (`low|high|max`) documented in the
-  worker contract.
+- 🧠 **GLM default is GLM-5.3**, with the 5.3 reasoning levels
+  (`low|high|max`) documented in the worker contract.
 - 📋 **Post-build wave pipeline + findings ledger**: posture-selected finder
   waves, mechanical triage, fix loops, cross-provider re-verify
   ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
