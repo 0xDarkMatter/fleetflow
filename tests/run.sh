@@ -2462,6 +2462,23 @@ printf '%s' "$DFOR" | grep -q "bin-pi	fail"   && ok "doctor --for: wanted-and-mi
 DCX="$(env FLEETFLOW_PI_BIN=/nonexistent bash "$DOCTOR" --offline --for codex 2>/dev/null)"
 printf '%s' "$DCX" | grep -q "bin-pi	advisory"   && ok "doctor --for: unwanted-and-missing stays advisory"   || bad "doctor --for: expected bin-pi advisory row under --for codex"
 
+# --- ff-clean: sha base must never destroy committed lanes -----------------------
+# ff-spawn records the manifest base as a SHA. The old validation only accepted
+# branch names, silently fell back to the string "HEAD" (a self-compare inside
+# each lane worktree = 0 commits), and REMOVED committed lanes - found live
+# 2026-08-25 when a 2-commit codex lane was destroyed. This fixture is that run.
+CLR="$TMP/cleanrepro"; mkdir -p "$CLR" && ( cd "$CLR" && git init -q -b main . && git config user.email t@t && git config user.name t )
+( cd "$CLR" && echo a > a.txt && git add a.txt && git commit -qm init )
+CLRSHA="$(git -C "$CLR" rev-parse HEAD)"
+mkdir -p "$CLR/.fleetflow/rp"
+printf '{"run":"rp","base":"%s","phases":[]}' "$CLRSHA" > "$CLR/.fleetflow/rp/manifest.json"
+git -C "$CLR" worktree add -q -b fleetflow/rp/lane "$CLR/.fleetflow/rp/wt-lane" "$CLRSHA"
+( cd "$CLR/.fleetflow/rp/wt-lane" && echo work > w.txt && git add w.txt && git commit -qm "feat: lane work" )
+printf '{"type":"started","key":"k","id":"lane","model":"sonnet"}' > "$CLR/.fleetflow/rp/journal.jsonl"
+CLOUT="$(bash "$S/ff-clean.sh" --run rp --repo "$CLR" --no-archive 2>&1)"
+printf '%s' "$CLOUT" | grep -q "lane	kept	1 commits"   && ok "clean: committed lane with a SHA base is KEPT (the 2026-08-25 destroyer)"   || bad "clean: sha-base lane not kept - committed work would be destroyed: $CLOUT"
+git -C "$CLR" show-ref --verify --quiet refs/heads/fleetflow/rp/lane   && ok "clean: the committed lane branch survives"   || bad "clean: lane branch deleted despite unmerged commits"
+
 # --- codex self-commit via scoped git grants (ADR-034) ---------------------------
 # The grants must be the four scoped dirs and NEVER the whole git dir - the
 # whole-dir grant (config/hooksPath, refs/heads/main, other lanes' metadata) is

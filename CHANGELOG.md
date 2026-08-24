@@ -23,6 +23,17 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- **`ff-clean` destroyed committed lanes whenever the manifest base was a
+  SHA** - which is what ff-spawn records. Base validation only accepted
+  branch names, silently fell back to the literal string `HEAD` (a
+  self-compare inside each lane worktree: zero commits, always), and the
+  keep-committed-lanes protection was inert for every real run while
+  removal-side tests stayed green. Found live when a 2-commit codex lane was
+  destroyed during the ADR-034 lifecycle test. Three layers fixed: the base
+  read strips the Windows jq CRLF, validation accepts any commit-ish and
+  falls back to the main repo's HEAD *sha*, and a failed commit-count now
+  KEEPS the lane instead of defaulting to zero. Regression fixture is the
+  destroying run itself.
 - Codex lanes now self-commit like every other model - through four SCOPED
   sandbox grants (lane worktree metadata, object store, own ref dir, own
   reflog dir), not the whole-git-dir carve-out that a pre-ADR-006 commit

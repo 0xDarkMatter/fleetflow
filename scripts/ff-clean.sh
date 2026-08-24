@@ -88,7 +88,7 @@ MANIFEST="$RUNDIR/manifest.json"
 [ -d "$RUNDIR" ] || { err "no such run: $RUNDIR"; exit 2; }
 
 CACHE_ROOT="${FLEETFLOW_CACHE_ROOT:-$HOME/.fleet-worker/cache}"
-BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null)"; [ -n "$BASE" ] || BASE="main"
+BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"; [ -n "$BASE" ] || BASE="main"
 
 # enumerate lane ids: manifest packets (authoritative) + any wt-* dirs left on
 # disk (e.g. manifest pruned but lanes remain) + journal started ids (fallback).
@@ -230,14 +230,26 @@ if [ "$NLANES" = "0" ]; then
   exit 0
 fi
 
-# base ref must exist for rev-list counting; fall back to HEAD once for the run
-git -C "$REPO" show-ref --verify --quiet "refs/heads/$BASE" || BASE="HEAD"
+# BASE may be a branch name OR a sha (ff-spawn records the sha). Validate as a
+# commit-ish; an unresolvable base falls back to the MAIN repo's HEAD resolved
+# to a SHA - never the bare string "HEAD", which rev-list would resolve inside
+# each LANE worktree as a self-compare (HEAD..HEAD = 0), reclassifying every
+# committed lane as zero-commit and destroying its work. That exact failure
+# destroyed a 2-commit lane on 2026-08-25: the old check only accepted branch
+# names (refs/heads/<sha> never exists), and the keep-side protection was
+# inert for every real run while removal-side tests stayed green.
+git -C "$REPO" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null 2>&1   || BASE="$(git -C "$REPO" rev-parse HEAD)"
 
 while read -r id; do
   [ -n "$id" ] || continue
   wt="$RUNDIR/wt-$id"
   if [ -d "$wt" ]; then
-    commits="$(git -C "$wt" rev-list --count "$BASE..HEAD" 2>/dev/null || echo 0)"
+    if ! commits="$(git -C "$wt" rev-list --count "$BASE..HEAD" 2>/dev/null)"; then
+      # Counting failed - we cannot PROVE the lane is safe to reclaim, so keep
+      # it. "removed" on error is how committed work dies silently.
+      emit "$id" kept "commit count failed (base $BASE) - kept for safety"
+      continue
+    fi
     dirt="$(git -C "$wt" status --porcelain 2>/dev/null)"
     if [ "${commits:-0}" -eq 0 ] && [ -z "$dirt" ]; then
       remove_lane "$id" 0
