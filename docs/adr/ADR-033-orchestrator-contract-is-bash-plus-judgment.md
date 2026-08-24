@@ -80,12 +80,15 @@ the claim real and states its bounds.
   sandbox denies the cygwin shared-memory section), so every `ff-*` script is
   unreachable from a sandboxed Windows codex. The orchestrator posture there
   is full access or nothing.
-- Verification status, 2026-08-24: **opencode 1.18 drove `ff plan draft →
-  lint` end-to-end on Windows, unmodified** — commands executed in order,
-  lint's exit code and armed/disarmed checks reported accurately, no files
-  touched beyond what the scripts wrote. The seat is proven harness-portable
-  for the planning gate. Still open: a permissive-posture codex run (needs an
+- Verification status, 2026-08-24: **two non-Claude harnesses drove `ff plan
+  draft → lint` end-to-end on Windows, unmodified** — opencode 1.18 and pi
+  0.83 (gpt-5.4-mini via openai-codex). Both executed the commands in order
+  and reported lint's exit code, armed-check count, and packet paths
+  accurately; both claims were replayed against the filesystem rather than
+  taken on trust. The seat is proven harness-portable for the planning gate,
+  and pi's success is the stronger signal: it is the minimalist harness with
+  no sandbox of its own, which is precisely the shape the orchestrator seat
+  wants. Still open: a permissive-posture codex run (needs an
   operator-launched session — an auto-mode Claude session correctly may not
-  spawn a bypass-sandbox child), a WSL-bash-under-codex-sandbox probe
-  (attempted; blocked by an unrelated DNS failure to the codex backend), and
+  spawn a bypass-sandbox child), the WSL-bash-under-codex-sandbox probe, and
   a full spawn-to-clean run from any non-Claude seat.

@@ -15,7 +15,8 @@ shipped, the ADRs own WHY.
   (ADR-033).
 - ADR-033: the orchestrator contract is bash plus judgment - any harness may
   hold the seat; host conveniences are optional surfaces. Verified with
-  opencode driving `ff plan draft → lint` end-to-end on Windows, unmodified.
+  opencode 1.18 and pi 0.83 each driving `ff plan draft → lint` end-to-end on
+  Windows, unmodified (claims replayed against the filesystem).
   Includes the measured Windows constraint: sandboxed codex cannot host Git
   Bash, so the codex orchestrator posture there is full access, opposite to
   ADR-007's lane pin.

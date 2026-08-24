@@ -71,8 +71,8 @@ the stack at `X:\00_Orchestration\compose-portless` - yours will differ.
 The orchestrator contract is bash plus judgment, not Claude Code
 ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
 Any agent that can execute the `ff-*` scripts and judge their output may hold
-the seat - opencode (verified: drove `draft → lint` end-to-end, unmodified),
-Codex, Pi, or a human at a terminal. Off-host rules:
+the seat - opencode and pi both verified driving `draft → lint` end-to-end
+unmodified, plus Codex or a human at a terminal. Off-host rules:
 
 - **Read this file as a document.** There is no skill loader elsewhere;
   AGENTS.md already directs every agent here first.
