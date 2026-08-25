@@ -23,6 +23,18 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- Codex re-test round 5, all three findings closed: the launcher parity check
+  is a machine-readable handshake (`fleet-worker --capabilities` must exit 0
+  and declare the exact `claude-bin-override` token; the round-4 textual grep
+  was spoofable by a comment) with ONE implementation in `_env.sh` shared by
+  doctor and spawn, probed with auth env stripped so a pre-handshake launcher
+  stops at its key guard instead of exec'ing claude; a requested codex seat
+  whose windows-sandbox tripwire cannot be verified fails closed at 7 instead
+  of advisory-and-0; and model dependency refusals moved to a preflight
+  BEFORE worktree/journal mutation, so a refused lane leaves no `started`
+  record (it used to read `running` until abandonment) - the in-branch guards
+  remain as backstops that now journal a terminal rc-5 result via
+  `refuse_lane`.
 - Codex re-test round 4, all three findings closed plus the grammar
   hardening: `codex-auth` captures once and requires exit 0 plus an anchored
   `^Logged in` (the old case-insensitive substring matched codex's real

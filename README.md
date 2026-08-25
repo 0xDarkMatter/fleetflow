@@ -52,7 +52,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 517 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 521 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -308,7 +308,7 @@ fleetflow eats its own cooking. This repo carries
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 517-assertion test gate: a malformed decision
+`adr-lint` runs inside the 521-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -359,7 +359,7 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 🗺️ **Docs restructure**: ARCHITECTURE + SECURITY into `docs/`, five diagrams
   embedded in ARCHITECTURE.md including the new run-state stores map;
   machine-conditional AGENTS.md landmines now state their preconditions.
-- ✅ Suite grown to 517 hermetic assertions.
+- ✅ Suite grown to 521 hermetic assertions.
 
 ### v0.2.0 · 2026-08-20
 
@@ -457,7 +457,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-517 assertions over the scripts, monitor, dashboard wiring, and import/resume
+521 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

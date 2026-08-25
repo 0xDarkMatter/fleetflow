@@ -62,3 +62,18 @@ unset _ffpy
 export FF_PYTHON
 ff_python() { [ -n "$FF_PYTHON" ] || return 127; "$FF_PYTHON" "$@"; }
 ff_have_python() { [ -n "$FF_PYTHON" ]; }
+
+# Does this fleet-worker launcher declare the claude-bin-override capability?
+# ONE implementation consumed by ff-doctor (parity check) and ff-spawn (glm
+# preflight) so the two can never diverge. This is a machine-readable
+# handshake (`--capabilities`, exit 0, exact token line) - the previous
+# textual grep was spoofable by a comment containing the variable name
+# (codex review round 5). Auth env vars are STRIPPED for the probe so a
+# pre-handshake launcher deterministically stops at its own key-resolution
+# guard (exit 5) instead of ever exec'ing claude with an unknown flag.
+ff_fw_has_claude_bin_override() {
+  _ffcap="$(env -u ANTHROPIC_AUTH_TOKEN -u ZHIPU_API_KEY -u GLM_API_KEY \
+                -u FLEET_WORKER_KEYRING_SERVICE -u FLEET_WORKER_KEYRING_KEY \
+            timeout 15 bash "$1" --capabilities 2>/dev/null)" || return 1
+  printf '%s\n' "$_ffcap" | tr -d '\r' | grep -qx "claude-bin-override"
+}

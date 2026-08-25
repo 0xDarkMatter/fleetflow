@@ -2560,9 +2560,10 @@ check "doctor --orchestrator: declared seat missing binary OFFLINE -> 7" 7   env
 # glm requested + live, launcher present but NO sibling fleet-doctor: the probe
 # cannot run, so blessing the fleet (advisory + 0) was a false green.
 FWDIR="$TMP/fake-fw"; mkdir -p "$FWDIR"
-# stub carries the FLEET_WORKER_CLAUDE_BIN marker: these tests set a non-default
-# FLEETFLOW_CLAUDE_BIN, and the round-4 parity gate fails a launcher without it
-printf '#!/usr/bin/env bash\n: "${FLEET_WORKER_CLAUDE_BIN:-claude}"\necho stub\n' > "$FWDIR/fleet-worker"
+# stub speaks the --capabilities handshake: these tests set a non-default
+# FLEETFLOW_CLAUDE_BIN, and the parity gate (round 4, hardened to a handshake
+# in round 5) fails a launcher that does not declare claude-bin-override
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = "--capabilities" ]; then printf "claude-bin-override\\n"; exit 0; fi\necho stub\n' > "$FWDIR/fleet-worker"
 check "doctor --live --for glm: launcher without fleet-doctor -> 7" 7   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
 printf '#!/usr/bin/env bash\nprintf "live-ping\\tok\\n"\n' > "$FWDIR/fleet-doctor.sh"
 check "doctor --live --for glm: sibling fleet-doctor present -> 0" 0   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
@@ -2590,7 +2591,9 @@ check "doctor --live --for glm: child ok row + child rc 7 -> 7" 7   env FLEETFLO
 # stale launcher (no FLEET_WORKER_CLAUDE_BIN) + a claude override in play:
 # requested glm fails structural; unrequested stays advisory; default claude skips
 STALEFW="$TMP/stale-fw"; mkdir -p "$STALEFW"
-printf '#!/usr/bin/env bash\necho stale\n' > "$STALEFW/fleet-worker"
+# deliberately carries the variable name in a COMMENT: round 4's textual grep
+# was spoofable by exactly this; the round-5 handshake must not be fooled
+printf '#!/usr/bin/env bash\n# FLEET_WORKER_CLAUDE_BIN mentioned but never consumed\necho stale\n' > "$STALEFW/fleet-worker"
 check "doctor --for glm: stale launcher + claude override -> 10" 10   env FLEETFLOW_FLEET_WORKER="$STALEFW/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for glm
 check "doctor --for glm: updated launcher + claude override -> 0" 0   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for glm
 SP="$(env FLEETFLOW_FLEET_WORKER="$STALEFW/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for codex 2>/dev/null)"; SPRC=$?
@@ -2599,6 +2602,28 @@ check "spawn: glm stale launcher + claude override -> 5" 5   env FLEETFLOW_CLAUD
 check "doctor --for: trailing comma -> 2" 2 bash "$DOCTOR" --offline --for codex,
 check "doctor --for: leading comma -> 2" 2 bash "$DOCTOR" --offline --for ,codex
 check "doctor --for: doubled comma -> 2" 2 bash "$DOCTOR" --offline --for codex,,grok
+# codex re-test round 5 (2026-08-26): handshake not text, fail-closed sandbox
+# tripwire, refusals before lane state. The STALEFW stub above now carries the
+# variable name in a comment, so the "stale launcher -> 10" check doubles as
+# the spoof-defeat assertion. Preflight refusal must leave NO started record:
+JR4="$ADR6/.fleetflow/r4par/journal.jsonl"
+if [ ! -f "$JR4" ] || ! grep -q '"type":"started"' "$JR4"; then
+  ok "spawn: preflight refusal leaves no started record (lane never reads running)"
+else
+  bad "spawn: refused glm lane journalled started - reads running forever"
+fi
+# the backstop for launch-time-only refusals journals a terminal result
+grep -q '{type:"result",key:\$k,id:\$id,model:\$b,rc:5,artifact:null}' "$S/ff-spawn.sh"   && ok "spawn: refuse_lane journals a terminal rc-5 result (no running-forever lanes)"   || bad "spawn: refuse_lane no longer journals a terminal result"
+RLC="$(grep -c 'refuse_lane "' "$S/ff-spawn.sh")"
+[ "$RLC" -ge 8 ]   && ok "spawn: in-branch dependency guards route through refuse_lane ($RLC sites)"   || bad "spawn: only $RLC refuse_lane sites - a bare post-started exit 5 is back"
+# requested codex: an UNVERIFIABLE sandbox tripwire fails closed (Windows-only
+# probe; the block is skipped elsewhere, so guard the assertion the same way)
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    printf '#!/usr/bin/env bash\nif [ "${1:-}" = "login" ]; then echo "Logged in using ChatGPT"; exit 0; fi\nif [ "${1:-}" = "--version" ]; then echo "codex-stub 0.0"; exit 0; fi\necho "some unrelated config error" >&2; exit 3\n' > "$CXDIR/codex"
+    check "doctor --live --for codex: unverifiable winsandbox tripwire -> 7" 7       env PATH="$CXDIR:$PATH" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_CLAUDE_BIN="$STUBCL"       bash "$DOCTOR" --live --for codex --orchestrator human
+    ;;
+esac
 
 # --- ff-collect end-of-run summary ----------------------------------------------
 SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"

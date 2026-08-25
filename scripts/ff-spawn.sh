@@ -358,6 +358,42 @@ if [ "$FORCE" = 0 ] && [ -f "$JOURNAL" ]; then
   fi
 fi
 
+# --- model preflight (refuse BEFORE any lane state exists) --------------------
+# Dependency refusals used to live inside the launch branches, AFTER the
+# worktree was created and `started` was journalled - so a stale/missing
+# launcher exited 5 and left the lane reading `running` until abandonment
+# demoted it (codex review round 5). Every synchronous "cannot launch" check
+# that needs no launch-time context runs here, before journal/worktree
+# mutation. The in-branch guards remain as backstops and journal a terminal
+# result via refuse_lane. Dry-run skips: it launches nothing, and the suite's
+# dry-run fixtures must stay hermetic.
+if [ "$DRYRUN" != 1 ]; then
+  case "$MODEL" in
+    glm)
+      _PFW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
+      [ -f "$_PFW" ] || { err "fleet-worker launcher not found ($_PFW)"; exit 5; }
+      if [ "${FLEETFLOW_CLAUDE_BIN:-claude}" != "claude" ] && ! ff_fw_has_claude_bin_override "$_PFW"; then
+        err "fleet-worker at $_PFW lacks the claude-bin-override capability - the claude override would be silently ignored; re-run install"; exit 5
+      fi
+      ;;
+    codex) command -v codex >/dev/null || { err "codex CLI not found"; exit 5; } ;;
+    grok)
+      _PGK="${FLEETFLOW_GROK_BIN:-grok}"
+      command -v "$_PGK" >/dev/null || { err "grok CLI not found ($_PGK)"; exit 5; } ;;
+    pi)
+      _PPI="${FLEETFLOW_PI_BIN:-pi}"
+      command -v "$_PPI" >/dev/null || [ -f "$_PPI" ] || { err "pi CLI not found ($_PPI - set FLEETFLOW_PI_BIN)"; exit 5; } ;;
+    sonnet|haiku|opus|fable)
+      _PCB="${FLEETFLOW_CLAUDE_BIN:-claude}"
+      command -v "$_PCB" >/dev/null || { err "claude CLI not found ($_PCB)"; exit 5; }
+      if [ "$ACP" = 1 ]; then
+        command -v raven >/dev/null || { err "raven CLI not found (--acp needs raven-bus)"; exit 5; }
+        command -v node  >/dev/null || { err "node not found (claude-code-acp runs on node)"; exit 5; }
+      fi
+      ;;
+  esac
+fi
+
 # --- worktree lane ------------------------------------------------------------
 WORKDIR="$REPO"
 if [ "$WORKTREE" = 1 ]; then
@@ -484,6 +520,18 @@ archive_transcript() {
   fi
 }
 
+# In-branch dependency guards fire AFTER `started` is journalled, so a bare
+# exit would leave the lane reading `running` forever. Journal a terminal
+# result (rc 5, the missing-launcher code) so ff-status reads failed instead
+# (codex review round 5). The preflight above catches these before any state
+# exists; this is the backstop for launch-time-only conditions.
+refuse_lane() { # MSG
+  err "$1"
+  jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$MODEL" \
+    '{type:"result",key:$k,id:$id,model:$b,rc:5,artifact:null}' >> "$JOURNAL" 2>/dev/null || true
+  exit 5
+}
+
 if [ "$DRYRUN" = 1 ]; then
   # the stub must match the model's real envelope so collect can gate it:
   # grok emits {text,stopReason,...} (no is_error); every other model here
@@ -496,13 +544,14 @@ else
   case "$MODEL" in
     glm)
       FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
-      [ -f "$FW" ] || { err "fleet-worker launcher not found ($FW)"; exit 5; }
-      # Refuse a stale launcher when an override is in play: one predating
-      # FLEET_WORKER_CLAUDE_BIN ignores the forwarded var and execs literal
-      # `claude`, so the binary the doctor validated is not the one that runs
-      # (codex review round 4). Default-`claude` setups have no divergence.
-      if [ "${FLEETFLOW_CLAUDE_BIN:-claude}" != "claude" ] && ! grep -q "FLEET_WORKER_CLAUDE_BIN" "$FW" 2>/dev/null; then
-        err "fleet-worker at $FW predates FLEET_WORKER_CLAUDE_BIN - the claude override would be silently ignored; re-run install"; exit 5
+      [ -f "$FW" ] || refuse_lane "fleet-worker launcher not found ($FW)"
+      # Refuse a stale launcher when an override is in play: one without the
+      # claude-bin-override capability ignores the forwarded var and execs
+      # literal `claude`, so the binary the doctor validated is not the one
+      # that runs (codex review rounds 4-5). Handshake, not grep - the check
+      # lives in _env.sh, shared with ff-doctor's parity row.
+      if [ "${FLEETFLOW_CLAUDE_BIN:-claude}" != "claude" ] && ! ff_fw_has_claude_bin_override "$FW"; then
+        refuse_lane "fleet-worker at $FW lacks the claude-bin-override capability - the claude override would be silently ignored; re-run install"
       fi
       # env(1) carries the assignments: a ${VAR:+NAME=val} expansion is NOT an
       # assignment prefix (bash parses prefixes before expansion), so without
@@ -520,7 +569,7 @@ else
       ) > "$ART" 2> "$ERRF" || RC=$?
       ;;
     codex)
-      command -v codex >/dev/null || { err "codex CLI not found"; exit 5; }
+      command -v codex >/dev/null || refuse_lane "codex CLI not found"
       ART="$RUNDIR/$ID.last.txt"
       # Scoped git carve-out (ADR-034, supersedes ADR-006's no-commit contract):
       # a worktree's git metadata lives in the MAIN repo's .git, outside the
@@ -562,7 +611,7 @@ else
       # NOT a claude -p wrapper). Auth is the GROK_DEPLOYMENT_KEY env var, read
       # from the inherited environment - never written to disk or args.
       GROK="${FLEETFLOW_GROK_BIN:-grok}"
-      command -v "$GROK" >/dev/null || { err "grok CLI not found ($GROK)"; exit 5; }
+      command -v "$GROK" >/dev/null || refuse_lane "grok CLI not found ($GROK)"
       # --always-approve = codex --full-auto analog: autonomous tool use, headless.
       # --json-schema takes the schema STRING (not a path) and implies json output,
       # surfacing an already-parsed .structuredOutput field (see ff-collect).
@@ -587,7 +636,7 @@ else
       # -f fallback: bash executes a .cmd shim fine, but its `command -v`/-x
       # tests reject one (no exec bit on NTFS), so a path-shaped FLEETFLOW_PI_BIN
       # is checked for existence instead.
-      command -v "$PI" >/dev/null || [ -f "$PI" ] || { err "pi CLI not found ($PI - set FLEETFLOW_PI_BIN)"; exit 5; }
+      command -v "$PI" >/dev/null || [ -f "$PI" ] || refuse_lane "pi CLI not found ($PI - set FLEETFLOW_PI_BIN)"
       # fleetflow effort -> pi --thinking (pi also has off/minimal below, xhigh above)
       PI_THINK=""
       case "$EFFORT" in low|medium|high) PI_THINK="$EFFORT" ;; max) PI_THINK="xhigh" ;; esac
@@ -644,8 +693,8 @@ else
       # for the result journal record below.
       CLAUDE_MODEL="$MODEL"; [ "$MODEL" = "fable" ] && CLAUDE_MODEL="claude-fable-5"
       if [ "$ACP" = 1 ]; then
-        command -v raven >/dev/null || { err "raven CLI not found (--acp needs raven-bus)"; exit 5; }
-        command -v node  >/dev/null || { err "node not found (claude-code-acp runs on node)"; exit 5; }
+        command -v raven >/dev/null || refuse_lane "raven CLI not found (--acp needs raven-bus)"
+        command -v node  >/dev/null || refuse_lane "node not found (claude-code-acp runs on node)"
         # node + dist/index.js, never the npm bin shim: the harness spawns
         # argv directly (no shell), and Windows' claude-code-acp.cmd shim is
         # not exec-able that way (WinError 2 - found by the P4b smoke).
@@ -653,7 +702,7 @@ else
         if [ -z "$ACP_AGENT_JS" ]; then
           ACP_AGENT_JS="$(npm root -g 2>/dev/null | tr -d '\r')/@zed-industries/claude-code-acp/dist/index.js"
         fi
-        [ -f "$ACP_AGENT_JS" ] || { err "claude-code-acp not found ($ACP_AGENT_JS) - npm i -g @zed-industries/claude-code-acp@0.16.2 or set FLEETFLOW_ACP_AGENT_JS"; exit 5; }
+        [ -f "$ACP_AGENT_JS" ] || refuse_lane "claude-code-acp not found ($ACP_AGENT_JS) - npm i -g @zed-industries/claude-code-acp@0.16.2 or set FLEETFLOW_ACP_AGENT_JS"
         # env -u CLAUDECODE/-u CLAUDE_CODE_ENTRYPOINT: the Claude Agent SDK
         # refuses to nest inside a Claude Code session; a fleet spawned FROM
         # one inherits those vars and every ACP lane dies at session/new.
@@ -701,7 +750,7 @@ else
         # Same override the doctor validates (FLEETFLOW_CLAUDE_BIN) - a doctor
         # blessing one binary while spawn executes another is a false green.
         CLAUDEBIN="${FLEETFLOW_CLAUDE_BIN:-claude}"
-        command -v "$CLAUDEBIN" >/dev/null || { err "claude CLI not found ($CLAUDEBIN)"; exit 5; }
+        command -v "$CLAUDEBIN" >/dev/null || refuse_lane "claude CLI not found ($CLAUDEBIN)"
         ( cd "$WORKDIR" && \
           UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
           "$CLAUDEBIN" -p --model "$CLAUDE_MODEL" --output-format json --max-turns "$MAX_TURNS" \

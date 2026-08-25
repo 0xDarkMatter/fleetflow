@@ -208,15 +208,18 @@ req_bin "fleet-worker" "$_fwok" "$FW" "not installed - --model glm exits 5; moun
 # Parity contract check: the launcher must CONSUME the override ff-spawn
 # forwards. An installed fleet-worker predating FLEET_WORKER_CLAUDE_BIN
 # silently ignores it and execs literal `claude` - the doctor validated one
-# binary while the lane ran another (codex review round 4). Only enforced when
-# an override is actually in play; a default-`claude` setup has no divergence.
+# binary while the lane ran another (codex review round 4). Verified by the
+# `--capabilities` handshake, not text: a grep for the variable name was
+# spoofable by a comment (round 5). The probe lives in _env.sh, shared with
+# ff-spawn's glm preflight. Only enforced when an override is actually in
+# play; a default-`claude` setup has no divergence.
 if [ "$_fwok" = 1 ] && [ "$CLAUDEBIN" != "claude" ]; then
-  if grep -q "FLEET_WORKER_CLAUDE_BIN" "$FW" 2>/dev/null; then
-    say "fleet-worker-parity" ok "launcher consumes FLEET_WORKER_CLAUDE_BIN"
+  if ff_fw_has_claude_bin_override "$FW"; then
+    say "fleet-worker-parity" ok "launcher declares claude-bin-override (--capabilities)"
   elif [ "$_fww" = 1 ]; then
-    say "fleet-worker-parity" fail "launcher at $FW predates FLEET_WORKER_CLAUDE_BIN - the validated claude override would be ignored; re-run install"; FAIL=1
+    say "fleet-worker-parity" fail "launcher at $FW lacks the claude-bin-override capability - the validated claude override would be ignored; re-run install"; FAIL=1
   else
-    say "fleet-worker-parity" advisory "launcher at $FW predates FLEET_WORKER_CLAUDE_BIN - claude override ignored for glm lanes"
+    say "fleet-worker-parity" advisory "launcher at $FW lacks the claude-bin-override capability - claude override ignored for glm lanes"
   fi
 fi
 
@@ -386,7 +389,15 @@ case "$(uname -s 2>/dev/null)" in
       elif [ "$WSB_RC" != 0 ] && printf '%s' "$WSB_ERR" | grep -q 'windows\.sandbox'; then
         say "codex-winsandbox" ok "key recognised - elevation guard live"
       elif [ "$WSB_RC" != 0 ]; then
-        say "codex-winsandbox" advisory "probe failed for another reason: $(printf '%s' "$WSB_ERR" | head -1)"
+        # "Unable to verify" must not read as verified for a REQUESTED codex
+        # seat: the tripwire guards a headless UAC hang, and an unrelated
+        # probe failure means the guard's liveness is unknown (codex review
+        # round 5). Probe-everything mode keeps the advisory demeanour.
+        if wants codex || [ "$ORCH_EXPLICIT" = "codex" ]; then
+          say "codex-winsandbox" unreachable "cannot verify elevation guard - probe failed: $(printf '%s' "$WSB_ERR" | head -1 | tr -d '\r')"; UNREACH=1
+        else
+          say "codex-winsandbox" advisory "probe failed for another reason: $(printf '%s' "$WSB_ERR" | head -1)"
+        fi
       else
         say "codex-winsandbox" fail "codex accepts an invalid windows.sandbox - ff-spawn's elevation guard is INERT (key renamed/removed?)"
         FAIL=1
