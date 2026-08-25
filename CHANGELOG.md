@@ -23,6 +23,17 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- Codex re-test round 4, all three findings closed plus the grammar
+  hardening: `codex-auth` captures once and requires exit 0 plus an anchored
+  `^Logged in` (the old case-insensitive substring matched codex's real
+  NEGATIVE, "Not logged in", and blessed a logged-out codex); the glm child
+  doctor's exit code is no longer masked by the grep pipeline (an ok row
+  followed by a nonzero exit read healthy); a launcher predating
+  `FLEET_WORKER_CLAUDE_BIN` is refused whenever a claude override is in play -
+  structurally by the doctor (`fleet-worker-parity`: fail when glm is
+  requested, advisory otherwise) and at launch by ff-spawn (exit 5) - and the
+  stale installed copy this found was synced from upstream; `--for` now also
+  rejects leading, trailing, and doubled commas.
 - Codex re-test round 3, all five findings closed (three were live
   false-green paths, each reproduced before fixing): `--for` now enforces one
   comma-only grammar for validation AND selection (whitespace-separated lists

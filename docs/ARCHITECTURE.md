@@ -92,7 +92,7 @@ the pipeline terminates at land.
 
 ## Invariant map — what the test gate pins
 
-`tests/run.sh` (507 hermetic assertions; exports its own `FLEETFLOW_HOME`)
+`tests/run.sh` (517 hermetic assertions; exports its own `FLEETFLOW_HOME`)
 mechanically enforces the invariants prose alone would lose: dashboard
 zero-external-references, run-card byte parity, STATE_RANK consistency across
 its five copies, pricing/HARNESS register entries, legacy `brain`→`model`

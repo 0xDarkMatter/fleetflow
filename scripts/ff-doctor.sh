@@ -70,6 +70,13 @@ while [ $# -gt 0 ]; do
       case "$FOR_MODELS" in
         *[[:space:]]*) echo "ff-doctor: --for is comma-separated, no whitespace: '$FOR_MODELS'" >&2; exit 2 ;;
       esac
+      # Strict grammar: no leading, trailing, or doubled commas either. These
+      # DID select the intended models (unlike whitespace), but a grammar that
+      # silently tolerates malformed input invites the next parser divergence
+      # (codex review round 4, hardening).
+      case ",$FOR_MODELS," in
+        *,,*) echo "ff-doctor: --for has an empty element (leading/trailing/doubled comma): '$FOR_MODELS'" >&2; exit 2 ;;
+      esac
       _fmn=0
       for _fm in $(printf '%s' "$FOR_MODELS" | tr ',' ' '); do
         _fmn=$((_fmn+1))
@@ -198,6 +205,20 @@ FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-wo
 _fwok=0; [ -f "$FW" ] && _fwok=1
 _fww=0; [ -n "$FOR_MODELS" ] && wants glm && _fww=1
 req_bin "fleet-worker" "$_fwok" "$FW" "not installed - --model glm exits 5; mount claude-mods skills/fleet-worker or set FLEETFLOW_FLEET_WORKER" "$_fww"
+# Parity contract check: the launcher must CONSUME the override ff-spawn
+# forwards. An installed fleet-worker predating FLEET_WORKER_CLAUDE_BIN
+# silently ignores it and execs literal `claude` - the doctor validated one
+# binary while the lane ran another (codex review round 4). Only enforced when
+# an override is actually in play; a default-`claude` setup has no divergence.
+if [ "$_fwok" = 1 ] && [ "$CLAUDEBIN" != "claude" ]; then
+  if grep -q "FLEET_WORKER_CLAUDE_BIN" "$FW" 2>/dev/null; then
+    say "fleet-worker-parity" ok "launcher consumes FLEET_WORKER_CLAUDE_BIN"
+  elif [ "$_fww" = 1 ]; then
+    say "fleet-worker-parity" fail "launcher at $FW predates FLEET_WORKER_CLAUDE_BIN - the validated claude override would be ignored; re-run install"; FAIL=1
+  else
+    say "fleet-worker-parity" advisory "launcher at $FW predates FLEET_WORKER_CLAUDE_BIN - claude override ignored for glm lanes"
+  fi
+fi
 
 # --- which windows.sandbox mode will codex lanes actually get? -----------------
 # Config read only (no execution) - the behavioural tripwire is in --live below.
@@ -302,10 +323,15 @@ FD="$(dirname "$FW")/fleet-doctor.sh"
 if ! should_probe glm; then
   say "glm-endpoint" advisory "not requested (--for)"
 elif [ -f "$FD" ]; then
-  if bash "$FD" --live 2>/dev/null | grep -q "live-ping	ok"; then
+  # Capture output AND status separately: `bash | grep` reports grep's exit
+  # code, so a child doctor that printed the ok row and then exited nonzero
+  # (a drift or auth failure AFTER the endpoint row) read healthy (codex
+  # review round 4). Require child rc 0 plus the exact anchored success row.
+  _FDO="$(bash "$FD" --live 2>/dev/null)"; _FDRC=$?
+  if [ "$_FDRC" = 0 ] && printf '%s' "$_FDO" | grep -Eq "^live-ping	ok(	|$)"; then
     say "glm-endpoint" ok "model resolves"
   else
-    say "glm-endpoint" unreachable "fleet-doctor --live did not confirm (key/endpoint)"; UNREACH=1
+    say "glm-endpoint" unreachable "fleet-doctor --live did not confirm (rc=$_FDRC; key/endpoint)"; UNREACH=1
   fi
 elif wants glm || [ "$ORCH_EXPLICIT" = "glm" ]; then
   # Fail closed for a REQUESTED glm seat: the launcher path is configurable
@@ -320,8 +346,13 @@ fi
 if ! should_probe codex; then
   say "codex-auth" advisory "not requested (--for)"
 elif command -v codex >/dev/null; then
-  if timeout 30 codex login status 2>&1 | grep -qi "logged in"; then
-    say "codex-auth" ok "$(timeout 30 codex login status 2>&1 | head -1)"
+  # Capture ONCE; require rc 0 AND an anchored positive. `grep -qi "logged in"`
+  # matched codex's real NEGATIVE ("Not logged in", exit 1), so a logged-out
+  # codex read ok (codex review round 4). The positive form is
+  # "Logged in using ..." (verified against codex-cli 0.144.1).
+  _CXA="$(timeout 30 codex login status 2>&1)"; _CXARC=$?
+  if [ "$_CXARC" = 0 ] && printf '%s' "$_CXA" | grep -q "^Logged in"; then
+    say "codex-auth" ok "$(printf '%s' "$_CXA" | head -1 | tr -d '\r')"
   else
     say "codex-auth" unreachable "not logged in (codex login)"; UNREACH=1
   fi

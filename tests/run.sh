@@ -2560,7 +2560,9 @@ check "doctor --orchestrator: declared seat missing binary OFFLINE -> 7" 7   env
 # glm requested + live, launcher present but NO sibling fleet-doctor: the probe
 # cannot run, so blessing the fleet (advisory + 0) was a false green.
 FWDIR="$TMP/fake-fw"; mkdir -p "$FWDIR"
-printf '#!/usr/bin/env bash\necho stub\n' > "$FWDIR/fleet-worker"
+# stub carries the FLEET_WORKER_CLAUDE_BIN marker: these tests set a non-default
+# FLEETFLOW_CLAUDE_BIN, and the round-4 parity gate fails a launcher without it
+printf '#!/usr/bin/env bash\n: "${FLEET_WORKER_CLAUDE_BIN:-claude}"\necho stub\n' > "$FWDIR/fleet-worker"
 check "doctor --live --for glm: launcher without fleet-doctor -> 7" 7   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
 printf '#!/usr/bin/env bash\nprintf "live-ping\\tok\\n"\n' > "$FWDIR/fleet-doctor.sh"
 check "doctor --live --for glm: sibling fleet-doctor present -> 0" 0   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
@@ -2572,6 +2574,31 @@ check "doctor --live --for pi: mapped provider with key -> 0" 0   env FLEETFLOW_
 # doctor/spawn parity reaches THROUGH fleet-worker: the glm lane forwards the
 # override so the binary the doctor validated is the binary the lane execs.
 grep -q 'FLEET_WORKER_CLAUDE_BIN="\${FLEETFLOW_CLAUDE_BIN:-claude}"' "$S/ff-spawn.sh"   && ok "spawn: glm lane forwards FLEETFLOW_CLAUDE_BIN to fleet-worker (parity)"   || bad "spawn: glm lane lets fleet-worker hardcode 'claude' - doctor/spawn divergence"
+# codex re-test round 4 (2026-08-25): probe truthfulness. codex-auth must match
+# an anchored POSITIVE (the old substring matched "Not logged in"); the glm
+# child doctor's exit code must not be masked by the grep pipeline; a stale
+# installed launcher that would ignore the claude override is refused; and the
+# --for grammar rejects empty elements.
+CXDIR="$TMP/stub-codex-dir"; mkdir -p "$CXDIR"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = "login" ]; then echo "Not logged in"; exit 1; fi\nif [ "${1:-}" = "--version" ]; then echo "codex-stub 0.0"; exit 0; fi\necho "error: invalid windows.sandbox value" >&2; exit 1\n' > "$CXDIR/codex"; chmod +x "$CXDIR/codex"
+check "doctor --live --for codex: 'Not logged in' text is NOT ok -> 7" 7   env PATH="$CXDIR:$PATH" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for codex --orchestrator human
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = "login" ]; then echo "Logged in using ChatGPT"; exit 0; fi\nif [ "${1:-}" = "--version" ]; then echo "codex-stub 0.0"; exit 0; fi\necho "error: invalid windows.sandbox value" >&2; exit 1\n' > "$CXDIR/codex"
+check "doctor --live --for codex: anchored 'Logged in' + rc 0 -> 0" 0   env PATH="$CXDIR:$PATH" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for codex --orchestrator human
+# child doctor prints the ok row, then exits 7: the row alone must not bless it
+printf '#!/usr/bin/env bash\nprintf "live-ping\\tok\\n"\nexit 7\n' > "$FWDIR/fleet-doctor.sh"
+check "doctor --live --for glm: child ok row + child rc 7 -> 7" 7   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
+# stale launcher (no FLEET_WORKER_CLAUDE_BIN) + a claude override in play:
+# requested glm fails structural; unrequested stays advisory; default claude skips
+STALEFW="$TMP/stale-fw"; mkdir -p "$STALEFW"
+printf '#!/usr/bin/env bash\necho stale\n' > "$STALEFW/fleet-worker"
+check "doctor --for glm: stale launcher + claude override -> 10" 10   env FLEETFLOW_FLEET_WORKER="$STALEFW/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for glm
+check "doctor --for glm: updated launcher + claude override -> 0" 0   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for glm
+SP="$(env FLEETFLOW_FLEET_WORKER="$STALEFW/fleet-worker" FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --offline --for codex 2>/dev/null)"; SPRC=$?
+{ [ "$SPRC" = 0 ] && printf '%s' "$SP" | grep -q "^fleet-worker-parity	advisory"; }   && ok "doctor: stale launcher with glm unrequested stays advisory"   || bad "doctor: unrequested stale-launcher handling wrong (rc=$SPRC)"
+check "spawn: glm stale launcher + claude override -> 5" 5   env FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_FLEET_WORKER="$STALEFW/fleet-worker" FLEETFLOW_CACHE_ROOT="$TMP/cache-r4"   bash "$S/ff-spawn.sh" --run r4par --id g --model glm --prompt-file "$ADR6/pkt.md" --repo "$ADR6"
+check "doctor --for: trailing comma -> 2" 2 bash "$DOCTOR" --offline --for codex,
+check "doctor --for: leading comma -> 2" 2 bash "$DOCTOR" --offline --for ,codex
+check "doctor --for: doubled comma -> 2" 2 bash "$DOCTOR" --offline --for codex,,grok
 
 # --- ff-collect end-of-run summary ----------------------------------------------
 SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"
