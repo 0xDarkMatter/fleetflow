@@ -26,7 +26,7 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_FLEET_WORKER` | `$HOME/.claude/skills/fleet-worker/scripts/fleet-worker` | glm launcher path (ff-spawn hard-requires it for --model glm) |
 | `FLEETFLOW_CODEX_MODEL` | `(harness default)` | codex -m override for codex lanes |
 | `FLEETFLOW_CODEX_WINDOWS_SANDBOX` | `unelevated` | Windows codex sandbox pin (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful) |
-| `FLEETFLOW_CLAUDE_BIN` | `claude` | claude binary ff-doctor uses for structural checks and model probes (stub it for hermetic tests) |
+| `FLEETFLOW_CLAUDE_BIN` | `claude` | claude binary used by ff-doctor (checks + model probes) AND ff-spawn claude-family launches - one override, no doctor/spawn divergence |
 | `FLEETFLOW_GROK_BIN` | `grok` | grok binary or launcher path |
 | `FLEETFLOW_GROK_MODEL` | `(harness default)` | grok -m override for grok lanes |
 | `FLEETFLOW_PI_BIN` | `pi` | pi binary or launcher path |

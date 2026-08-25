@@ -686,10 +686,13 @@ else
         ' > "$ART" 2>> "$ERRF"
         if [ "$(jq -r '.is_error' "$ART" 2>/dev/null)" = "false" ]; then RC=0; else RC=10; fi
       else
-        command -v claude >/dev/null || { err "claude CLI not found"; exit 5; }
+        # Same override the doctor validates (FLEETFLOW_CLAUDE_BIN) - a doctor
+        # blessing one binary while spawn executes another is a false green.
+        CLAUDEBIN="${FLEETFLOW_CLAUDE_BIN:-claude}"
+        command -v "$CLAUDEBIN" >/dev/null || { err "claude CLI not found ($CLAUDEBIN)"; exit 5; }
         ( cd "$WORKDIR" && \
           UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
-          claude -p --model "$CLAUDE_MODEL" --output-format json --max-turns "$MAX_TURNS" \
+          "$CLAUDEBIN" -p --model "$CLAUDE_MODEL" --output-format json --max-turns "$MAX_TURNS" \
             --permission-mode "${FLEETFLOW_PERMISSION_MODE:-bypassPermissions}" \
             ${EFFORT:+--settings "$EFF_JSON"} \
           < "$SENT" \

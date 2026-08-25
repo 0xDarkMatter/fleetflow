@@ -57,17 +57,20 @@ while [ $# -gt 0 ]; do
       # A typo here must FAIL LOUD: an unknown value used to mean "nothing is
       # wanted", every check advisory, exit 0 - a doctor blessing a fleet
       # because you misspelled it (codex review, 2026-08-25).
-      [ -n "${2:-}" ] || { echo "ff-doctor: --for requires a value" >&2; exit 2; }
+      case "${2:-}" in ""|-*) echo "ff-doctor: --for requires a value" >&2; exit 2 ;; esac
       FOR_MODELS="$2"
+      _fmn=0
       for _fm in $(printf '%s' "$FOR_MODELS" | tr ',' ' '); do
+        _fmn=$((_fmn+1))
         case " $KNOWN_MODELS " in
           *" $_fm "*) ;;
           *) echo "ff-doctor: unknown model in --for: '$_fm' (known: $KNOWN_MODELS)" >&2; exit 2 ;;
         esac
       done
+      [ "$_fmn" -gt 0 ] || { echo "ff-doctor: --for contains no models: '$FOR_MODELS'" >&2; exit 2; }
       shift 2 ;;
     --orchestrator)
-      [ -n "${2:-}" ] || { echo "ff-doctor: --orchestrator requires a value" >&2; exit 2; }
+      case "${2:-}" in ""|-*) echo "ff-doctor: --orchestrator requires a value" >&2; exit 2 ;; esac
       ORCH_ARG="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -117,7 +120,7 @@ FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permi
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
-FLEETFLOW_CLAUDE_BIN	claude	claude binary ff-doctor uses for structural checks and model probes (stub it for hermetic tests)
+FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn claude-family launches - one override, no doctor/spawn divergence
 FLEETFLOW_GROK_BIN	grok	grok binary or launcher path
 FLEETFLOW_GROK_MODEL	(harness default)	grok -m override for grok lanes
 FLEETFLOW_PI_BIN	pi	pi binary or launcher path
@@ -260,7 +263,7 @@ if [ -n "$ORCH_EXPLICIT" ]; then
       if command -v "$GROK" >/dev/null; then ORCH="grok"; say "orchestrator" ok "grok"
       else say "orchestrator" unreachable "grok binary missing for declared seat"; UNREACH=1; fi ;;
     fable|opus|glm|sonnet|haiku)
-      if command -v "$CLAUDEBIN" >/dev/null; then ORCH="$ORCH_EXPLICIT"; say "orchestrator" ok "$ORCH_EXPLICIT (claude harness present; declared, not probed)"
+      if command -v "$CLAUDEBIN" >/dev/null; then ORCH="$ORCH_EXPLICIT"; say "orchestrator" ok "$ORCH_EXPLICIT (harness present; --live probes the model below)"
       else say "orchestrator" unreachable "claude binary missing for declared seat $ORCH_EXPLICIT"; UNREACH=1; fi ;;
     *)
       ORCH="$ORCH_EXPLICIT"; say "orchestrator" advisory "declared seat '$ORCH_EXPLICIT' - unknown label, recorded unvalidated" ;;
@@ -388,9 +391,12 @@ fi
 # fable's health. One small call per REQUESTED model only; without --for this
 # block is silent and the orchestrator-tier chain below keeps its historic
 # behaviour. FLEETFLOW_CLAUDE_BIN makes it hermetically stubbable.
-if [ -n "$FOR_MODELS" ]; then
+# Probe set = requested claude WORKERS union an explicit claude-family SEAT
+# (deduped): a declared opus orchestrator with a dead claude binary must be
+# exit 7, not a false green (codex re-review, P1).
+if [ -n "$FOR_MODELS" ] || case "$ORCH_EXPLICIT" in sonnet|haiku|opus|fable) true;; *) false;; esac; then
   for _wm in sonnet haiku opus fable; do
-    wants "$_wm" || continue
+    { wants "$_wm" || [ "$ORCH_EXPLICIT" = "$_wm" ]; } || continue
     _mid="$_wm"; [ "$_wm" = "fable" ] && _mid="claude-fable-5"
     _R="$(timeout 120 "$CLAUDEBIN" -p "reply with exactly: ok" --model "$_mid" --max-turns 1 --output-format json 2>/dev/null)"
     if [ -n "$_R" ] && [ "$(printf '%s' "$_R" | jq -r 'if has("is_error") then (.is_error|tostring) else "true" end' 2>/dev/null)" = "false" ]; then

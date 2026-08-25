@@ -14,7 +14,7 @@ touches:
 
 Codex worktree lanes self-commit like every other model, enabled by exactly
 four sandbox write grants — the lane's own worktree metadata dir, the
-append-only object store, the lane branch's ref dir, and its reflog dir
+object store (append-only by convention; see Addendum 2026-08-25), the lane branch's ref dir, and its reflog dir
 (both per-run, pre-created at spawn) — while `.git/config`
 (`core.hooksPath` = code execution), `hooks/`, `refs/heads/main`,
 `packed-refs`, and other lanes' metadata stay outside the cage; the commit
@@ -60,8 +60,9 @@ include the dangerous surfaces. The binary choice was a false one.
   its failure warns rather than blocks; lanes rarely cross the loose-object
   threshold.
 - The object store is writable by lanes. Acceptable: objects are
-  content-addressed and immutable; unreachable ones are GC'd. No ref
-  outside `refs/heads/fleetflow/<run>/` can be moved by a lane.
+  content-addressed, and immutable by git convention rather than filesystem
+  enforcement (the Addendum makes the exposure explicit). No ref outside
+  `refs/heads/fleetflow/<run>/` can be moved by a lane.
 - Non-worktree codex lanes run in the primary checkout, where `.git` sits
   inside the workspace-write root — they could always commit; behaviour is
   now uniform rather than accidental.

@@ -2541,6 +2541,15 @@ echo grok-stub
 ' > "$STUBGK"; chmod +x "$STUBGK"
 check "doctor: orchestrator seat implies its auth probe (key missing -> 7)" 7   env FLEETFLOW_GROK_BIN="$STUBGK" GROK_DEPLOYMENT_KEY= FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator grok
 check "doctor: orchestrator seat auth satisfied -> 0" 0   env FLEETFLOW_GROK_BIN="$STUBGK" GROK_DEPLOYMENT_KEY=present FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator grok
+# codex re-test round 2 (2026-08-25): the remaining false-green paths
+check "doctor: claude-family SEAT with dead binary -> 7 (probe union)" 7   env FLEETFLOW_CLAUDE_BIN="$STUBBAD" GROK_DEPLOYMENT_KEY=present FLEETFLOW_GROK_BIN="$STUBGK" FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for grok --orchestrator opus
+SEATP="$(env FLEETFLOW_CLAUDE_BIN="$STUBCL" GROK_DEPLOYMENT_KEY=present FLEETFLOW_GROK_BIN="$STUBGK" FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for grok --orchestrator opus 2>/dev/null)"
+printf '%s' "$SEATP" | grep -q "^model-opus	ok"   && ok "doctor: claude-family seat is live-probed like a requested worker"   || bad "doctor: opus seat not probed"
+SEATD="$(env FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for opus --orchestrator opus 2>/dev/null | grep -c "^model-opus	")"
+[ "$SEATD" = 1 ]   && ok "doctor: seat-also-worker probes once (deduped)"   || bad "doctor: opus probed $SEATD times for seat+worker"
+check "doctor: --orchestrator swallowing the next flag -> 2" 2   bash "$DOCTOR" --orchestrator --live
+check "doctor: --for with only commas -> 2" 2 bash "$DOCTOR" --offline --for ,
+grep -q '"$CLAUDEBIN" -p --model "$CLAUDE_MODEL"' "$S/ff-spawn.sh"   && ok "spawn: claude launch consumes FLEETFLOW_CLAUDE_BIN (doctor/spawn parity)"   || bad "spawn: claude launch ignores the override the doctor validates"
 OZ="$(bash "$DOCTOR" --offline --orchestrator zeus 2>/dev/null)"
 printf '%s' "$OZ" | grep -q "^orchestrator	advisory	declared seat 'zeus'"   && ok "doctor --orchestrator: unknown label recorded unvalidated, offline too"   || bad "doctor --orchestrator: unknown label row missing offline"
 

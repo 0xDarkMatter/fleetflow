@@ -23,6 +23,14 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- Codex re-test round 2, all four findings closed: an explicit claude-family
+  orchestrator seat now joins the model probe union (a declared opus seat
+  with a dead claude binary is exit 7, not a false green; seat-also-worker
+  probes once), `FLEETFLOW_CLAUDE_BIN` is consumed by ff-spawn's claude
+  launches as well as the doctor (no doctor/spawn binary divergence),
+  `--orchestrator` refuses option-shaped values and `--for` refuses
+  comma-only lists, and ADR-034's body text now carries the by-convention
+  qualifier its addendum introduced.
 - Scoped-grant derivation asked git for the lane's metadata dir instead of
   reconstructing it from the basename: git deduplicates worktree names
   (`wt-build`, `wt-build1`), so a colliding lane id across runs was granted
