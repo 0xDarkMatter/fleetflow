@@ -70,3 +70,27 @@ include the dangerous surfaces. The binary choice was a false one.
 - The per-model prompt split (and its cache-key invalidation) reverts: one
   commit clause in the guard preamble for all models. Guard-enabled packet
   keys from the split's brief life invalidate once more.
+
+## Addendum — 2026-08-25 (codex re-review)
+
+A codex re-review recommended reverting to ADR-006. The revert was declined —
+its safety argument reduces to `ff-collect --auto-commit` after PASS, which is
+the same trust decision executed by a different process (no human review in
+that loop either), while edits-only lanes hold their work as a dirty tree,
+the most destructible state fleetflow has. The review did land two things:
+
+1. **Known accepted exposure, now explicit:** the `objects/` grant is
+   append-only by git *convention*, not filesystem enforcement — a hostile
+   lane could corrupt or delete existing packs (repo-integrity damage,
+   recoverable from a remote). Accepted for this threat model: the operator
+   chooses the lane models, lanes are short-lived, and remotes back the
+   store. The zero-shared-grant endgame, if ever wanted, is a private
+   per-lane git database with collect importing the validated branch via
+   `git fetch <lane> <ref>` — a lane-shape rework across status/clean/logs,
+   recorded here as the ADR-035 candidate, not a same-day rewrite.
+2. **Grant-derivation bug, fixed:** the worktree metadata path was
+   reconstructed as `worktrees/$(basename $WORKDIR)`, but git deduplicates
+   metadata names (`wt-build`, `wt-build1`, …) — a colliding lane id across
+   runs was granted ANOTHER lane's metadata dir. The path is now asked of
+   git (`rev-parse --git-dir`), and a regression pins two same-id lanes
+   resolving to distinct dirs.

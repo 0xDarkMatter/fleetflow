@@ -2479,6 +2479,17 @@ CLOUT="$(bash "$S/ff-clean.sh" --run rp --repo "$CLR" --no-archive 2>&1)"
 printf '%s' "$CLOUT" | grep -q "lane	kept	1 commits"   && ok "clean: committed lane with a SHA base is KEPT (the 2026-08-25 destroyer)"   || bad "clean: sha-base lane not kept - committed work would be destroyed: $CLOUT"
 git -C "$CLR" show-ref --verify --quiet refs/heads/fleetflow/rp/lane   && ok "clean: the committed lane branch survives"   || bad "clean: lane branch deleted despite unmerged commits"
 
+# git deduplicates worktree metadata names; the grant must be ASKED of git,
+# never reconstructed from the lane basename (codex review 2026-08-25)
+WTC="$TMP/wtcollide"; mkdir -p "$WTC" && ( cd "$WTC" && git init -q -b main . && git config user.email t@t && git config user.name t && echo a > a && git add a && git commit -qm init )
+mkdir -p "$WTC/.fleetflow/r1" "$WTC/.fleetflow/r2"
+git -C "$WTC" worktree add -q -b fleetflow/r1/build "$WTC/.fleetflow/r1/wt-build" HEAD
+git -C "$WTC" worktree add -q -b fleetflow/r2/build "$WTC/.fleetflow/r2/wt-build" HEAD
+G1="$(git -C "$WTC/.fleetflow/r1/wt-build" rev-parse --git-dir)"
+G2="$(git -C "$WTC/.fleetflow/r2/wt-build" rev-parse --git-dir)"
+[ "$G1" != "$G2" ]   && ok "spawn grants: colliding lane basenames resolve to DISTINCT metadata dirs"   || bad "spawn grants: basename collision resolves to one dir - cross-lane grant"
+grep -q 'WTGIT="$(git -C "$WORKDIR" rev-parse --git-dir)"' "$S/ff-spawn.sh"   && ok "spawn grants: metadata dir is asked of git, not reconstructed"   || bad "spawn grants: WTGIT reconstruction is back (basename collision hazard)"
+
 # --- codex self-commit via scoped git grants (ADR-034) ---------------------------
 # The grants must be the four scoped dirs and NEVER the whole git dir - the
 # whole-dir grant (config/hooksPath, refs/heads/main, other lanes' metadata) is
@@ -2509,7 +2520,27 @@ printf '%s' "$LIVEOUT" | grep -q "model-claude"   && bad "doctor --orchestrator:
 # Request only claude-family (whose harness the suite already assumes) so the
 # structural gate stays green and the DECLARED-SEAT failure is what exits 7 -
 # requesting grok itself would trip bin-grok structurally (exit 10) first.
-check "doctor --orchestrator: declared seat with missing binary -> 7" 7   env FLEETFLOW_GROK_BIN=/nonexistent FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR=   bash "$DOCTOR" --live --for sonnet --orchestrator grok
+# stub claude: answers every probe with a clean envelope, zero tokens
+STUBCL="$TMP/stub-claude"; printf '#!/usr/bin/env bash
+echo %s
+' "'{\"is_error\":false,\"result\":\"ok\"}'" > "$STUBCL"; chmod +x "$STUBCL"
+STUBBAD="$TMP/stub-claude-down"; printf '#!/usr/bin/env bash
+exit 1
+' > "$STUBBAD"; chmod +x "$STUBBAD"
+check "doctor --orchestrator: declared seat with missing binary -> 7" 7   env FLEETFLOW_GROK_BIN=/nonexistent FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator grok
+check "doctor --for: unknown model is a loud usage error -> 2" 2   bash "$DOCTOR" --offline --for codx
+check "doctor --for: missing value -> 2" 2 bash "$DOCTOR" --offline --for
+check "doctor --orchestrator: missing value -> 2" 2 bash "$DOCTOR" --live --orchestrator
+MP="$(env FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator human 2>/dev/null)"; MPRC=$?
+{ [ "$MPRC" = 0 ] && printf '%s' "$MP" | grep -q "^model-sonnet	ok"; }   && ok "doctor --live: requested claude model gets its own probe (stubbed)"   || bad "doctor --live: per-model probe missing or failed (rc=$MPRC)"
+printf '%s' "$MP" | grep -q "^model-haiku"   && bad "doctor --live: probed a claude model nobody requested"   || ok "doctor --live: unrequested claude models are never probed"
+check "doctor --live: requested claude model down -> 7" 7   env FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBBAD"   bash "$DOCTOR" --live --for sonnet --orchestrator human
+# workers UNION orchestrator: a grok SEAT pulls in grok-auth even with no grok lane
+STUBGK="$TMP/stub-grok"; printf '#!/usr/bin/env bash
+echo grok-stub
+' > "$STUBGK"; chmod +x "$STUBGK"
+check "doctor: orchestrator seat implies its auth probe (key missing -> 7)" 7   env FLEETFLOW_GROK_BIN="$STUBGK" GROK_DEPLOYMENT_KEY= FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator grok
+check "doctor: orchestrator seat auth satisfied -> 0" 0   env FLEETFLOW_GROK_BIN="$STUBGK" GROK_DEPLOYMENT_KEY=present FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for sonnet --orchestrator grok
 OZ="$(bash "$DOCTOR" --offline --orchestrator zeus 2>/dev/null)"
 printf '%s' "$OZ" | grep -q "^orchestrator	advisory	declared seat 'zeus'"   && ok "doctor --orchestrator: unknown label recorded unvalidated, offline too"   || bad "doctor --orchestrator: unknown label row missing offline"
 

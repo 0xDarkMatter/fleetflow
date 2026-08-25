@@ -523,7 +523,12 @@ else
       CODEX_GIT_GRANTS=()
       if [ "$WORKTREE" = 1 ]; then
         MAINGIT="$(git -C "$REPO" rev-parse --absolute-git-dir)"
-        WTGIT="$MAINGIT/worktrees/$(basename "$WORKDIR")"
+        # The metadata dir is ASKED OF GIT, never reconstructed from the lane's
+        # basename: git deduplicates worktree names (wt-build, wt-build1, ...),
+        # so basename() points a colliding lane at ANOTHER lane's metadata -
+        # a cross-lane grant, the exact class these scoped grants exist to
+        # prevent (found by codex review, 2026-08-25).
+        WTGIT="$(git -C "$WORKDIR" rev-parse --git-dir)"
         REFDIR="$MAINGIT/refs/heads/fleetflow/$RUN"
         LOGDIR="$MAINGIT/logs/refs/heads/fleetflow/$RUN"
         mkdir -p "$REFDIR" "$LOGDIR"
