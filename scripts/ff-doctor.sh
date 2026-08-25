@@ -47,13 +47,28 @@ EOF
 }
 
 MODE="offline"; FOR_MODELS=""; ORCH_ARG=""
+KNOWN_MODELS="glm codex grok pi sonnet haiku opus fable chip"
 while [ $# -gt 0 ]; do
   case "$1" in
     --offline) MODE="offline"; shift ;;
     --live) MODE="live"; shift ;;
     --env) MODE="env"; shift ;;
-    --for) FOR_MODELS="${2:-}"; shift 2 ;;
-    --orchestrator) ORCH_ARG="${2:-}"; shift 2 ;;
+    --for)
+      # A typo here must FAIL LOUD: an unknown value used to mean "nothing is
+      # wanted", every check advisory, exit 0 - a doctor blessing a fleet
+      # because you misspelled it (codex review, 2026-08-25).
+      [ -n "${2:-}" ] || { echo "ff-doctor: --for requires a value" >&2; exit 2; }
+      FOR_MODELS="$2"
+      for _fm in $(printf '%s' "$FOR_MODELS" | tr ',' ' '); do
+        case " $KNOWN_MODELS " in
+          *" $_fm "*) ;;
+          *) echo "ff-doctor: unknown model in --for: '$_fm' (known: $KNOWN_MODELS)" >&2; exit 2 ;;
+        esac
+      done
+      shift 2 ;;
+    --orchestrator)
+      [ -n "${2:-}" ] || { echo "ff-doctor: --orchestrator requires a value" >&2; exit 2; }
+      ORCH_ARG="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ff-doctor: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -64,10 +79,12 @@ done
 # --for set exists; each check site guards on that.
 wants() { case ",$FOR_MODELS," in *",$1,"*) return 0;; *) return 1;; esac; }
 # should_probe M -> run the live probe for model M? No --for preserves the
-# historic probe-everything behaviour; with --for, unrequested providers are
-# neither called (no network, no tokens) nor allowed to affect the exit status,
-# but still emit a "not requested" row so the dashboard keeps its full shape.
-should_probe() { [ -z "$FOR_MODELS" ] || wants "$1"; }
+# historic probe-everything behaviour; with --for, the probe set is the WORKER
+# models UNION the declared orchestrator seat (a codex seat needs codex auth
+# and the winsandbox tripwire even when no codex lane spawns). Unrequested
+# providers are neither called (no network, no tokens) nor allowed to affect
+# the exit status, but still emit a "not requested" row for dashboard shape.
+should_probe() { [ -z "$FOR_MODELS" ] || wants "$1" || [ "${ORCH_EXPLICIT:-}" = "$1" ]; }
 # req NAME OK DETAIL_OK MISSING_DETAIL WANTED -> fail when wanted, advisory when not
 req_bin() {
   _name="$1"; _ok="$2"; _okd="$3"; _missd="$4"; _wanted="$5"
@@ -78,6 +95,7 @@ req_bin() {
 }
 
 FAIL=0; UNREACH=0
+CLAUDEBIN="${FLEETFLOW_CLAUDE_BIN:-claude}"
 
 # --- --env: the FLEETFLOW_* tunables registry -----------------------------------
 # One row per variable: name<TAB>current<TAB>default<TAB>what it tunes.
@@ -99,6 +117,7 @@ FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permi
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
+FLEETFLOW_CLAUDE_BIN	claude	claude binary ff-doctor uses for structural checks and model probes (stub it for hermetic tests)
 FLEETFLOW_GROK_BIN	grok	grok binary or launcher path
 FLEETFLOW_GROK_MODEL	(harness default)	grok -m override for grok lanes
 FLEETFLOW_PI_BIN	pi	pi binary or launcher path
@@ -146,7 +165,7 @@ CLAUDE_WANTED=0
 if [ -z "$FOR_MODELS" ]; then CLAUDE_WANTED=1
 else for _m in sonnet haiku opus fable glm chip; do wants "$_m" && CLAUDE_WANTED=1; done
 fi
-_cok=0; command -v claude >/dev/null && _cok=1
+_cok=0; command -v "$CLAUDEBIN" >/dev/null && _cok=1
 req_bin "bin-claude" "$_cok" "found" "missing - claude-family and glm lanes unavailable" "$CLAUDE_WANTED"
 _cxok=0; command -v codex >/dev/null && _cxok=1
 _cxw=0; [ -n "$FOR_MODELS" ] && wants codex && _cxw=1
@@ -241,7 +260,7 @@ if [ -n "$ORCH_EXPLICIT" ]; then
       if command -v "$GROK" >/dev/null; then ORCH="grok"; say "orchestrator" ok "grok"
       else say "orchestrator" unreachable "grok binary missing for declared seat"; UNREACH=1; fi ;;
     fable|opus|glm|sonnet|haiku)
-      if command -v claude >/dev/null; then ORCH="$ORCH_EXPLICIT"; say "orchestrator" ok "$ORCH_EXPLICIT (claude harness present; declared, not probed)"
+      if command -v "$CLAUDEBIN" >/dev/null; then ORCH="$ORCH_EXPLICIT"; say "orchestrator" ok "$ORCH_EXPLICIT (claude harness present; declared, not probed)"
       else say "orchestrator" unreachable "claude binary missing for declared seat $ORCH_EXPLICIT"; UNREACH=1; fi ;;
     *)
       ORCH="$ORCH_EXPLICIT"; say "orchestrator" advisory "declared seat '$ORCH_EXPLICIT' - unknown label, recorded unvalidated" ;;
@@ -364,9 +383,27 @@ elif command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
   fi
 fi
 
-if [ -z "$ORCH_EXPLICIT" ] && command -v claude >/dev/null; then
+# Each requested claude-family WORKER model gets its own availability probe
+# (codex review 2026-08-25): a run asking for sonnet must not be blessed on
+# fable's health. One small call per REQUESTED model only; without --for this
+# block is silent and the orchestrator-tier chain below keeps its historic
+# behaviour. FLEETFLOW_CLAUDE_BIN makes it hermetically stubbable.
+if [ -n "$FOR_MODELS" ]; then
+  for _wm in sonnet haiku opus fable; do
+    wants "$_wm" || continue
+    _mid="$_wm"; [ "$_wm" = "fable" ] && _mid="claude-fable-5"
+    _R="$(timeout 120 "$CLAUDEBIN" -p "reply with exactly: ok" --model "$_mid" --max-turns 1 --output-format json 2>/dev/null)"
+    if [ -n "$_R" ] && [ "$(printf '%s' "$_R" | jq -r 'if has("is_error") then (.is_error|tostring) else "true" end' 2>/dev/null)" = "false" ]; then
+      say "model-$_wm" ok "responds"
+    else
+      say "model-$_wm" unreachable "no successful reply"; UNREACH=1
+    fi
+  done
+fi
+
+if [ -z "$ORCH_EXPLICIT" ] && command -v "$CLAUDEBIN" >/dev/null; then
   for m in claude-fable-5 opus; do
-    R="$(timeout 120 claude -p "reply with exactly: ok" --model "$m" --max-turns 1 --output-format json 2>/dev/null)"
+    R="$(timeout 120 "$CLAUDEBIN" -p "reply with exactly: ok" --model "$m" --max-turns 1 --output-format json 2>/dev/null)"
     if [ -n "$R" ] && [ "$(printf '%s' "$R" | jq -r 'if has("is_error") then (.is_error|tostring) else "true" end' 2>/dev/null)" = "false" ]; then
       case "$m" in claude-fable-5) ORCH="fable" ;; *) ORCH="opus" ;; esac
       say "model-$m" ok "responds"

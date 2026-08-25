@@ -23,6 +23,21 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- Scoped-grant derivation asked git for the lane's metadata dir instead of
+  reconstructing it from the basename: git deduplicates worktree names
+  (`wt-build`, `wt-build1`), so a colliding lane id across runs was granted
+  ANOTHER lane's metadata dir - a cross-lane grant. Found by codex re-review;
+  regression pins two same-id lanes resolving distinctly. ADR-034 addendum
+  records this plus the now-explicit objects-dir exposure and the per-lane
+  git-database endgame (ADR-035 candidate).
+- `ff-doctor` argument handling failed loud instead of green: an unknown
+  `--for` value used to mean "nothing wanted" - every check advisory, exit 0
+  on a typo; now exit 2 naming the value. Missing `--for`/`--orchestrator`
+  values are usage errors. Live probes cover workers UNION the declared
+  orchestrator seat (a grok seat pulls in grok-auth with no grok lane), and
+  each requested claude-family model gets its own availability probe
+  (`FLEETFLOW_CLAUDE_BIN` stubs all of it hermetically - the suite exercises
+  the full --live surface tokenlessly).
 - **`ff-clean` destroyed committed lanes whenever the manifest base was a
   SHA** - which is what ff-spawn records. Base validation only accepted
   branch names, silently fell back to the literal string `HEAD` (a
