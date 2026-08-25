@@ -2552,6 +2552,26 @@ check "doctor: --for with only commas -> 2" 2 bash "$DOCTOR" --offline --for ,
 grep -q '"$CLAUDEBIN" -p --model "$CLAUDE_MODEL"' "$S/ff-spawn.sh"   && ok "spawn: claude launch consumes FLEETFLOW_CLAUDE_BIN (doctor/spawn parity)"   || bad "spawn: claude launch ignores the override the doctor validates"
 OZ="$(bash "$DOCTOR" --offline --orchestrator zeus 2>/dev/null)"
 printf '%s' "$OZ" | grep -q "^orchestrator	advisory	declared seat 'zeus'"   && ok "doctor --orchestrator: unknown label recorded unvalidated, offline too"   || bad "doctor --orchestrator: unknown label row missing offline"
+# codex re-test round 3 (2026-08-25): parser parity, offline seat honesty,
+# requested-auth fail-closed. All hermetic: stubs only, zero network.
+check "doctor --for: whitespace-separated models -> 2" 2   bash "$DOCTOR" --offline --for "codex grok"
+check "doctor --for: comma+space separated -> 2" 2   bash "$DOCTOR" --offline --for "codex, grok"
+check "doctor --orchestrator: declared seat missing binary OFFLINE -> 7" 7   env FLEETFLOW_GROK_BIN=/nonexistent FLEETFLOW_PI_BIN=/nonexistent FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --offline --orchestrator grok
+# glm requested + live, launcher present but NO sibling fleet-doctor: the probe
+# cannot run, so blessing the fleet (advisory + 0) was a false green.
+FWDIR="$TMP/fake-fw"; mkdir -p "$FWDIR"
+printf '#!/usr/bin/env bash\necho stub\n' > "$FWDIR/fleet-worker"
+check "doctor --live --for glm: launcher without fleet-doctor -> 7" 7   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
+printf '#!/usr/bin/env bash\nprintf "live-ping\\tok\\n"\n' > "$FWDIR/fleet-doctor.sh"
+check "doctor --live --for glm: sibling fleet-doctor present -> 0" 0   env FLEETFLOW_FLEET_WORKER="$FWDIR/fleet-worker" FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL" FLEETFLOW_PI_BIN=/nonexistent   bash "$DOCTOR" --live --for glm --orchestrator human
+# pi requested + live: an unverifiable key (provider unset or unmapped) fails
+# closed at 7; a mapped provider with its key present passes at 0.
+check "doctor --live --for pi: provider unset -> 7" 7   env FLEETFLOW_PI_BIN="$STUBGK" FLEETFLOW_PI_PROVIDER= FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for pi --orchestrator human
+check "doctor --live --for pi: unmapped provider -> 7" 7   env FLEETFLOW_PI_BIN="$STUBGK" FLEETFLOW_PI_PROVIDER=nosuchprovider FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for pi --orchestrator human
+check "doctor --live --for pi: mapped provider with key -> 0" 0   env FLEETFLOW_PI_BIN="$STUBGK" FLEETFLOW_PI_PROVIDER=groq GROQ_API_KEY=present FLEETFLOW_ORCHESTRATOR= FLEETFLOW_CLAUDE_BIN="$STUBCL"   bash "$DOCTOR" --live --for pi --orchestrator human
+# doctor/spawn parity reaches THROUGH fleet-worker: the glm lane forwards the
+# override so the binary the doctor validated is the binary the lane execs.
+grep -q 'FLEET_WORKER_CLAUDE_BIN="\${FLEETFLOW_CLAUDE_BIN:-claude}"' "$S/ff-spawn.sh"   && ok "spawn: glm lane forwards FLEETFLOW_CLAUDE_BIN to fleet-worker (parity)"   || bad "spawn: glm lane lets fleet-worker hardcode 'claude' - doctor/spawn divergence"
 
 # --- ff-collect end-of-run summary ----------------------------------------------
 SUMREPO="$TMP/sumrepo"; SUMRD="$SUMREPO/.fleetflow/sumrun"

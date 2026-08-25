@@ -26,7 +26,7 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_FLEET_WORKER` | `$HOME/.claude/skills/fleet-worker/scripts/fleet-worker` | glm launcher path (ff-spawn hard-requires it for --model glm) |
 | `FLEETFLOW_CODEX_MODEL` | `(harness default)` | codex -m override for codex lanes |
 | `FLEETFLOW_CODEX_WINDOWS_SANDBOX` | `unelevated` | Windows codex sandbox pin (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful) |
-| `FLEETFLOW_CLAUDE_BIN` | `claude` | claude binary used by ff-doctor (checks + model probes) AND ff-spawn claude-family launches - one override, no doctor/spawn divergence |
+| `FLEETFLOW_CLAUDE_BIN` | `claude` | claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence |
 | `FLEETFLOW_GROK_BIN` | `grok` | grok binary or launcher path |
 | `FLEETFLOW_GROK_MODEL` | `(harness default)` | grok -m override for grok lanes |
 | `FLEETFLOW_PI_BIN` | `pi` | pi binary or launcher path |
@@ -40,7 +40,8 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_REPAIR_DRYRUN` | `(unset)` | non-empty = ff-collect --repair respawns with --dry-run (test the loop without spending) |
 | `FLEETFLOW_PATH_PREPEND` | `(unset)` | colon-separated dirs _env.sh prepends to PATH before tool discovery |
 
-`FLEET_WORKER_EFFORT` and `FLEET_WORKER_CONFIG_DIR` also appear in `ff-spawn` —
+`FLEET_WORKER_EFFORT`, `FLEET_WORKER_CONFIG_DIR`, and `FLEET_WORKER_CLAUDE_BIN`
+also appear in `ff-spawn` —
 they belong to [fleet-worker](https://github.com/0xDarkMatter/claude-mods/tree/main/skills/fleet-worker)'s
 contract, not this registry.
 
@@ -55,7 +56,7 @@ When a command fails, the code tells you which document to reach for:
 | `2` | usage error, refused overwrite, or missing precondition | re-run with `--help`; for `ff-plan draft`, add `--force` to overwrite |
 | `3` | cached / missing — artifact absent, cache hit, or unimplemented path | a cache hit on `ff-spawn` is success (journal replay, ADR-012); a missing artifact means the lane never ran — `ff logs RUN ID` |
 | `5` | launcher or binary missing for the requested model | `ff doctor --offline` names the tool and the env var that points at it |
-| `7` | provider unreachable (live probes only) | check auth/keys for the named provider; `ff doctor --live` re-probes |
+| `7` | provider or declared orchestrator seat unreachable (live probes; the seat binary check runs in both doctor modes) | check auth/keys for the named provider; `ff doctor --live` re-probes |
 | `10` | worker failed, gate failed, or lint findings | `ff logs RUN ID` for a lane; `ff plan lint --run X` prints FINDING lines; a refuted plan loops back to draft (ADR-028) |
 | `12` | escape detected — a worker wrote outside its lane | inspect `git status` in the main checkout before anything lands (ADR-009) |
 | `14` | lane stalled (only with `--exit-stalled`) | `ff logs RUN ID`; stall doctrine is ADR-008, thresholds are `FLEETFLOW_STALL_SECONDS` / `FLEETFLOW_ABANDON_SECONDS` |

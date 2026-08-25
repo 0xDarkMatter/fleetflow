@@ -9,8 +9,10 @@
 #   orchestrator tier is available (fable > opus).
 # stdout: one TSV line per check: name<TAB>status<TAB>detail. stderr: chatter.
 #
-# Exit codes: 0 all required checks ok | 2 usage | 7 live probe unreachable
-#             10 structural failure
+# Exit codes: 0 all required checks ok | 2 usage | 10 structural failure
+#             7 provider or declared seat unreachable (live probes; the seat
+#               binary check runs in BOTH modes - an offline doctor must not
+#               bless a fleet whose declared orchestrator cannot start)
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
@@ -59,6 +61,15 @@ while [ $# -gt 0 ]; do
       # because you misspelled it (codex review, 2026-08-25).
       case "${2:-}" in ""|-*) echo "ff-doctor: --for requires a value" >&2; exit 2 ;; esac
       FOR_MODELS="$2"
+      # ONE grammar for validation AND selection: comma-separated, no whitespace.
+      # Validation used to word-split (so --for "codex grok" validated both
+      # names) while wants() matched comma-bounded tokens (so it selected
+      # NEITHER) - every check advisory, exit 0 with a model deliberately
+      # missing (codex review round 3, 2026-08-25). Reject the separator
+      # mismatch here so both parsers see identical tokens.
+      case "$FOR_MODELS" in
+        *[[:space:]]*) echo "ff-doctor: --for is comma-separated, no whitespace: '$FOR_MODELS'" >&2; exit 2 ;;
+      esac
       _fmn=0
       for _fm in $(printf '%s' "$FOR_MODELS" | tr ',' ' '); do
         _fmn=$((_fmn+1))
@@ -120,7 +131,7 @@ FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permi
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
-FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn claude-family launches - one override, no doctor/spawn divergence
+FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence
 FLEETFLOW_GROK_BIN	grok	grok binary or launcher path
 FLEETFLOW_GROK_MODEL	(harness default)	grok -m override for grok lanes
 FLEETFLOW_PI_BIN	pi	pi binary or launcher path
@@ -276,7 +287,15 @@ else
   ORCH_EXPLICIT=""
 fi
 
-[ "$MODE" = "live" ] || { [ "$FAIL" = 0 ] && exit 0 || exit 10; }
+# Offline honours UNREACH too: seat resolution runs in both modes, and a
+# declared orchestrator whose binary is missing set UNREACH=1 above - exiting
+# on FAIL alone returned 0 for that fleet (codex review round 3). Same
+# condition, same code as --live: 7.
+if [ "$MODE" != "live" ]; then
+  [ "$FAIL" != 0 ] && exit 10
+  [ "$UNREACH" != 0 ] && exit 7
+  exit 0
+fi
 
 # --- live probes ----------------------------------------------------------------
 FD="$(dirname "$FW")/fleet-doctor.sh"
@@ -288,6 +307,12 @@ elif [ -f "$FD" ]; then
   else
     say "glm-endpoint" unreachable "fleet-doctor --live did not confirm (key/endpoint)"; UNREACH=1
   fi
+elif wants glm || [ "$ORCH_EXPLICIT" = "glm" ]; then
+  # Fail closed for a REQUESTED glm seat: the launcher path is configurable
+  # (FLEETFLOW_FLEET_WORKER) but its live check is the sibling fleet-doctor.sh,
+  # and "advisory + exit 0" with the prober absent blessed a fleet whose glm
+  # endpoint was never verified (codex review round 3).
+  say "glm-endpoint" unreachable "fleet-doctor.sh not found beside launcher ($FD) - requested glm cannot be verified"; UNREACH=1
 else
   say "glm-endpoint" advisory "fleet-doctor not installed"
 fi
@@ -359,9 +384,17 @@ fi
 if ! should_probe pi; then
   say "pi-auth" advisory "not requested (--for)"
 elif command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
+  # Requested pi fails CLOSED on an unverifiable key (codex review round 3):
+  # with the provider unset or unmapped there is no key to probe, and the lane's
+  # isolated PI_CODING_AGENT_DIR guarantees host auth will not save it at spawn
+  # time. Unrequested pi (probe-everything mode) stays advisory, as ever.
   PIPROV="${FLEETFLOW_PI_PROVIDER:-}"
   if [ -z "$PIPROV" ]; then
-    say "pi-auth" advisory "FLEETFLOW_PI_PROVIDER not set - pi lanes would use pi's default provider with no key check"
+    if wants pi || [ "$ORCH_EXPLICIT" = "pi" ]; then
+      say "pi-auth" unreachable "FLEETFLOW_PI_PROVIDER not set - requested pi lane auth cannot be verified (host auth.json does not reach lanes)"; UNREACH=1
+    else
+      say "pi-auth" advisory "FLEETFLOW_PI_PROVIDER not set - pi lanes would use pi's default provider with no key check"
+    fi
   else
     case "$PIPROV" in
       anthropic)  PIKEY="ANTHROPIC_API_KEY" ;;
@@ -377,7 +410,11 @@ elif command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; then
       *)          PIKEY="" ;;
     esac
     if [ -z "$PIKEY" ]; then
-      say "pi-auth" advisory "no env-key mapping for provider '$PIPROV' - lane auth unverified"
+      if wants pi || [ "$ORCH_EXPLICIT" = "pi" ]; then
+        say "pi-auth" unreachable "no env-key mapping for provider '$PIPROV' - requested pi lane auth cannot be verified"; UNREACH=1
+      else
+        say "pi-auth" advisory "no env-key mapping for provider '$PIPROV' - lane auth unverified"
+      fi
     elif [ -n "$(eval "printf '%s' \"\${$PIKEY:-}\"")" ]; then
       say "pi-auth" ok "$PIKEY set (provider $PIPROV)"
     else

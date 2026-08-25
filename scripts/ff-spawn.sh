@@ -500,8 +500,13 @@ else
       # env(1) carries the assignments: a ${VAR:+NAME=val} expansion is NOT an
       # assignment prefix (bash parses prefixes before expansion), so without
       # env the expanded NAME=val word execs as a command -> rc 127.
+      # FLEET_WORKER_CLAUDE_BIN carries FLEETFLOW_CLAUDE_BIN through to the
+      # launcher: fleet-worker execs the claude binary itself, and a hardcoded
+      # `claude` there let a doctor validated against the override pass while
+      # the spawn failed exit 5 (codex review round 3 - doctor/spawn parity).
       ( cd "$WORKDIR" && \
         env FLEET_WORKER_CONFIG_DIR="$CFGD" \
+        FLEET_WORKER_CLAUDE_BIN="${FLEETFLOW_CLAUDE_BIN:-claude}" \
         UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
         ${EFFORT:+FLEET_WORKER_EFFORT="$EFFORT"} \
         bash "$FW" --output-format json --max-turns "$MAX_TURNS" "$(cat "$SENT")" \

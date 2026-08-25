@@ -23,6 +23,20 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- Codex re-test round 3, all five findings closed (three were live
+  false-green paths, each reproduced before fixing): `--for` now enforces one
+  comma-only grammar for validation AND selection (whitespace-separated lists
+  validated every name yet selected none - every check advisory, exit 0);
+  offline mode honours a declared orchestrator seat whose binary is missing
+  (exit 7, same as `--live`, instead of blessing the fleet); doctor/spawn
+  claude-binary parity now reaches THROUGH fleet-worker (`ff-spawn` forwards
+  `FLEETFLOW_CLAUDE_BIN` as `FLEET_WORKER_CLAUDE_BIN`; the launcher consumes
+  it instead of hardcoding `claude`); a requested pi seat fails closed at 7
+  when its provider is unset or unmapped (no key to verify, and lane
+  isolation means host auth cannot save it); and a requested glm seat fails
+  closed at 7 when `fleet-doctor.sh` is absent beside the launcher (the live
+  probe cannot run). Unrequested models keep their historic advisory
+  demeanour throughout.
 - Codex re-test round 2, all four findings closed: an explicit claude-family
   orchestrator seat now joins the model probe union (a declared opus seat
   with a dead claude binary is exit 7, not a false green; seat-also-worker
