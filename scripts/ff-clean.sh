@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ff-clean.sh - reclaim a fleetflow run's lanes, branches, and cache dirs.
 #
-# Per lane (worktree lane under <run>/wt-<id>):
+# Per lane (worktree lane under <run>/wt-<id>), where "commits" means commits
+# UNREACHABLE from the integration branch (unmerged work - see ADR-035):
 #   zero commits + clean      -> git worktree remove + branch -D   ("removed")
 #   zero commits + dirty      -> "kept" unless --force              (--force removes)
-#   N>0 commits               -> "kept (N commits)"                 (never auto-remove)
+#   N>0 commits               -> "kept (N unmerged commits)"        (never auto-remove)
 #   locked ACL-litter dir     -> "locked (needs elevation)"         (continue, non-fatal)
 # Then removes each lane's cache dir under FLEETFLOW_CACHE_ROOT (default
 # $HOME/.fleet-worker/cache/<run>-<id>). Removal never aborts the run: a locked
@@ -34,17 +35,20 @@ Usage: ff-clean.sh --run NAME [--repo PATH] [--force] [--no-archive]
   --run NAME      run name under <repo>/.fleetflow/
   --repo PATH     repo root (default: git toplevel of cwd)
   --no-archive    skip the pre-clean history append (see below)
-  --force         also remove DIRTY zero-commit lanes (committed lanes are
-                  ALWAYS kept - land or branch them first, then clean).
-                  With --reap, actually terminate the orphans.
+  --force         also remove DIRTY zero-commit lanes (lanes with UNMERGED
+                  commits are ALWAYS kept - land or branch them first, then
+                  clean). With --reap, actually terminate the orphans.
   --reap          report worker processes still alive from this run instead of
                   touching lanes. Report-only unless --force. Windows only -
                   identifies orphans by walking up to the reap anchors ff-spawn
                   journalled, so a Codex you started yourself is never a match.
 
-  Lanes with commits are never removed (their work would be lost); clean only
-  after ff-collect has gated them and the orchestrator has landed/branched the
-  keepers. Locked codex sandbox-litter dirs are reported and skipped.
+  Lanes with UNMERGED commits - commits unreachable from the integration
+  branch - are never removed (their work would be lost); clean only after
+  ff-collect has gated them and the orchestrator has landed/branched the
+  keepers. A landed lane counts zero regardless of landing style (merge,
+  fast-forward, or rebase). Locked codex sandbox-litter dirs are reported
+  and skipped.
 
   BEFORE removing anything, the run is archived to ~/.fleetflow/history.jsonl
   (ff-archive.sh) so it survives in the dashboard's history section after its
@@ -230,24 +234,49 @@ if [ "$NLANES" = "0" ]; then
   exit 0
 fi
 
-# BASE may be a branch name OR a sha (ff-spawn records the sha). Validate as a
-# commit-ish; an unresolvable base falls back to the MAIN repo's HEAD resolved
-# to a SHA - never the bare string "HEAD", which rev-list would resolve inside
-# each LANE worktree as a self-compare (HEAD..HEAD = 0), reclassifying every
-# committed lane as zero-commit and destroying its work. That exact failure
-# destroyed a 2-commit lane on 2026-08-25: the old check only accepted branch
-# names (refs/heads/<sha> never exists), and the keep-side protection was
-# inert for every real run while removal-side tests stayed green.
-git -C "$REPO" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null 2>&1   || BASE="$(git -C "$REPO" rev-parse HEAD)"
+# LANDEDNESS IS ANCESTRY IN THE INTEGRATION BRANCH, NOT A COUNT FROM BASE
+# (ADR-035). The manifest's `base` is the commit the lanes FORKED from -
+# ff-plan records `rev-parse HEAD` at authoring time, so on real runs it is a
+# sha frozen before the run started. `rev-list --count BASE..HEAD` therefore
+# keeps counting a lane's own commits FOREVER after a landing (a --no-ff merge
+# never rewrites them onto the base, and even a fast-forward leaves them
+# unreachable from a frozen pre-run sha): observed 2026-09-01, run
+# studio-live, a fully landed lane read "kept 3 commits" while
+# `rev-list main..HEAD` was 0. So the holds-work test counts commits
+# unreachable from the INTEGRATION ref instead: the manifest base when it
+# names a live branch (a branch tracks the tip), else main, else master, else
+# the MAIN repo's HEAD. count==0 is exactly `merge-base --is-ancestor` - a
+# landed lane reclaims, an unmerged lane keeps its true unmerged count.
+INTEG="" cand=""
+for cand in "$BASE" main master; do
+  if git -C "$REPO" show-ref --verify --quiet "refs/heads/$cand"; then INTEG="$cand"; break; fi
+done
+[ -n "$INTEG" ] || INTEG="HEAD"
+# Resolve INTEG to a SHA in the MAIN repo before it reaches a lane-side
+# rev-list - never hand rev-list a symbolic name like "HEAD", which would
+# resolve inside each LANE worktree as a self-compare (HEAD..HEAD = 0),
+# reclassifying every committed lane as zero-commit and destroying its work.
+# That exact failure destroyed a 2-commit lane on 2026-08-25 (the pre-fix
+# base check only accepted branch names, so a sha base fell through to bare
+# "HEAD"). An empty INTEG_SHA is handled fail-closed in the loop below.
+INTEG_SHA="$(git -C "$REPO" rev-parse --verify --quiet "$INTEG^{commit}" 2>/dev/null | tr -d '\r')"
+err "landedness measured against: $INTEG (${INTEG_SHA:-unresolvable})"
 
 while read -r id; do
   [ -n "$id" ] || continue
   wt="$RUNDIR/wt-$id"
   if [ -d "$wt" ]; then
-    if ! commits="$(git -C "$wt" rev-list --count "$BASE..HEAD" 2>/dev/null)"; then
+    if [ -z "$INTEG_SHA" ]; then
+      # No resolvable integration ref (unborn HEAD?) - we cannot PROVE any
+      # lane is safe to reclaim. An empty left side would make the range
+      # "..HEAD" (= HEAD..HEAD = 0) and remove everything, so keep instead.
+      emit "$id" kept "integration ref unresolvable - kept for safety"
+      continue
+    fi
+    if ! commits="$(git -C "$wt" rev-list --count "$INTEG_SHA..HEAD" 2>/dev/null)"; then
       # Counting failed - we cannot PROVE the lane is safe to reclaim, so keep
       # it. "removed" on error is how committed work dies silently.
-      emit "$id" kept "commit count failed (base $BASE) - kept for safety"
+      emit "$id" kept "commit count failed (vs $INTEG) - kept for safety"
       continue
     fi
     dirt="$(git -C "$wt" status --porcelain 2>/dev/null)"
@@ -257,7 +286,7 @@ while read -r id; do
       if [ "$FORCE" = 1 ]; then remove_lane "$id" 1
       else emit "$id" kept "dirty, zero commits (use --force)"; fi
     else
-      emit "$id" kept "$commits commits"
+      emit "$id" kept "$commits unmerged commits"
     fi
   else
     emit "$id" kept "no worktree lane"

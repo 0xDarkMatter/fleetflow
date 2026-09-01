@@ -32,11 +32,16 @@
 #
 # ff-clean needed NO new flag for this, which is worth writing down because it
 # is not obvious and a `--landed` flag was built and then deleted before this
-# shipped: `git rev-list --count $BASE..HEAD` is ALREADY 0 for a landed lane -
-# it is the same question as `merge-base --is-ancestor` - so ff-clean's existing
-# "zero commits + clean -> removed" row reclaims landed lanes today. The disk
+# shipped: ff-clean's "zero commits + clean -> removed" row reclaims landed
+# lanes, where "commits" means commits unreachable from the INTEGRATION branch
+# (ADR-035; count==0 is the same question as `merge-base --is-ancestor`, which
+# classify() below asks). NOTE ADR-020 originally justified this with
+# "rev-list BASE..HEAD is already 0 once merged" - refuted 2026-09-01: the
+# manifest base is a sha frozen at authoring, so BASE..HEAD keeps counting a
+# landed lane's own commits forever. ff-clean now counts against the
+# integration ref, which is what restores the no-new-flag property. The disk
 # that accumulated was never ff-clean refusing; it was ff-clean never being run.
-# Visibility, not a new teardown rule, is what was missing. See ADR-020.
+# Visibility, not a new teardown rule, is what was missing. See ADR-020/035.
 #
 # stdout: TSV (run, repo_label, verdict, lanes, bytes, detail) or --json.
 # stderr: chatter. Exit codes: 0 ok | 2 usage | 3 no runs found
@@ -314,11 +319,19 @@ classify() {
   case "${running:-0}" in ''|*[!0-9]*) running=0 ;; esac
   base_key="${repo,,}"$'\t'"${base,,}"
   if [ -z "${BASE_REFS[$base_key]+x}" ]; then
-    if git -C "$repo" show-ref --verify --quiet "refs/heads/$base"; then
-      BASE_REFS[$base_key]="$base"
-    else
-      BASE_REFS[$base_key]=HEAD
-    fi
+    # The integration ref landedness is measured against. A manifest base that
+    # names a live branch tracks the tip; a frozen sha (what ff-plan records)
+    # does not, so fall back to the default branch - the same resolution
+    # ff-clean uses (ADR-035), so sweep verdicts and clean behaviour cannot
+    # disagree about what "landed" means. HEAD is last resort only: here it is
+    # the MAIN repo's HEAD (is-ancestor runs -C "$repo"), never a lane's.
+    local cand
+    BASE_REFS[$base_key]=HEAD
+    for cand in "$base" main master; do
+      if git -C "$repo" show-ref --verify --quiet "refs/heads/$cand"; then
+        BASE_REFS[$base_key]="$cand"; break
+      fi
+    done
   fi
 
   base="${BASE_REFS[$base_key]}"
@@ -492,9 +505,10 @@ if [ "$MODE" = reclaim ]; then
       fi
     fi
     # ff-clean owns teardown (NTFS retry, cache dirs, reap anchors) and needs NO
-    # new flag: `rev-list --count $BASE..HEAD` is already 0 for a landed lane
-    # (identical to merge-base --is-ancestor), so its "zero commits + clean"
-    # row reclaims landed lanes today. --force is added ONLY for
+    # new flag: it counts commits unreachable from the INTEGRATION ref
+    # (ADR-035; count==0 is identical to the merge-base --is-ancestor
+    # classify() ran), so its "zero commits + clean" row reclaims the landed
+    # lanes this run was just proven to hold. --force is added ONLY for
     # landed-untracked runs, where classify() has already proven every lane has
     # zero TRACKED modifications - that check lives here, not in ff-clean,
     # because ff-clean's --force is documented to discard a failed lane's dirty

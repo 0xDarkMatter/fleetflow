@@ -414,7 +414,7 @@ echo "junk" > "$REPO/.fleetflow/rc/wt-dirtlane/junk.txt"
 CL="$(FLEETFLOW_CACHE_ROOT="$CLEANROOT" bash "$S/ff-clean.sh" --run rc --repo "$REPO" 2>/dev/null)"
 printf '%s' "$CL" | awk -F'\t' '$1=="cleanlane"&&$2=="removed"{f=1} END{exit !f}' && ok "ff-clean: removes zero-commit clean lane" || bad "ff-clean: clean lane not removed"
 printf '%s' "$CL" | awk -F'\t' '$1=="dirtlane"&&$2=="kept"&&$3~/dirty/{f=1} END{exit !f}' && ok "ff-clean: keeps dirty zero-commit lane (no --force)" || bad "ff-clean: dirty lane mishandled"
-printf '%s' "$CL" | awk -F'\t' '$1=="keeplane"&&$2=="kept"&&$3~/1 commits/{f=1} END{exit !f}' && ok "ff-clean: keeps committed lane" || bad "ff-clean: committed lane mishandled"
+printf '%s' "$CL" | awk -F'\t' '$1=="keeplane"&&$2=="kept"&&$3~/1 unmerged commits/{f=1} END{exit !f}' && ok "ff-clean: keeps committed lane" || bad "ff-clean: committed lane mishandled"
 [ -d "$REPO/.fleetflow/rc/wt-cleanlane" ] && bad "ff-clean: clean worktree dir remains" || ok "ff-clean: clean worktree removed"
 git -C "$REPO" show-ref --verify --quiet refs/heads/fleetflow/rc/keeplane && ok "ff-clean: committed branch preserved" || bad "ff-clean: keeper branch deleted"
 # --force: dirtlane now removed; keeplane STILL kept (committed lanes are never force-removed)
@@ -962,7 +962,10 @@ printf '%s' "$RRN" | jq -e 'any(.[]; .id=="a01cb5f01fadf5610" and .status=="impo
 # adr-lint ships with the adr-ops skill, not this repo; skip (loudly) if absent.
 ADRL="$HOME/.claude/skills/adr-ops/scripts/adr-lint.py"
 if [ -f "$ADRL" ] && ff_have_python; then
-  ff_python "$ADRL" --strict --dir "$HERE/../docs/adr" >/dev/null 2>&1 \
+  # --repo-root pinned to THIS repo: adr-lint's default is the git toplevel of
+  # the CWD, so a suite launched from another checkout resolved every literal
+  # touches: path against the wrong repo and failed all ADRs at once.
+  ff_python "$ADRL" --strict --dir "$HERE/../docs/adr" --repo-root "$HERE/.." >/dev/null 2>&1 \
     && ok "adr: docs/adr conforms (adr-lint --strict)" \
     || bad "adr: adr-lint --strict has findings (run it directly for detail)"
 else
@@ -1429,7 +1432,13 @@ SWR="$TMP/swrepo"
 mkdir -p "$SWR" && git -C "$SWR" init -q -b main
 git -C "$SWR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 SWD="$SWR/.fleetflow/sw"; mkdir -p "$SWD"
-jq -nc '{run:"sw",base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$SWD/manifest.json"
+# base is a FROZEN SHA, exactly what ff-plan records (`rev-parse HEAD` at
+# authoring time). The original fixture wrote the branch name "main" here,
+# which tracks the tip - so the whole section passed while production runs
+# (sha bases) broke: 2026-09-01, run studio-live, every merge-landed lane
+# read "kept 3 commits". Do not "simplify" this back to a branch name.
+SWBASE="$(git -C "$SWR" rev-parse HEAD | tr -d '\r')"
+jq -nc --arg base "$SWBASE" '{run:"sw",base:$base,created_by:"fixture",phases:["build"],packets:[]}' > "$SWD/manifest.json"
 : > "$SWD/journal.jsonl"
 mklane() { # id, then commit-and-merge?  builds a worktree lane with one commit
   git -C "$SWR" worktree add -q -b "fleetflow/sw/$1" "$SWD/wt-$1" main 2>/dev/null
@@ -1444,23 +1453,26 @@ echo "EDITED" >> "$SWD/wt-tracked/tracked.txt"        # tracked modification
 mklane litter  && git -C "$SWR" merge -q --no-ff -m "land3" "fleetflow/sw/litter"
 echo "scratch" > "$SWD/wt-litter/untracked-note.md"   # untracked leftover only
 
-# THE LOAD-BEARING EQUIVALENCE (ADR-020): for a landed lane, `rev-list --count
-# BASE..HEAD` is 0 and `merge-base --is-ancestor` is true - the SAME question.
-# A `--landed` flag was built on the assumption they differed, and deleted when
-# this fixture proved they do not. Pinning it here so nobody rebuilds it.
-LHEAD="$(git -C "$SWD/wt-landed" rev-parse HEAD)"
-[ "$(git -C "$SWR" rev-list --count "main..$LHEAD")" = "0" ] \
+# THE LOAD-BEARING INEQUIVALENCE (ADR-035, amending ADR-020): after a --no-ff
+# MERGE landing, `rev-list --count BASE..HEAD` from a frozen sha base is NOT 0
+# - the merge reaches the lane's commits without rewriting them onto the base.
+# ADR-020's claim that base-counting "is the same question as
+# merge-base --is-ancestor" held only for branch-name bases, which track the
+# tip. Landedness is ancestry in the INTEGRATION branch; pin both facts so
+# nobody reverts ff-clean to counting from the recorded base.
+LHEAD="$(git -C "$SWD/wt-landed" rev-parse HEAD | tr -d '\r')"
+[ "$(git -C "$SWR" rev-list --count "$SWBASE..$LHEAD" | tr -d '\r')" != "0" ] \
   && git -C "$SWR" merge-base --is-ancestor "$LHEAD" main \
-  && ok "landed lane: rev-list==0 AND is-ancestor (ff-clean needs no --landed flag)" \
-  || bad "landed-lane equivalence broken - ff-clean's zero-commit row no longer covers landed lanes"
+  && ok "merge-landed lane: BASE..HEAD counts its commits but is-ancestor(main) holds (base-counting is wrong)" \
+  || bad "fixture no longer models a merge landing from a frozen sha base"
 
-# Plain ff-clean therefore already reclaims a landed+clean lane, and still keeps
-# the unmerged one. This is the pre-existing contract, asserted because ff-sweep
-# now depends on it.
+# Plain ff-clean reclaims a merge-landed+clean lane despite the sha base -
+# THE 2026-09-01 REGRESSION - and still keeps the unmerged one. ff-sweep's
+# --reclaim depends on this row.
 CL1="$(bash "$S/ff-clean.sh" --run sw --repo "$SWR" --no-archive 2>/dev/null)"
 printf '%s' "$CL1" | awk -F'\t' '$1=="landed"&&$2=="removed"{f=1} END{exit !f}' \
-  && ok "ff-clean: landed+clean lane reclaimed with no new flag" \
-  || bad "ff-clean: landed lane not reclaimed"
+  && ok "ff-clean: merge-landed lane reclaimed despite sha base (2026-09-01 regression)" \
+  || bad "ff-clean: merge-landed lane not reclaimed (counting from the recorded base again?)"
 printf '%s' "$CL1" | awk -F'\t' '$1=="unmerged"&&$2=="kept"{f=1} END{exit !f}' \
   && ok "ff-clean: UNMERGED lane kept (work preserved)" \
   || bad "ff-clean: DELETED AN UNMERGED LANE"
@@ -1488,6 +1500,9 @@ printf '%s' "$SW" | jq -e '.[0].archived==false' >/dev/null \
 SWL="$TMP/swlit"; mkdir -p "$SWL" && git -C "$SWL" init -q -b main
 git -C "$SWL" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 SWLD="$SWL/.fleetflow/lit"; mkdir -p "$SWLD"
+# base stays the branch NAME "main" here on purpose: hand-written and legacy
+# manifests use branch names, and that shape must keep working alongside the
+# frozen-sha shape the fixtures above pin (ADR-035).
 jq -nc '{run:"lit",base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$SWLD/manifest.json"
 : > "$SWLD/journal.jsonl"
 git -C "$SWL" worktree add -q -b fleetflow/lit/a "$SWLD/wt-a" main 2>/dev/null
@@ -1567,9 +1582,13 @@ SWP="$TMP/swporc"
 mkdir -p "$SWP" && git -C "$SWP" init -q -b main
 git -C "$SWP" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 mkrun() { # repo run: a run dir with one committed-but-UNMERGED lane
-  local repo="$1" run="$2" d="$1/.fleetflow/$2"
+  local repo="$1" run="$2" d="$1/.fleetflow/$2" b
   mkdir -p "$d"
-  jq -nc --arg r "$run" '{run:$r,base:"main",created_by:"fixture",phases:["build"],packets:[]}' > "$d/manifest.json"
+  # base = frozen sha of the current tip, the shape ff-plan actually writes
+  # (ADR-035): every fixture built on mkrun exercises the production manifest
+  # shape, including the sweep->clean reclaim handoff for merge-landed runs.
+  b="$(git -C "$repo" rev-parse HEAD | tr -d '\r')"
+  jq -nc --arg r "$run" --arg base "$b" '{run:$r,base:$base,created_by:"fixture",phases:["build"],packets:[]}' > "$d/manifest.json"
   : > "$d/journal.jsonl"
   git -C "$repo" worktree add -q -b "fleetflow/$run/a" "$d/wt-a" main 2>/dev/null
   echo "$run" > "$d/wt-a/a.txt"
@@ -2058,6 +2077,22 @@ bash "$S/ff-collect.sh" --run ch --id lane1 --repo "$CHR" >/dev/null 2>&1 \
 bash "$S/ff-chip.sh" open --run ch --id lane2 --repo "$CHR" --task "abandoned" >/dev/null 2>&1
 check "ff-chip close --rc 10 exits 10" 10 \
   bash "$S/ff-chip.sh" close --run ch --id lane2 --repo "$CHR" --rc 10 --note "wrong approach"
+# a chip on a SHA-base run (the shape ff-plan writes) still measures commits:
+# the old close rejected the sha via show-ref, fell back to bare "HEAD" INSIDE
+# the lane (a self-compare), and recorded commits=0 for every such chip
+# (ADR-035 - the telemetry twin of the 2026-08-25 ff-clean trap).
+CHSHA="$(git -C "$CHR" rev-parse HEAD | tr -d '\r')"
+bash "$S/ff-chip.sh" open --run chsha --id lane1 --repo "$CHR" --base "$CHSHA" --task "sha-base chip" >/dev/null 2>&1
+jq -e --arg b "$CHSHA" '.base==$b' "$CHR/.fleetflow/chsha/manifest.json" >/dev/null 2>&1 \
+  && ok "ff-chip open: sha --base accepted and recorded (not swapped for 'HEAD')" \
+  || bad "ff-chip open: sha base mangled to '$(jq -r '.base' "$CHR/.fleetflow/chsha/manifest.json" 2>/dev/null)'"
+echo y > "$CHR/.fleetflow/chsha/wt-lane1/y.txt"
+git -C "$CHR/.fleetflow/chsha/wt-lane1" add y.txt
+git -C "$CHR/.fleetflow/chsha/wt-lane1" -c user.email=t@t -c user.name=t commit -q -m "chip work"
+bash "$S/ff-chip.sh" close --run chsha --id lane1 --repo "$CHR" --note "done" >/dev/null 2>&1
+jq -e '.chip.commits==1' "$CHR/.fleetflow/chsha/lane1.result.json" >/dev/null 2>&1 \
+  && ok "ff-chip close: commits measured on a sha-base run (no bare-HEAD self-compare)" \
+  || bad "ff-chip close: sha-base run measured commits=$(jq -r '.chip.commits' "$CHR/.fleetflow/chsha/lane1.result.json" 2>/dev/null)"
 # resume reports chip packets as skipped - never silently dropped
 bash "$S/ff-run.sh" resume --run ch --repo "$CHR" 2>/dev/null \
   | jq -e '[.[]|select(.status=="chip")] | length == 2' >/dev/null \
@@ -2502,7 +2537,7 @@ git -C "$CLR" worktree add -q -b fleetflow/rp/lane "$CLR/.fleetflow/rp/wt-lane" 
 ( cd "$CLR/.fleetflow/rp/wt-lane" && echo work > w.txt && git add w.txt && git commit -qm "feat: lane work" )
 printf '{"type":"started","key":"k","id":"lane","model":"sonnet"}' > "$CLR/.fleetflow/rp/journal.jsonl"
 CLOUT="$(bash "$S/ff-clean.sh" --run rp --repo "$CLR" --no-archive 2>&1)"
-printf '%s' "$CLOUT" | grep -q "lane	kept	1 commits"   && ok "clean: committed lane with a SHA base is KEPT (the 2026-08-25 destroyer)"   || bad "clean: sha-base lane not kept - committed work would be destroyed: $CLOUT"
+printf '%s' "$CLOUT" | grep -q "lane	kept	1 unmerged commits"   && ok "clean: committed lane with a SHA base is KEPT (the 2026-08-25 destroyer)"   || bad "clean: sha-base lane not kept - committed work would be destroyed: $CLOUT"
 git -C "$CLR" show-ref --verify --quiet refs/heads/fleetflow/rp/lane   && ok "clean: the committed lane branch survives"   || bad "clean: lane branch deleted despite unmerged commits"
 
 # git deduplicates worktree metadata names; the grant must be ASKED of git,

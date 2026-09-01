@@ -180,7 +180,12 @@ EOF
 
   [ -n "$BASE" ] || BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"
   [ -n "$BASE" ] && [ "$BASE" != "null" ] || BASE="main"
-  git -C "$REPO" show-ref --verify --quiet "refs/heads/$BASE" || BASE="HEAD"
+  # BASE may be a branch name OR a sha/commit-ish (ff-plan records the sha).
+  # Accept anything that resolves to a commit in the MAIN repo - the old
+  # branch-names-only show-ref check silently swapped a sha base for "HEAD",
+  # forking the lane from the wrong commit and recording the literal string
+  # "HEAD" into a fresh manifest (garbage for every later reader). See ADR-035.
+  git -C "$REPO" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null 2>&1 || BASE="HEAD"
 
   WORKDIR="$RUNDIR/wt-$ID"
   if [ ! -d "$WORKDIR" ]; then
@@ -290,7 +295,15 @@ KEY="$(jq -r --arg id "$ID" 'select(.type=="started" and .model=="chip" and .id=
 WORKDIR="$RUNDIR/wt-$ID"
 BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"
 [ -n "$BASE" ] && [ "$BASE" != "null" ] || BASE="main"
-git -C "$REPO" show-ref --verify --quiet "refs/heads/$BASE" || BASE="HEAD"
+# BASE may be a branch name OR a sha (ff-plan records the sha at authoring).
+# Resolve it to a commit in the MAIN repo before the lane-side rev-list below:
+# the old branch-name-or-bare-"HEAD" fallback rejected sha bases via show-ref
+# and then resolved "HEAD" INSIDE the lane as a self-compare (HEAD..HEAD),
+# recording commits=0 for every chip on a sha-based run - the same trap that
+# hit ff-clean on 2026-08-25 (see ADR-035). Emptiness, not exit status, is the
+# failure test: the pipe through tr would mask rev-parse's status.
+BASE_SHA="$(git -C "$REPO" rev-parse --verify --quiet "$BASE^{commit}" 2>/dev/null | tr -d '\r')"
+[ -n "$BASE_SHA" ] || BASE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null | tr -d '\r')"
 
 # Measured, never self-reported. A chip's own account of what it did is exactly
 # the thing a gate exists to check - the same reason ff-status derives tokens
@@ -298,7 +311,7 @@ git -C "$REPO" show-ref --verify --quiet "refs/heads/$BASE" || BASE="HEAD"
 # metadata). Commits and dirt are facts the lane cannot misstate.
 COMMITS=0 DIRTY=0 HEAD_SHA=""
 if [ -d "$WORKDIR" ]; then
-  COMMITS="$(git -C "$WORKDIR" rev-list --count "$BASE..HEAD" 2>/dev/null || echo 0)"
+  COMMITS="$(git -C "$WORKDIR" rev-list --count "$BASE_SHA..HEAD" 2>/dev/null || echo 0)"
   [ -n "$(git -C "$WORKDIR" status --porcelain 2>/dev/null)" ] && DIRTY=1
   HEAD_SHA="$(git -C "$WORKDIR" rev-parse --short HEAD 2>/dev/null || true)"
 else
