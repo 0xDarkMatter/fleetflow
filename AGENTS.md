@@ -99,11 +99,17 @@ a plain clone with neither, the git rules relax to ordinary practice.
   failed lane's dirty tree and must keep doing so; ff-sweep passes it only for
   runs it has proven carry zero tracked modifications.
   See [docs/adr/ADR-020](docs/adr/ADR-020-sweep-reclaims-only-archived-and-landed.md).
-- **Do not add a `--landed` flag to `ff-clean` — it was built and deleted.**
-  `git rev-list --count $BASE..HEAD` is already 0 once a lane is merged (the
-  same question as `merge-base --is-ancestor`), so the existing "zero commits +
-  clean" row reclaims landed lanes today. A test pins that equivalence. The
-  disk that accumulated was ff-clean never being *run*, not ff-clean refusing.
+- **Do not add a `--landed` flag to `ff-clean` — it was built and deleted —
+  and never revert ff-clean to counting from the manifest `base`.** ff-clean
+  counts commits unreachable from the INTEGRATION branch (manifest base if it
+  names a live branch, else main/master — see
+  [docs/adr/ADR-035](docs/adr/ADR-035-landedness-is-ancestry-in-the-integration-branch.md)),
+  so a landed lane counts zero whatever the landing style and the existing
+  "zero commits + clean" row reclaims it. Base-counting looks equivalent but
+  is not: real manifests record a frozen sha, and `rev-list BASE..HEAD` keeps
+  counting a merge-landed lane's own commits forever (the 2026-09-01 "kept 3
+  commits" bug — a test pins the inequivalence). The disk that accumulated
+  was ff-clean never being *run*, not ff-clean refusing.
 - **`tests/run.sh` exports its own `FLEETFLOW_HOME` — never remove that line.**
   `ff-clean` archives before it removes (ADR-011), so every ff-clean exercise
   appends a throwaway `rc` run to the machine-level history the dashboard

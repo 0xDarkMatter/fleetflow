@@ -18,6 +18,18 @@ untracked leftovers are a separate verdict that must be opted into after their
 paths have been printed — all of which is decided in `ff-sweep`, which adds no
 flag to and changes no behaviour of `ff-clean`.
 
+> **Amended by [ADR-035](ADR-035-landedness-is-ancestry-in-the-integration-branch.md)
+> (2026-09-02).** The Context claim below that `rev-list --count $BASE..HEAD`
+> "is **0 for a landed lane** — the same question as `merge-base
+> --is-ancestor`" is true only when `base` names a live branch. Real manifests
+> record a frozen sha (ADR-026), for which the count keeps a landed lane's own
+> commits forever after a merge landing — observed 2026-09-01, run
+> `studio-live`: every merge-landed lane read "kept 3 commits" and nothing
+> reclaimed. The decision above stands unchanged; the mechanism moved:
+> `ff-clean` now counts commits unreachable from the *integration branch*,
+> and the test that pinned the equivalence now pins the inequivalence. The
+> original text is preserved uncorrected below, per the append-only contract.
+
 ## Context
 
 `ff-clean` answers "tear down *this* run". Nothing answered "what is still on
