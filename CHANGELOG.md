@@ -23,6 +23,17 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- A relative `--repo` (ff-plan passes `.`) broke every launch branch that
+  dereferences `$SENT` inside its `cd "$WORKDIR"` subshell: codex/grok/pi
+  lanes died "No such file or directory" before the worker launched (rc=1,
+  empty artifact), and glm silently launched with an EMPTY packet because its
+  `$(cat "$SENT")` expansion swallowed the failure. ff-spawn now normalises
+  REPO to an absolute path right after validating it - fixing every caller at
+  once - and canonicalises `$SCHEMA` the same way (codex passes the path,
+  grok cats it, both inside the launch subshell). Regression-tested with a
+  PATH-stubbed codex driving the real launch branch (`--repo .` +
+  `--worktree`), since `--dry-run` never reaches the cd. Observed 2026-09-01,
+  run studio-live - the refute lane.
 - Codex re-test round 5, all three findings closed: the launcher parity check
   is a machine-readable handshake (`fleet-worker --capabilities` must exit 0
   and declare the exact `claude-bin-override` token; the round-4 textual grep

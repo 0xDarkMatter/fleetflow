@@ -129,6 +129,32 @@ check "spawn: worktree lane" 0 bash "$S/ff-spawn.sh" --run r1 --id lane --model 
 git -C "$REPO" show-ref --verify --quiet refs/heads/fleetflow/r1/lane && ok "lane branch created" || bad "lane branch missing"
 [ -d "$REPO/.fleetflow/r1/wt-lane" ] && ok "lane worktree created" || bad "lane worktree missing"
 
+# --- relative --repo survives the launch cd (incident 2026-09-01, run studio-live) --
+# ff-plan refute spawns with `--repo .` + --worktree. $SENT derives from REPO,
+# and the launch branches dereference it INSIDE the `cd "$WORKDIR"` subshell -
+# a relative REPO left `./.fleetflow/<run>/<id>.prompt.txt` unresolvable after
+# the cd, so codex lanes died rc=1 before the worker ever ran. --dry-run skips
+# the launch cd entirely, so this MUST drive a real launch branch: codex is
+# PATH-stubbed (precedent: the du stub and stub-claude below) to prove the
+# stdin redirect resolves and the -o artifact path lands where collect looks.
+CXBIN="$TMP/codex-stub-bin"; mkdir -p "$CXBIN"
+cat > "$CXBIN/codex" <<'EOF'
+#!/usr/bin/env bash
+# minimal `codex exec` stand-in: drain the packet from stdin, honour -o, exit 0
+out=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+cat > /dev/null
+[ -z "$out" ] || printf '{"stub":true}\n' > "$out"
+EOF
+chmod +x "$CXBIN/codex"
+RELRC=0
+( cd "$REPO" && PATH="$CXBIN:$PATH" bash "$S/ff-spawn.sh" --run rrel --id c1 --model codex \
+    --prompt-file "$PKT" --worktree --repo . ) >/dev/null 2>&1 || RELRC=$?
+[ "$RELRC" = 0 ] && ok "spawn: relative --repo . + --worktree launches (rc=0)" \
+  || bad "spawn: relative --repo broke the launch cd (rc=$RELRC, see $REPO/.fleetflow/rrel/c1.err)"
+[ -s "$REPO/.fleetflow/rrel/c1.last.txt" ] && ok "spawn: relative --repo artifact written at the absolute run dir" \
+  || bad "spawn: relative --repo artifact missing (worker never launched or -o misresolved)"
+
 # --- worker heartbeat (stall signal for models with no native stream) ------------
 grep -q 'HEARTBEAT' "$REPO/.fleetflow/r1/lane.prompt.txt" \
   && ok "spawn: worktree lane prompt carries HEARTBEAT clause" || bad "spawn: heartbeat clause missing (worktree lane)"

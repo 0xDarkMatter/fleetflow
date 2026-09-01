@@ -203,6 +203,22 @@ command -v git >/dev/null || { err "git required"; exit 5; }
 
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
+# Absolute from here on. RUNDIR/SENT/WORKDIR all derive from REPO, and every
+# launch branch dereferences $SENT inside its `cd "$WORKDIR"` subshell - with a
+# relative --repo (ff-plan passes `.`) the redirect resolved against the LANE
+# dir after the cd: codex/grok/pi lanes died "No such file or directory" before
+# the worker launched (rc=1, empty artifact), and glm silently launched with an
+# EMPTY packet because its `$(cat "$SENT")` expansion swallowed the failure
+# (incident 2026-09-01, run studio-live - the refute lane).
+# pwd -W (Git Bash builtin) keeps the drive-letter flavour git itself emits
+# (`X:/...`): archive_transcript's project-dir slug is derived from $WORKDIR,
+# and a `/x/...` POSIX-flavour path would encode a slug claude never writes.
+# Non-MSYS hosts don't have -W and fall back to plain pwd.
+REPO="$(cd "$REPO" && { pwd -W 2>/dev/null || pwd -P; })" || { err "cannot resolve --repo to an absolute path"; exit 2; }
+# same cd hazard, other input: codex --output-schema takes the $SCHEMA path and
+# grok cats it, both inside the launch subshell - canonicalise while the
+# caller's cwd still resolves it ([ -f ] above proved the file exists).
+[ -z "$SCHEMA" ] || SCHEMA="$(abspath "$SCHEMA")"
 
 RUNDIR="$REPO/.fleetflow/$RUN"
 mkdir -p "$RUNDIR"
