@@ -168,7 +168,7 @@ live in [references/worker-contracts.md](references/worker-contracts.md).
 | `glm` | GLM-5.3 (default) · GLM-4.5-Air (small) | `claude -p` → z.ai endpoint, isolated config dir | session transcript | yes | build, mechanical, scout: proven cheap |
 | `codex` | GPT-5.6 family | `codex exec`, OpenAI's own agent harness, OS sandbox | `--json` event stream | yes (scoped git grants, [ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)) | build, cross-provider dissent |
 | `grok` | grok-4.5 | `grok -p`, xAI's own agentic CLI | none (buffered to exit); heartbeat file covers stalls | yes | build, cross-provider dissent |
-| `pi` | wildcard: gemini, deepseek, groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | build via any provider; third opinion |
+| `pi` | wildcard: Gemini (`google`), OpenRouter, DeepSeek, Groq, 15+ providers | `pi -p`, one harness fronting many providers | `--json` event stream | yes | build via any provider; third opinion |
 | `sonnet` / `haiku` | Claude Sonnet / Haiku | `claude -p`, host auth | session transcript | yes | build, scout / mechanical |
 | `opus` / `fable` | Claude Opus / Fable | `claude -p`, host auth | session transcript | yes | verify, judge / orchestrator |
 | `chip` | whatever the chip session runs | a human-clicked Claude Code session, adopted via `ff-chip` | transcript + heartbeat | yes | manual work as a first-class lane |

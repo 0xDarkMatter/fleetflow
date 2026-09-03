@@ -63,7 +63,7 @@ ENV (pi model)
   FLEETFLOW_PI_BIN                 pi launcher (default: pi on PATH; point at a
                                    local install's pi.cmd, e.g. X:/Agents/Pi/pi.cmd)
   FLEETFLOW_PI_PROVIDER            provider passed to `pi --provider` (pi's
-                                   wildcard slot: gemini, deepseek, zai, groq, ...)
+                                   wildcard slot: google=Gemini, openrouter, deepseek, zai, groq, ...)
   FLEETFLOW_PI_MODEL               model passed to `pi --model`
                                    NOTE: lanes get an ISOLATED PI_CODING_AGENT_DIR,
                                    so ~/.pi/agent/auth.json does NOT apply - the
@@ -611,9 +611,13 @@ else
         mkdir -p "$REFDIR" "$LOGDIR"
         CODEX_GIT_GRANTS=( --add-dir "$WTGIT" --add-dir "$MAINGIT/objects" --add-dir "$REFDIR" --add-dir "$LOGDIR" )
       fi
+      # codex-cli 0.153+: --approve-for-me already implies the workspace-write
+      # sandbox and REJECTS an explicit -s ("the argument '--approve-for-me'
+      # cannot be used with '--sandbox'", verified 2026-09-04). 0.144 accepted
+      # both; passing only --approve-for-me works on both lines.
       ( cd "$WORKDIR" && \
         UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
-        codex exec --full-auto --ephemeral --color never --json \
+        codex exec --approve-for-me --ephemeral --color never --json \
           ${CODEX_GIT_GRANTS[@]+"${CODEX_GIT_GRANTS[@]}"} \
           ${CODEX_WINSANDBOX:+-c windows.sandbox="$CODEX_WINSANDBOX"} \
           ${FLEETFLOW_CODEX_MODEL:+-m "$FLEETFLOW_CODEX_MODEL"} \
@@ -643,7 +647,9 @@ else
     pi)
       # earendil-works Pi (@earendil-works/pi-coding-agent) - one harness
       # fronting 15+ providers, which makes this model the fleet's WILDCARD
-      # slot: gemini/deepseek/zai/groq/... are env changes, not new model code.
+      # slot: google (Gemini)/openrouter/deepseek/zai/groq/... are env changes,
+      # not new model code. Provider names are pi's own (Gemini = `google`);
+      # ff-doctor's pi-auth key map keys on the same names.
       # Posture is GLM-class: NO sandbox, so the cage is the worktree lane +
       # guard preamble; and pi has NO --max-turns equivalent, so bounds are the
       # stall detector + orchestrator wall-clock patience. Headless pi never

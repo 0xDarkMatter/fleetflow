@@ -42,7 +42,7 @@ OpenAI's agent harness, non-interactive. Flag map (codex-cli 0.125.0):
 |---|---|
 | `[PROMPT]` or stdin | prompt as arg, or piped (`-` explicit); piped stdin appends as a `<stdin>` block |
 | `-m, --model <MODEL>` | model override; omit to use the user's `config.toml` default |
-| `--full-auto` | sandboxed automatic execution (workspace-write) — the fleetflow default |
+| `--approve-for-me` | automatic approvals inside the workspace-write sandbox — the fleetflow default since codex-cli 0.153 (2026-09-04). It IMPLIES the sandbox: 0.153 rejects an explicit `-s` beside it (`the argument '--approve-for-me' cannot be used with '--sandbox'`), where 0.144 accepted both. `--full-auto` was the pre-0.153 spelling |
 | `-s, --sandbox <read-only\|workspace-write\|danger-full-access>` | explicit sandbox policy; prefer over `--dangerously-bypass-approvals-and-sandbox` (only for externally-sandboxed environments) |
 | `-C, --cd <DIR>` | working root — **point at the lane worktree**; this is the confinement |
 | `--add-dir <DIR>` | extra writable dirs (rarely needed; widens the cage) |
@@ -97,7 +97,7 @@ binary and protocol, **not** a `claude -p` wrapper. Verified against
   ff-spawn runs it from the lane worktree (`cd`), so grok's own `-w/--worktree`
   is deliberately unused — the cage is fleetflow's worktree, one owner per tree.
 - **Autonomous tools:** `--always-approve` auto-approves *all* tool executions —
-  the codex `--full-auto` analog and a **blast-radius flag**; safe only because
+  the codex `--approve-for-me` analog and a **blast-radius flag**; safe only because
   the lane worktree + escape guard bound it. Granular alternative:
   `--permission-mode dontAsk` + `--allow <RULE>` (mirrors Claude Code
   `--allowedTools`; modes: `default|acceptEdits|auto|dontAsk|bypassPermissions|plan`).
@@ -177,9 +177,21 @@ binary and protocol, **not** a `claude -p` wrapper. Verified against
 earendil-works **Pi** (`@earendil-works/pi-coding-agent`; 0.83.0 verified
 2026-08-01, local install `X:\Agents\Pi` driven via `FLEETFLOW_PI_BIN=X:/Agents/Pi/pi.cmd`).
 A minimal agent harness fronting **15+ providers / hundreds of models** — which
-makes it the fleet's **wildcard model**: gemini, deepseek, zai, groq, mistral,
-openrouter… are `FLEETFLOW_PI_PROVIDER`/`FLEETFLOW_PI_MODEL` env changes, not
-new model code. Also a genuinely third *harness* (its own read/bash/edit/write
+makes it the fleet's **wildcard model**: google (Gemini), deepseek, zai, groq,
+mistral, openrouter… are `FLEETFLOW_PI_PROVIDER`/`FLEETFLOW_PI_MODEL` env
+changes, not new model code. Provider names are **pi's**, and ff-doctor's
+key map keys on them: Gemini is `FLEETFLOW_PI_PROVIDER=google` (→
+`GEMINI_API_KEY`); `gemini` is not a provider and fails closed at exit 7.
+Verified live 2026-09-04: `google` + `GEMINI_API_KEY` ran full lanes on
+`gemini-3.6-flash` and `gemini-3.8-flash` (commit, collect, main clean).
+**Uncatalogued ids are accepted**: pi warns `Model "X" not found for
+provider "P". Using custom model id.` and sends it anyway, so a model newer
+than pi's bundled catalogue only needs its exact id in `FLEETFLOW_PI_MODEL`.
+`openrouter` + `OPENROUTER_API_KEY` authenticated the same day but
+`meta/muse-spark-1.3` (and its `-contributor` variant) returned 403
+`missing_attestation_types: age_18plus` - an OpenRouter account setting,
+not a fleetflow or pi fault; the lane reads `failed` with the 403 in
+`result`, which is the gate doing its job. Also a genuinely third *harness* (its own read/bash/edit/write
 toolchain), so it doubles as cross-harness dissent alongside codex and grok.
 
 - **Launch**: `pi -p --mode json --no-extensions --no-skills

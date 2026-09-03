@@ -23,6 +23,19 @@ shipped, the ADRs own WHY.
 - SKILL.md: "Orchestrating from another harness" - the off-host rules.
 
 ### Fixed
+- codex-cli 0.153 refused every codex lane at spawn (rc=2, `the argument
+  '--approve-for-me' cannot be used with '--sandbox'`): the flag now implies
+  the workspace-write sandbox, so ff-spawn passes `--approve-for-me` alone
+  (0.144 accepted the pair). Guard comment at the launch line; contract,
+  SKILL.md safety text, and the dashboard HARNESS matrix updated together.
+  Lanes that cached the rc=2 result re-spawn with `--force`. Observed
+  2026-09-04, TessituraMCP run.
+- Pi's Gemini seat was documented as `FLEETFLOW_PI_PROVIDER=gemini`, which
+  ff-doctor's key map does not know (fails closed, exit 7). The provider is
+  pi's own name, `google`; SKILL.md, README, the worker contract, and the
+  ff-spawn comments now say so. Verified live: full `gemini-3.6-flash` and
+  `gemini-3.8-flash` lanes through pi (the latter is newer than pi's
+  catalogue - pi accepts an uncatalogued id with a warning).
 - A relative `--repo` (ff-plan passes `.`) broke every launch branch that
   dereferences `$SENT` inside its `cd "$WORKDIR"` subshell: codex/grok/pi
   lanes died "No such file or directory" before the worker launched (rc=1,

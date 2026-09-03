@@ -98,7 +98,7 @@ workers**, where each worker gets its own env block — and therefore its own mo
 | **GLM-5.3 / GLM-4.5-Air** | `claude -p` → z.ai endpoint | Claude Code tools, cheap model (via `fleet-worker`) |
 | **Codex** (GPT-class) | `codex exec` | OpenAI's own agent harness — a genuinely different toolchain *and* model |
 | **Grok** (xAI grok-4.5) | `grok -p` | xAI's own agentic CLI — a different provider, model, *and* toolchain (like Codex); `GROK_DEPLOYMENT_KEY` auth |
-| **Pi** (wildcard: gemini/deepseek/zai/groq/…) | `pi -p` | earendil-works Pi — one harness fronting 15+ providers; `FLEETFLOW_PI_PROVIDER`/`_MODEL` pick the model, provider API-key env auth ([contract §4](references/worker-contracts.md)) |
+| **Pi** (wildcard: Gemini via `google`, openrouter, deepseek, zai, groq, …) | `pi -p` | earendil-works Pi — one harness fronting 15+ providers; `FLEETFLOW_PI_PROVIDER`/`_MODEL` pick the model, provider API-key env auth ([contract §4](references/worker-contracts.md)) |
 | **Sonnet / Haiku** | `claude -p --model sonnet\|haiku` | Claude Code tools, host auth |
 | **Opus** | `claude -p --model opus` | reserve for verify/judge lanes |
 
@@ -134,7 +134,7 @@ with the Codex/Grok columns and the orchestrator rule:
 | **scout** (survey, inventory, locate) | Sonnet, GLM-5.3 | breadth over depth |
 | **build** (scoped features, refactors) | Sonnet, GLM-5.3, Codex, Grok | Codex/Grok = independent harnesses; GLM-5.3 = open-weights coding SOTA at commodity rates; good second implementations for judge panels |
 | **verify / judge** | Opus + one cross-provider dissenter (Codex, Grok, GLM, or Pi) | *never under-power a judge*; diversity beats redundancy |
-| **wildcard** (build or verify on a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=gemini\|deepseek\|…`) | one integration, 15+ providers; builds as readily as it refutes; no sandbox and no turn cap — worktree + stall detector are the bounds |
+| **wildcard** (build or verify on a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=google\|openrouter\|deepseek\|…` — pi's provider names, so Gemini is `google`, not `gemini`) | one integration, 15+ providers; builds as readily as it refutes; no sandbox and no turn cap — worktree + stall detector are the bounds |
 | **synthesize / land decisions** | orchestrator (Fable > Opus) | needs the conversation's context |
 
 Two guardrails carried over verbatim from the native tool's doctrine: reach for
@@ -532,8 +532,9 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
 ## Safety — the cage, not the model
 
 - **Isolation:** every mutating worker gets its own worktree lane *and* (GLM)
-  its own `CLAUDE_CONFIG_DIR`. Codex workers run `--full-auto` (sandboxed,
-  workspace-write) confined to their lane via `-C`. Grok workers run
+  its own `CLAUDE_CONFIG_DIR`. Codex workers run `--approve-for-me` (which
+  implies the workspace-write sandbox; codex-cli 0.153 rejects an explicit
+  `-s` beside it) confined to their lane via `-C`. Grok workers run
   `--always-approve` (autonomous tools), confined by the lane worktree — no
   config-dir isolation needed (no Claude OAuth to collide with; auth is the
   `GROK_DEPLOYMENT_KEY` env var, read from env, never written to disk).

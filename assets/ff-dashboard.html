@@ -1877,7 +1877,7 @@ const HARNESS = [
     stream:"session transcript", conc:"4–6", commits:true,
     role:"build · mechanical · scout — proven cheap",
     checks:["fleet-worker","glm-endpoint"] },
-  { k:"codex", cls:"OpenAI", proc:"codex exec --full-auto --json",
+  { k:"codex", cls:"OpenAI", proc:"codex exec --approve-for-me --json",
     auth:"ChatGPT plan (codex login)", sandbox:"AppContainer, workspace-write, -C lane",
     stream:"--json event stream", conc:"2–3 on Windows", commits:false,
     role:"build · cross-provider dissent",
