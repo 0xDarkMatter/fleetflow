@@ -350,6 +350,17 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   fleetflow points; it never picks — auto-switching the account a fan-out bills
   to is not a decision a script should make
   ([ADR-036](docs/adr/ADR-036-lane-auth-is-a-config-dir-fleetflow-never-picks-the-profile.md)).
+- ⚡ **The plan lint's ADR gate makes one call per packet, not one per
+  path.** adr-ops's `adr-touching` now takes many paths at once and answers
+  each inside a single envelope, so on the live `tess-v1` plan (41 packets,
+  251 owned paths) the lint spawns it 33 times instead of 251 — that phase
+  drops 42.0s to 6.4s on identical verdicts. It is not the lint's
+  bottleneck: an O(n²) scope matrix still dominates, and on a plan that size
+  the lint does not finish. An older single-path `adr-touching` keeps
+  working — the lint notices the usage error and falls back to one call per
+  path, naming the fallback in the check's reason instead of quietly
+  disarming
+  ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)).
 - 🚨 **The plan lint's ADR gate stopped skipping itself**: `ff plan
   lint` handed every one of a packet's owned paths to `adr-touching` in
   one call, but that tool takes a single query and exits 2 on more —
