@@ -187,11 +187,13 @@ Verified live 2026-09-04: `google` + `GEMINI_API_KEY` ran full lanes on
 **Uncatalogued ids are accepted**: pi warns `Model "X" not found for
 provider "P". Using custom model id.` and sends it anyway, so a model newer
 than pi's bundled catalogue only needs its exact id in `FLEETFLOW_PI_MODEL`.
-`openrouter` + `OPENROUTER_API_KEY` authenticated the same day but
-`meta/muse-spark-1.3` (and its `-contributor` variant) returned 403
-`missing_attestation_types: age_18plus` - an OpenRouter account setting,
-not a fleetflow or pi fault; the lane reads `failed` with the 403 in
-`result`, which is the gate doing its job. Also a genuinely third *harness* (its own read/bash/edit/write
+`openrouter` + `OPENROUTER_API_KEY` ran a full `meta/muse-spark-1.3` lane
+at `--effort max` (pi `--thinking xhigh`).
+**Some OpenRouter models are gated per ACCOUNT, not per key**: that model
+first returned 403 `missing_attestation_types: age_18plus` until the
+attestation was accepted at openrouter.ai/settings/preferences. The lane
+reads `failed` with the 403 verbatim in `result` - the gate doing its job,
+not a fleetflow or pi fault, and nothing a retry fixes. Also a genuinely third *harness* (its own read/bash/edit/write
 toolchain), so it doubles as cross-harness dissent alongside codex and grok.
 
 - **Launch**: `pi -p --mode json --no-extensions --no-skills

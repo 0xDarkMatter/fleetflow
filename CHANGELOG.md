@@ -35,7 +35,9 @@ shipped, the ADRs own WHY.
   pi's own name, `google`; SKILL.md, README, the worker contract, and the
   ff-spawn comments now say so. Verified live: full `gemini-3.6-flash` and
   `gemini-3.8-flash` lanes through pi (the latter is newer than pi's
-  catalogue - pi accepts an uncatalogued id with a warning).
+  catalogue - pi accepts an uncatalogued id with a warning). OpenRouter
+  lanes verified the same way (`meta/muse-spark-1.3` at `--effort max`),
+  including the account-level attestation gate some models carry.
 - A relative `--repo` (ff-plan passes `.`) broke every launch branch that
   dereferences `$SENT` inside its `cd "$WORKDIR"` subshell: codex/grok/pi
   lanes died "No such file or directory" before the worker launched (rc=1,
