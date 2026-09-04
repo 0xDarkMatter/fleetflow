@@ -481,7 +481,7 @@ if [ -n "$FOR_MODELS" ] || case "$ORCH_EXPLICIT" in sonnet|haiku|opus|fable) tru
     if [ -n "$_R" ] && [ "$(printf '%s' "$_R" | jq -r 'if has("is_error") then (.is_error|tostring) else "true" end' 2>/dev/null)" = "false" ]; then
       say "model-$_wm" ok "responds"
     else
-      say "model-$_wm" unreachable "no successful reply"; UNREACH=1
+      say "model-$_wm" unreachable "no successful reply"; UNREACH=1; CLAUDE_AUTH_FAIL=1
     fi
   done
 fi
@@ -494,9 +494,32 @@ if [ -z "$ORCH_EXPLICIT" ] && command -v "$CLAUDEBIN" >/dev/null; then
       say "model-$m" ok "responds"
       break
     else
-      say "model-$m" unavailable "no successful reply"
+      say "model-$m" unavailable "no successful reply"; CLAUDE_AUTH_FAIL=1
     fi
   done
+fi
+
+# --- claude auth escape hatch (ADR-036) --------------------------------------
+# When the host claude store cannot answer, EVERY claude-family lane in a
+# fan-out dies at once, mid-run - the failure this hint exists to shorten
+# (observed 2026-09-04: a 33-lane run lost every sonnet/opus lane to one
+# expired host token, diagnosed by hand). fleetflow does not pick a profile: it
+# NAMES the ones a profile manager already reports healthy and leaves the choice
+# to a human, because silently moving a fan-out onto a different account is
+# exactly the surprise ADR-004/ADR-016 click-gate elsewhere.
+#
+# Strictly conditional on the roost binary, per ADR-016's pass-through posture -
+# an absent roost emits nothing at all, never a nag about a tool you don't run.
+if [ "${CLAUDE_AUTH_FAIL:-0}" = 1 ] && command -v roost >/dev/null 2>&1; then
+  _rp="$(timeout 30 roost status --json 2>/dev/null \
+        | jq -r '[.data[]? | select(.health=="ok")] | sort_by(.usage.session_pct // 100)
+                 | .[] | "\(.name)(\(.usage.session_pct // "?")%)"' 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+  _rp="${_rp% }"
+  if [ -n "$_rp" ]; then
+    say "claude-auth-fallback" advisory "host claude auth failed; healthy roost profiles (least-used first): $_rp - spawn with --config-dir \$HOME/.claude-profiles/<name>"
+  else
+    say "claude-auth-fallback" advisory "host claude auth failed and roost reports NO healthy profile - re-login is required"
+  fi
 fi
 # Persist the probe so ff-spawn has a default when a session forgets to pass
 # --orchestrator. A best guess recorded as such beats a null nobody can fill in

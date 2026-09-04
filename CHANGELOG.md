@@ -7,6 +7,26 @@ shipped, the ADRs own WHY.
 
 ## [Unreleased]
 
+### Added
+- `ff-spawn --config-dir DIR`: run a claude-family lane against another
+  `CLAUDE_CONFIG_DIR` instead of the host's. Anthropic lanes inherit the host
+  store by design, which makes one expired host token fatal to every
+  claude-family lane in a fan-out simultaneously, mid-run (observed 2026-09-04,
+  a 33-lane run). The flag takes ANY directory - a roost profile under
+  `~/.claude-profiles/<name>` or any other store - and is refused for
+  non-claude models, a missing dir, and the host config itself. Not part of the
+  cache key: the same packet on the same model is the same work whichever
+  account paid. Transcript archiving follows the redirect.
+- `ff-doctor` emits a `claude-auth-fallback` advisory when a claude probe fails
+  and `roost` is installed, naming healthy profiles least-used first plus the
+  exact `--config-dir` to pass. It NAMES, never selects - auto-switching the
+  account a fan-out bills to is the surprise ADR-004/ADR-016 click-gate
+  elsewhere - and is silent when roost is absent (ADR-036).
+- ADR-036: a lane's claude auth is a config dir fleetflow points at; choosing
+  the profile is never fleetflow's job. Rejects both a roost dependency and a
+  reimplementation of profile health inside fleetflow (the restatement-drift
+  failure ADR-016 named for UI, relocated into code).
+
 ### Fixed
 - `ff-plan lint`'s `adr-constraints` check silently reported `disarmed` on
   every packet: it passed all of a packet's `owns:` paths to adr-ops's

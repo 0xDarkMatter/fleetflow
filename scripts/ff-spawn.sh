@@ -44,6 +44,17 @@ Usage: ff-spawn.sh --run NAME --id ID --model MODEL --prompt-file FILE
                    inherit the model's own default). GLM -> FLEET_WORKER_EFFORT;
                    claude models -> --settings effortLevel; codex -> model_reasoning_effort.
                    Effort IS part of the cache key (different effort = different run).
+  --config-dir DIR claude-family lanes ONLY: run the lane against this
+                   CLAUDE_CONFIG_DIR instead of the host's. The escape hatch for
+                   an expired host session - one dead host token otherwise kills
+                   every Anthropic lane in a fan-out at once, mid-run. Takes ANY
+                   config dir (a roost profile under ~/.claude-profiles/<name>,
+                   or any other store); fleetflow never consults a profile
+                   manager to choose one - see `ff doctor --live`, which NAMES
+                   healthy roost profiles when the host probe fails (ADR-036).
+                   Refused for non-claude models, for a missing dir, and for the
+                   host config itself. NOT part of the cache key: the same packet
+                   on the same model is the same work whichever account paid.
   --schema FILE    JSON Schema for the final answer (codex: native
                    --output-schema; other models: appended to the prompt)
   --no-guard       skip the guard preamble injection
@@ -125,7 +136,7 @@ main() {
 
 RUN="" ID="" MODEL="" PROMPT_FILE="" WORKTREE=0 BASE="main" REPO=""
 MAX_TURNS=100 SCHEMA="" GUARD=1 FORCE=0 DRYRUN=0 PHASE="build" EFFORT=""
-ORCHESTRATOR="" ROUND=0 ACP=0
+ORCHESTRATOR="" ROUND=0 ACP=0 CONFIG_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
@@ -143,6 +154,7 @@ while [ $# -gt 0 ]; do
     --repo) REPO="${2:-}"; shift 2 ;;
     --max-turns) MAX_TURNS="${2:-}"; shift 2 ;;
     --effort) EFFORT="${2:-}"; shift 2 ;;
+    --config-dir) CONFIG_DIR="${2:-}"; shift 2 ;;
     --schema) SCHEMA="${2:-}"; shift 2 ;;
     --acp) ACP=1; shift ;;
     --no-guard) GUARD=0; shift ;;
@@ -156,6 +168,43 @@ done
 case "$MODEL" in glm|codex|grok|pi|sonnet|opus|haiku|fable) ;; *) err "invalid --model '$MODEL'"; exit 2 ;; esac
 case "$EFFORT" in ""|low|medium|high|max) ;; *) err "invalid --effort '$EFFORT' (low|medium|high|max)"; exit 2 ;; esac
 case "$ROUND" in ''|*[!0-9]*) err "invalid --round '$ROUND' (integer >=0)"; exit 2 ;; esac
+
+# --- --config-dir: which auth store a claude-family lane runs against ---------
+# ADR-036. fleetflow owns the MECHANISM (point a lane at a config dir); a
+# profile manager like roost owns the POLICY (which profile is healthy). This
+# flag therefore takes ANY directory and never consults roost - a host with no
+# profile manager still gets the escape hatch.
+#
+# Three guards, each earning its place:
+#   1. claude-family only. glm/pi already isolate via their own launcher vars
+#      (FLEET_WORKER_CONFIG_DIR / PI_CODING_AGENT_DIR); codex and grok have no
+#      Claude OAuth to redirect. Silently ignoring the flag there would be a lie.
+#   2. Must exist. `claude` CREATES a missing config dir and then has no
+#      credentials in it, so a typo'd path degrades into the exact
+#      "OAuth session expired" failure this flag exists to route around.
+#   3. Must not be the host config. Handing a lane the host store is what the
+#      GLM isolation rule (worker contract sec 1) exists to prevent, and it makes
+#      the flag a no-op that reads as a fix.
+if [ -n "$CONFIG_DIR" ]; then
+  case "$MODEL" in
+    sonnet|opus|haiku|fable) ;;
+    *) err "--config-dir applies to claude-family lanes only (got --model $MODEL)"; exit 2 ;;
+  esac
+  [ -d "$CONFIG_DIR" ] || { err "--config-dir not found: $CONFIG_DIR"; exit 2; }
+  if [ "$(abspath "$CONFIG_DIR")" = "$(abspath "${HOME}/.claude")" ]; then
+    err "--config-dir must not be the host config ($HOME/.claude) - that is the store a lane needs to be redirected AWAY from"; exit 2
+  fi
+fi
+# Effective claude store for THIS lane: the flag, else the host. One expression,
+# consumed by both the launch and the transcript archiver, so the two can never
+# disagree about where the session was written.
+CLAUDE_HOME="${CONFIG_DIR:-$HOME/.claude}"
+# Exported (not inlined as `VAR=x cmd`) because a `${CONFIG_DIR:+VAR="$X"}`
+# prefix word-splits on a store path containing spaces - and on Windows the
+# profile dirs live under C:\Users\<name>\, which is exactly where a space
+# shows up. Only set when the flag was given, so the unflagged default is
+# byte-identical to the historic behaviour.
+[ -z "$CONFIG_DIR" ] || export CLAUDE_CONFIG_DIR="$CLAUDE_HOME"
 if [ "$ACP" = 1 ]; then
   # claude-code-acp wraps the Claude Agent SDK - only claude models can sit
   # behind it. Other providers get ACP lanes when they grow ACP adapters.
@@ -513,17 +562,20 @@ archive_transcript() {
       # telemetry); the newest transcript under the lane's project dir is
       # unambiguously ours because the WORKDIR is lane-specific (worktree) or
       # the run just finished (best-effort either way).
+      # $CLAUDE_HOME, not a hardcoded ~/.claude: a --config-dir lane writes its
+      # transcript under THAT store, so archiving must follow the redirect or
+      # every profile-routed lane silently loses its transcript (ADR-036).
       if [ "$ACP" = 1 ]; then
         enc="$(printf '%s' "$WORKDIR" | sed 's#[:\\/.]#-#g')"
-        src="$(ls -t "$HOME/.claude/projects/$enc"/*.jsonl 2>/dev/null | head -1)"
+        src="$(ls -t "$CLAUDE_HOME/projects/$enc"/*.jsonl 2>/dev/null | head -1)"
       else
         sid="$(jq -r '.session_id // empty' "$ART" 2>/dev/null)"
         if [ -n "$sid" ]; then
           # workdir encoding: per-char [:\\/.] -> "-" (verified empirically:
-          # C:\Users\Mack -> C--Users-Mack under ~/.claude/projects)
+          # C:\Users\Mack -> C--Users-Mack under <store>/projects)
           enc="$(printf '%s' "$WORKDIR" | sed 's#[:\\/.]#-#g')"
-          src="$HOME/.claude/projects/$enc/$sid.jsonl"
-          [ -f "$src" ] || src="$(ls "$HOME"/.claude/projects/*/"$sid".jsonl 2>/dev/null | head -1)"
+          src="$CLAUDE_HOME/projects/$enc/$sid.jsonl"
+          [ -f "$src" ] || src="$(ls "$CLAUDE_HOME"/projects/*/"$sid".jsonl 2>/dev/null | head -1)"
         fi
       fi
       ;;
@@ -773,6 +825,9 @@ else
         # blessing one binary while spawn executes another is a false green.
         CLAUDEBIN="${FLEETFLOW_CLAUDE_BIN:-claude}"
         command -v "$CLAUDEBIN" >/dev/null || refuse_lane "claude CLI not found ($CLAUDEBIN)"
+        # CLAUDE_CONFIG_DIR is exported above ONLY when --config-dir was given,
+        # so an unflagged lane inherits the host store exactly as it always has
+        # (ADR-036: the flag adds a route, it never changes the default).
         ( cd "$WORKDIR" && \
           UV_CACHE_DIR="$CACHE_DIR" TMPDIR="$CACHE_DIR" TMP="$CACHE_DIR" TEMP="$CACHE_DIR" \
           "$CLAUDEBIN" -p --model "$CLAUDE_MODEL" --output-format json --max-turns "$MAX_TURNS" \

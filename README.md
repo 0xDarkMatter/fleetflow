@@ -342,6 +342,14 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ### Unreleased
 
+- 🔑 **One expired token no longer kills every Anthropic lane.** Claude-family
+  lanes inherit the host auth store by design, so a single expired session took
+  out an entire tier mid-run — a 33-lane fleet lost every sonnet and opus lane
+  at once. `ff spawn --config-dir <dir>` now routes a lane to another store,
+  and `ff doctor --live` names healthy profiles when the host probe fails.
+  fleetflow points; it never picks — auto-switching the account a fan-out bills
+  to is not a decision a script should make
+  ([ADR-036](docs/adr/ADR-036-lane-auth-is-a-config-dir-fleetflow-never-picks-the-profile.md)).
 - 🚨 **The plan lint's ADR gate stopped skipping itself**: `ff plan
   lint` handed every one of a packet's owned paths to `adr-touching` in
   one call, but that tool takes a single query and exits 2 on more —

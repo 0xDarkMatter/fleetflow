@@ -270,6 +270,19 @@ toolchain), so it doubles as cross-harness dissent alongside codex and grok.
   and MCP are available to the worker. If you want a clean-room Anthropic
   worker, set an isolated `CLAUDE_CONFIG_DIR` + `ANTHROPIC_API_KEY` — then
   provision skills like a GLM worker.
+- **The host store is therefore a single point of failure for the whole
+  Anthropic tier** — one expired host token kills every claude-family lane in a
+  fan-out at once, mid-run (observed 2026-09-04: a 33-lane run lost every
+  sonnet/opus lane to `Failed to authenticate: OAuth session expired and could
+  not be refreshed`). The escape hatch is `ff-spawn --config-dir DIR`, which
+  runs the lane against that store instead: any directory, typically a profile
+  under `~/.claude-profiles/<name>`. fleetflow never picks one — when the host
+  probe fails and `roost` is installed, `ff-doctor --live` emits a
+  `claude-auth-fallback` row NAMING healthy profiles least-used first, and a
+  human chooses. Transcript archiving follows the redirect. The flag is refused
+  for non-claude models, a missing dir, and the host config itself, and is not
+  part of the cache key. See
+  [ADR-036](../docs/adr/ADR-036-lane-auth-is-a-config-dir-fleetflow-never-picks-the-profile.md).
 - **Gate**: same `is_error` JSON semantics as GLM (both are `claude -p`).
 - **Terms note** (from fleet-worker): automating a *subscription* is
   restricted by Anthropic's Consumer Terms except via API key. A

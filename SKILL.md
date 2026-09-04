@@ -619,6 +619,19 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   orchestrator-authored closeout edit — the check must compare against the
   pre-spawn state, not a target the orchestrator just moved. Both incidents:
   [docs/adr/ADR-009](docs/adr/ADR-009-escape-guard-and-baseline.md).
+- **One expired host token kills every claude lane at once — route around it
+  with `--config-dir`.** Anthropic lanes inherit the host claude store by
+  design (host skills and MCP), which makes that store a single point of
+  failure for the whole tier: a 33-lane run on 2026-09-04 lost every
+  sonnet/opus lane mid-run to one expired OAuth session. `ff-spawn --config-dir
+  DIR` runs a claude-family lane against another store (typically
+  `~/.claude-profiles/<name>`). fleetflow does not choose it: when the host
+  probe fails and `roost` is present, `ff doctor --live` prints a
+  `claude-auth-fallback` row naming healthy profiles, least-used first, and you
+  pass the one you want — auto-selection is deliberately refused, since
+  silently moving a fan-out onto a different account is the surprise ADR-004
+  and ADR-016 click-gate elsewhere. See
+  [docs/adr/ADR-036](docs/adr/ADR-036-lane-auth-is-a-config-dir-fleetflow-never-picks-the-profile.md).
 - **Permission posture:** workers run non-interactive
   (`bypassPermissions` default; `FLEETFLOW_PERMISSION_MODE=dontAsk` + allowlist
   when the orchestrator session is in auto mode — a `bypassPermissions` child

@@ -54,6 +54,51 @@ check "spawn: no args" 2 bash "$S/ff-spawn.sh"
 check "spawn: bad model" 2 bash "$S/ff-spawn.sh" --run r1 --id a --model gpt9 --prompt-file "$PKT" --repo "$REPO"
 check "spawn: bad run name" 2 bash "$S/ff-spawn.sh" --run "R 1" --id a --model glm --prompt-file "$PKT" --repo "$REPO"
 check "spawn: missing prompt file" 2 bash "$S/ff-spawn.sh" --run r1 --id a --model glm --prompt-file "$TMP/nope" --repo "$REPO"
+
+# --- ADR-036: --config-dir guards -------------------------------------------
+# Each guard closes a way the flag could LIE about what it did. Silently
+# ignoring it on a non-claude model, or accepting a path `claude` would simply
+# create empty, both look like a fix and route nothing.
+mkdir -p "$TMP/cfgdir"
+check "spawn: --config-dir refuses non-claude models" 2 \
+  bash "$S/ff-spawn.sh" --run r1 --id a --model codex --prompt-file "$PKT" --repo "$REPO" --config-dir "$TMP/cfgdir"
+check "spawn: --config-dir refuses a missing dir" 2 \
+  bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --config-dir "$TMP/no-such-cfg"
+check "spawn: --config-dir refuses the host config" 2 \
+  bash "$S/ff-spawn.sh" --run r1 --id a --model sonnet --prompt-file "$PKT" --repo "$REPO" --config-dir "$HOME/.claude"
+# Its OWN run name, never r1: the cache key is (model|packet|opts) and does NOT
+# include the lane id, so a journaling spawn sharing r1's journal turns the
+# later "spawn: dry-run ok" into a cache hit (exit 3) and its artifact never
+# appears. The guard checks above stay on r1 safely - they exit 2 before any
+# journal write.
+check "spawn: --config-dir accepted for a claude lane" 0 \
+  bash "$S/ff-spawn.sh" --run rcfg --id cfgok --model sonnet --prompt-file "$PKT" --repo "$REPO" --config-dir "$TMP/cfgdir" --dry-run
+# The flag must NOT change the cache key: same packet + model = same work
+# whichever account paid (ADR-036 / ADR-012). Compare journalled keys.
+# --force on the second, or it cache-HITS the first (exit 3) and journals no
+# result to compare - which is the same proof, but silently.
+bash "$S/ff-spawn.sh" --run rkey --id k1 --model sonnet --prompt-file "$PKT" --repo "$REPO" --dry-run >/dev/null 2>&1
+bash "$S/ff-spawn.sh" --run rkey --id k2 --model sonnet --prompt-file "$PKT" --repo "$REPO" --config-dir "$TMP/cfgdir" --dry-run --force >/dev/null 2>&1
+K1="$(jq -r 'select(.type=="result" and .id=="k1")|.key' "$REPO/.fleetflow/rkey/journal.jsonl" 2>/dev/null | head -1 | tr -d '\r')"
+K2="$(jq -r 'select(.type=="result" and .id=="k2")|.key' "$REPO/.fleetflow/rkey/journal.jsonl" 2>/dev/null | head -1 | tr -d '\r')"
+[ -n "$K1" ] && [ "$K1" = "$K2" ] \
+  && ok "spawn: --config-dir is NOT part of the cache key" \
+  || bad "spawn: --config-dir changed the cache key ($K1 vs $K2)"
+# The corollary, asserted directly: an otherwise-identical --config-dir spawn
+# REPLAYS from the journal rather than re-running (exit 3 = cache hit).
+check "spawn: --config-dir spawn cache-hits an unflagged twin" 3 \
+  bash "$S/ff-spawn.sh" --run rkey --id k3 --model sonnet --prompt-file "$PKT" --repo "$REPO" --config-dir "$TMP/cfgdir" --dry-run
+# The archiver must follow the redirect, or every profile-routed lane silently
+# loses its transcript (best-effort archiving makes that invisible).
+grep -q 'CLAUDE_HOME="\${CONFIG_DIR:-\$HOME/.claude}"' "$S/ff-spawn.sh" \
+  && grep -q '\$CLAUDE_HOME/projects/' "$S/ff-spawn.sh" \
+  && ok "spawn: transcript archiving follows --config-dir" \
+  || bad "spawn: archiver still hardcodes ~/.claude (ADR-036)"
+# The doctor NAMES profiles, never selects one - and stays silent without roost.
+grep -q 'claude-auth-fallback' "$S/ff-doctor.sh" \
+  && grep -q 'command -v roost' "$S/ff-doctor.sh" \
+  && ok "doctor: claude-auth fallback hint is roost-conditional" \
+  || bad "doctor: missing roost-conditional claude-auth fallback hint (ADR-036)"
 check "collect: no args" 2 bash "$S/ff-collect.sh" --repo "$REPO"
 check "doctor: bad flag" 2 bash "$S/ff-doctor.sh" --frobnicate
 
