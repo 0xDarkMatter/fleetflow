@@ -26,9 +26,6 @@ Instead, report privately using **GitHub's private vulnerability reporting**:
 2. Click **Report a vulnerability** (under *Advisories*).
 3. Fill in the form with the details below.
 
-If private vulnerability reporting is not available, email
-**<security@example.com>** *(replace with your security contact)* instead.
-
 Please include:
 
 - A description of the vulnerability and its potential impact.
