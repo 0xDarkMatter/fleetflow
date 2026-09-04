@@ -632,7 +632,7 @@ else
       # from the inherited environment - never written to disk or args.
       GROK="${FLEETFLOW_GROK_BIN:-grok}"
       command -v "$GROK" >/dev/null || refuse_lane "grok CLI not found ($GROK)"
-      # --always-approve = codex --full-auto analog: autonomous tool use, headless.
+      # --always-approve = codex --approve-for-me analog: autonomous tool use, headless.
       # --json-schema takes the schema STRING (not a path) and implies json output,
       # surfacing an already-parsed .structuredOutput field (see ff-collect).
       ( cd "$WORKDIR" && \

@@ -12,7 +12,8 @@ metadata:
 
 # fleetflow
 
-> Facts verified as of 2026-08-14 (Claude Code Workflow tool, codex-cli 0.144, fleet-worker GLM-5.3/z.ai).
+> Facts verified as of 2026-09-04 (Claude Code Workflow tool, codex-cli 0.153,
+> grok 0.2.93, pi 0.83, fleet-worker GLM-5.3/z.ai).
 
 ## On invocation — open the dashboard
 

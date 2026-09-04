@@ -2,7 +2,7 @@
 
 [![version](https://img.shields.io/github/v/tag/0xDarkMatter/fleetflow?label=version&color=2d3142)](https://github.com/0xDarkMatter/fleetflow/tags)
 [![license](https://img.shields.io/github/license/0xDarkMatter/fleetflow?color=4f5d75)](LICENSE)
-[![ADRs](https://img.shields.io/badge/ADRs-34-4f5d75)](docs/adr/)
+[![ADRs](https://img.shields.io/badge/ADRs-35-4f5d75)](docs/adr/)
 
 **Heterogeneous cross-provider agent fleets from one orchestrator session.**
 GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
@@ -52,7 +52,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 521 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 525 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -304,11 +304,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[34 ADRs](docs/adr/) covering everything from why the dashboard is one
+[35 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 521-assertion test gate: a malformed decision
+`adr-lint` runs inside the 525-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -339,6 +339,36 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 | [docs/adr/](docs/adr/) | Architecture Decision Records: the append-only WHY behind the standing rules (one process, escape guard, stall detection, pricing, …); lint-gated by the test suite |
 
 ## Recent Updates
+
+### Unreleased
+
+- 🔌 **Gemini and OpenRouter lanes, verified end to end**: the Pi wildcard
+  seat now has tested routes to `google` (Gemini 3.6 and 3.8 Flash) and
+  `openrouter` (any listed model), each running a full lane — self-commit,
+  collect gate, main clean. Pi accepts a model id newer than its own
+  catalogue, so a launch-day model needs no fleetflow change.
+- 🧭 **`ff doctor --for MODEL[,MODEL…]`**: preflight scoped to the models a
+  run actually spawns. A missing harness for a requested model escalates
+  advisory→fail, and `claude` is required only for claude-family, glm, and
+  chip lanes — so a claude-less fleet can be blessed
+  ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
+- 🎯 **The orchestrator seat is harness-agnostic**: any agent that can run
+  the scripts and judge their output may hold it. Verified with opencode
+  1.18 and pi 0.83 each driving `plan draft → lint` end to end, unmodified
+  ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
+- 🛡️ **Codex lanes self-commit via four scoped git grants**: the lane's
+  worktree metadata, the object store, and the lane branch's ref and reflog —
+  nothing else. `.git/config`, `hooks/`, and `refs/heads/main` stay outside
+  the cage, proven with an adversarial config-write probe
+  ([ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)).
+- 🔍 **The preflight stopped lying**: rounds of cross-model review closed
+  false greens in `ff-doctor` — a logged-out codex that matched "Logged in",
+  a glm child whose nonzero exit was masked by a pipeline, requested seats
+  blessed with no verifiable key. What cannot be verified now fails closed.
+- 🐛 **Codex lanes run again on codex-cli 0.153**, which rejects the
+  `--approve-for-me` plus `-s workspace-write` pair fleetflow had passed
+  since 0.144 — every codex lane died at spawn with rc=2. The launch line
+  now passes `--approve-for-me` alone, which implies the same sandbox.
 
 ### v0.3.0 · 2026-08-24
 
@@ -411,6 +441,8 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 - 📊 **One run-card renderer** shared byte-identically by the dashboard and
   the chat widget ([ADR-019](docs/adr/ADR-019-one-run-card-renderer-two-embedded-copies.md)).
 
+[View full changelog →](CHANGELOG.md)
+
 ## Glossary
 
 The vocabulary is compact but load-bearing; every doc assumes it.
@@ -457,7 +489,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-521 assertions over the scripts, monitor, dashboard wiring, and import/resume
+525 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 

@@ -1,8 +1,10 @@
 # Worker Contracts — per-model launch, gate, and auth
 
-> Verified against installed binaries 2026-07-05: `codex-cli 0.125.0`,
-> Claude Code v2.1.x, fleet-worker (GLM-5.3 via z.ai). Re-verify flag maps on
-> major version bumps (`ff-doctor --offline` checks the load-bearing ones).
+> Verified against installed binaries 2026-09-04: `codex-cli 0.153.0`,
+> `grok 0.2.93`, `pi 0.83.0`, Claude Code v2.1.x, fleet-worker (GLM-5.3 via
+> z.ai). Re-verify flag maps on major version bumps (`ff-doctor --offline`
+> checks the load-bearing ones) - codex 0.153 changed a launch flag under us
+> (§2), which is exactly what this line exists to date-stamp.
 
 ## 1. GLM workers (via fleet-worker)
 
@@ -36,7 +38,7 @@ fleetflow does not duplicate it. Load-bearing facts:
 
 ## 2. Codex workers (`codex exec`)
 
-OpenAI's agent harness, non-interactive. Flag map (codex-cli 0.125.0):
+OpenAI's agent harness, non-interactive. Flag map (codex-cli 0.153.0):
 
 | Flag | Use |
 |---|---|
@@ -66,9 +68,15 @@ OpenAI's agent harness, non-interactive. Flag map (codex-cli 0.125.0):
 - **Worktree-lane commit gotcha** (observed 2026-07-05): a git worktree's
   metadata (index, refs) lives in the MAIN repo's `.git/` — outside the codex
   sandbox's writable root — so `git commit` inside a lane fails with
-  `index.lock: Permission denied` under `--full-auto`. `ff-spawn` fixes this
-  by passing `--add-dir <absolute-git-dir>` for codex worktree lanes; if you
-  launch codex by hand, add it yourself (or use a full clone as the lane).
+  `index.lock: Permission denied` under the sandbox. `ff-spawn` fixes this
+  with **four scoped `--add-dir` grants** — the lane's worktree metadata dir,
+  the object store, and the lane branch's ref and reflog dirs — never the
+  whole `.git/`. A whole-git-dir grant hands the lane `.git/config`
+  (`core.hooksPath` is code execution), `hooks/`, and `refs/heads/main`; that
+  hole shipped once already, and
+  [ADR-034](../docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)
+  is why it must never be widened back. Launching codex by hand: grant the
+  same four, or use a full clone as the lane.
 - **Sandbox litter gotcha** (observed 2026-07-05): codex's sandbox creates
   pytest temp/cache dirs (`.pytest-tmp/`, `pytest-cache-files-*/`) with
   AppContainer ACLs that survive the run and resist unelevated deletion —
