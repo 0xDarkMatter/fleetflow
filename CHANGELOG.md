@@ -7,6 +7,8 @@ shipped, the ADRs own WHY.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-04
+
 ### Added
 - `ff-doctor --for MODEL[,MODEL...]`: preflight scoped to the models a run
   will spawn - a missing harness for a requested model escalates

@@ -340,8 +340,21 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ## Recent Updates
 
-### Unreleased
+### v0.4.0 · 2026-09-04
 
+- 🎯 **The orchestrator seat is no longer Claude Code's alone.** Any agent
+  that can run the scripts and judge their output may hold it; the host
+  conveniences — dashboard pane, chat widget, chips, ACP steering — are
+  optional surfaces, not requirements. Verified with opencode 1.18 and pi
+  0.83 each driving `plan draft → lint` end to end, unmodified
+  ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
+- 🛡️ **Codex lanes self-commit**, reversing
+  [ADR-006](docs/adr/ADR-006-codex-lanes-never-self-commit.md)'s "never".
+  The sandbox gets four scoped git grants — the lane's worktree metadata,
+  the object store, and the lane branch's ref and reflog. `.git/config`
+  (`core.hooksPath` is code execution), `hooks/`, and `refs/heads/main` stay
+  outside the cage, proven with an adversarial config-write probe
+  ([ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)).
 - 🔌 **Gemini and OpenRouter lanes, verified end to end**: the Pi wildcard
   seat now has tested routes to `google` (Gemini 3.6 and 3.8 Flash) and
   `openrouter` (any listed model), each running a full lane — self-commit,
@@ -352,15 +365,6 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   advisory→fail, and `claude` is required only for claude-family, glm, and
   chip lanes — so a claude-less fleet can be blessed
   ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
-- 🎯 **The orchestrator seat is harness-agnostic**: any agent that can run
-  the scripts and judge their output may hold it. Verified with opencode
-  1.18 and pi 0.83 each driving `plan draft → lint` end to end, unmodified
-  ([ADR-033](docs/adr/ADR-033-orchestrator-contract-is-bash-plus-judgment.md)).
-- 🛡️ **Codex lanes self-commit via four scoped git grants**: the lane's
-  worktree metadata, the object store, and the lane branch's ref and reflog —
-  nothing else. `.git/config`, `hooks/`, and `refs/heads/main` stay outside
-  the cage, proven with an adversarial config-write probe
-  ([ADR-034](docs/adr/ADR-034-codex-lanes-self-commit-via-scoped-git-grants.md)).
 - 🔍 **The preflight stopped lying**: rounds of cross-model review closed
   false greens in `ff-doctor` — a logged-out codex that matched "Logged in",
   a glm child whose nonzero exit was masked by a pipeline, requested seats
