@@ -2544,6 +2544,73 @@ printf '%s' "$NJ" | jq -e 'any(.checks[]; .name=="adr-constraints" and .armed==f
   && ok "ff-plan: adr-constraints disarms only when adr-touching is genuinely absent" \
   || bad "ff-plan: absent adr-touching did not report disarmed(unavailable)"
 
+# --- C3c: ff-run triage ESCALATES an ADR-governed finding (regression, 2026-09-05)
+# ff-run's triage wave called adr-touching with `--repo`, a flag the script has
+# never had (argparse exits 2), with stderr discarded and `|| true` - so the
+# governed-path escalation was silently disarmed: the C3b failure class, one
+# script over. The stub is STRICT about the real contract: an unknown --flag
+# exits 2, --dir must name an existing directory (pinned to the TARGET repo;
+# exit 3 otherwise), MANY positionals are accepted in one call (the 2026-09-05
+# batching), --json carries queries[] with a per-query rc, and the exit is 10
+# if ANY query path contains "gov". The two assertions are a PAIR: a wrong
+# invocation now fails closed (escalates), so only the "ungoverned stays open"
+# half catches a regression to `--repo`; only the "governed is escalated" half
+# catches a regression to `|| true`.
+if [ "$HAS_WAVE" = "1" ] && [ -f "$CATALOGUE" ] && [ -f "$S/ff-findings.sh" ]; then
+  BHOME="$TMP/adrbatchhome"; mkdir -p "$BHOME/.claude/skills/adr-ops/scripts"
+  cat > "$BHOME/.claude/skills/adr-ops/scripts/adr-touching.py" <<'PY'
+import json, os, sys
+args, pos, i, adr_dir, as_json = sys.argv[1:], [], 0, "docs/adr", False
+while i < len(args):
+    a = args[i]
+    if a == "--dir":
+        adr_dir = args[i + 1]; i += 2; continue
+    if a == "--json":
+        as_json = True; i += 1; continue
+    if a.startswith("-"):
+        sys.stderr.write("usage: unrecognized arguments: %s\n" % a); sys.exit(2)
+    pos.append(a); i += 1
+if not pos:
+    sys.stderr.write("usage: at least one query\n"); sys.exit(2)
+if not os.path.isdir(adr_dir):
+    sys.stderr.write("error: ADR directory not found: %s\n" % adr_dir); sys.exit(3)
+queries = [{"query": q, "governing": ([{"number": "ADR-001"}] if "gov" in q else []),
+            "rc": (10 if "gov" in q else 0)} for q in pos]
+if as_json:
+    print(json.dumps({"data": [], "queries": queries, "meta": {"queries": pos, "dir": adr_dir}}))
+sys.exit(10 if any(q["rc"] == 10 for q in queries) else 0)
+PY
+  TRI="$WREPO/.fleetflow/wtriage"; mkdir -p "$TRI" "$WREPO/docs/adr"
+  jq -nc '{run:"wtriage",base:"main",created_by:"fixture",phases:["build"],packets:[],
+    posture:"baseline",fix_rounds:0,severity_floor:"medium",
+    waves:[{name:"triage",kind:"barrier",gate:"review",status:"pending",round:0}]}' \
+    > "$TRI/manifest.json"
+  : > "$TRI/journal.jsonl"
+  # both findings sit BELOW the severity floor and carry no always_escalate
+  # keyword, so the ADR check is the ONLY route to escalation; the governed
+  # finding touches two files so the call is genuinely batched.
+  printf '%s\n' '{"findings":[{"wave":"qa","severity":"low","files":["src/gov.txt","src/other.txt"],"claim":"stale comment","evidence":"line 3"},{"wave":"qa","severity":"low","files":["src/plain.txt"],"claim":"typo in log line","evidence":"line 9"}]}' \
+    | bash "$S/ff-findings.sh" append --run wtriage --repo "$WREPO" --round 0 --lane qa-1 >/dev/null 2>&1
+  HOME="$BHOME" bash "$S/ff-run.sh" wave --run wtriage --repo "$WREPO" --posture baseline \
+    >"$TMP/wtriage.out" 2>"$TMP/wtriage.err"; TRC=$?
+  TLEDGER="$TRI/findings.jsonl"
+  { [ "$TRC" = "0" ] \
+    && jq -s -e 'any(.[]; (.files|index("src/gov.txt")) and .status=="escalated")' "$TLEDGER" >/dev/null 2>&1; } \
+    && ok "ff-run triage: ADR-governed finding is ESCALATED (one batched adr-touching call)" \
+    || bad "ff-run triage: governed finding not escalated (rc=$TRC; $(tr -d '\r' < "$TMP/wtriage.err" | tail -3 | tr '\n' ' '))"
+  jq -s -e 'any(.[]; (.files|index("src/plain.txt")) and .status=="open")' "$TLEDGER" >/dev/null 2>&1 \
+    && ok "ff-run triage: ungoverned finding stays open (adr-touching answered 0, not 2)" \
+    || bad "ff-run triage: ungoverned finding wrongly escalated or lost"
+  jq -e '[.[][]] | length == 1 and (.[0].files|index("src/plain.txt"))' "$TRI/triage-groups.json" >/dev/null 2>&1 \
+    && ok "ff-run triage: only the ungoverned finding is queued for fix" \
+    || bad "ff-run triage: triage-groups.json does not hold exactly the ungoverned finding"
+  tr -d '\r' < "$TMP/wtriage.err" | grep -q 'ADR-governed path(s): src/gov.txt' \
+    && ok "ff-run triage: stderr names the governed path from the queries[] envelope" \
+    || bad "ff-run triage: stderr does not name the governed path"
+else
+  echo "  SKIP  ff-run triage ADR escalation (sequencer or ff-findings absent)"
+fi
+
 # --- C4: draft scaffolds the plan, refuses to clobber ----------------------------
 check "ff-plan: draft with missing spec -> 3" 3 \
   bash "$PLAN" draft --run pmiss --spec "$TMP/no-such-spec.md" --repo "$PREPO"
