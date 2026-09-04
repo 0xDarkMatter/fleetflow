@@ -27,6 +27,24 @@ shipped, the ADRs own WHY.
   reimplementation of profile health inside fleetflow (the restatement-drift
   failure ADR-016 named for UI, relocated into code).
 
+### Changed
+- `ff-plan lint`'s `adr-constraints` check now calls adr-ops's
+  `adr-touching.py` ONCE per packet, passing every owned path, and reads the
+  per-path verdict from the tool's new `queries[]` envelope (adr-ops batched
+  positionals on 2026-09-05). Measured on the live `tess-v1` plan (41 packets,
+  33 carrying `owns:`, 251 owned paths): 251 Python spawns collapse to 33, and
+  the ADR phase drops 42.0s -> 6.4s with identical verdicts (73 governed).
+  That phase was NOT the lint's bottleneck - end-to-end wall time is unchanged
+  at ~24m because the O(n^2) scope matrix dominates, and the lint then dies
+  assembling its final envelope (`jq --argjson` on a large findings list ->
+  E2BIG, rc 126), so on that plan the lint still never prints. Both remain
+  open. Findings still name only the governed paths. If the installed
+  adr-touching predates batching (exits 2 on a second positional) the packet
+  falls back to one call per path and the check reason says so, so a stale
+  skill install can never disarm the gate again (ADR-030). `tests/run.sh` C3b
+  stubs the batched contract and C3c pins the spawn count for both paths:
+  2 batched, 4 via the legacy fallback.
+
 ### Fixed
 - `ff-plan lint`'s `adr-constraints` check silently reported `disarmed` on
   every packet: it passed all of a packet's `owns:` paths to adr-ops's

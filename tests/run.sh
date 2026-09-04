@@ -2465,26 +2465,68 @@ printf '%s\n' "$BTXT" | grep -qE '^CHECK [A-Za-z0-9._-]+ disarmed' \
   && ok "ff-plan: text mode reports the disarmed check" \
   || bad "ff-plan: no CHECK disarmed line for the bare packet"
 
-# --- C3b: adr-constraints ARMS (regression, 2026-09-04) --------------------------
-# adr-touching.py takes exactly ONE positional query and exits 2 on more. ff-plan
-# used to pass every owned path in a single call, so the check disarmed itself on
-# a usage error and governing ADR BLUFs were never verified. The stub below is
-# STRICT about that contract: >1 positional -> exit 2 (which would disarm the
-# check), a path containing "gov" -> exit 10 (governed), else 0.
+# --- C3b: adr-constraints ARMS (regression, 2026-09-04; batched 2026-09-05) ------
+# adr-touching.py (adr-ops) accepts MANY positionals since 2026-09-05: it parses
+# the ADR set once, answers each query in the --json envelope's queries[] list
+# ({query, governing, rc}), and exits any-governed (10 if any query is governed).
+# ff-plan makes ONE call per packet and reads the per-path verdict from
+# queries[], never from the rc. The stub below mirrors that contract exactly: a
+# path containing "gov" is governed; every call appends its positional count to
+# $ADR_STUB_LOG so C3c can pin the spawn count (one line per spawn).
 ADRHOME="$TMP/adrhome"; mkdir -p "$ADRHOME/.claude/skills/adr-ops/scripts"
 cat > "$ADRHOME/.claude/skills/adr-ops/scripts/adr-touching.py" <<'PY'
-import sys
-args, pos, i = sys.argv[1:], [], 0
+import json, os, sys
+args, pos, i, want_json = sys.argv[1:], [], 0, False
 while i < len(args):
     a = args[i]
     if a == "--dir":
         i += 2; continue
+    if a == "--json":
+        want_json = True
     if a.startswith("-"):
         i += 1; continue
     pos.append(a); i += 1
+log = os.environ.get("ADR_STUB_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write("%d\n" % len(pos))
+if not pos:
+    sys.stderr.write("usage: at least one query\n"); sys.exit(2)
+qs = [{"query": p, "governing": ([{"number": "ADR-001"}] if "gov" in p else []),
+       "rc": (10 if "gov" in p else 0)} for p in pos]
+if want_json:
+    print(json.dumps({"data": [], "queries": qs,
+                      "meta": {"schema": "claude-mods.adr-ops.touching/v1"}}))
+sys.exit(10 if any(q["rc"] == 10 for q in qs) else 0)
+PY
+# The PRE-batching tool: exactly ONE positional, exit 2 on more. ff-plan used
+# to pass every owned path in a single call, so the check disarmed itself on a
+# usage error and governing ADR BLUFs were never verified (2026-09-04). C3c
+# drives ff-plan against this one to pin the per-path fallback.
+ADRHOME_LEGACY="$TMP/adrhome-legacy"; mkdir -p "$ADRHOME_LEGACY/.claude/skills/adr-ops/scripts"
+cat > "$ADRHOME_LEGACY/.claude/skills/adr-ops/scripts/adr-touching.py" <<'PY'
+import json, os, sys
+args, pos, i, want_json = sys.argv[1:], [], 0, False
+while i < len(args):
+    a = args[i]
+    if a == "--dir":
+        i += 2; continue
+    if a == "--json":
+        want_json = True
+    if a.startswith("-"):
+        i += 1; continue
+    pos.append(a); i += 1
+log = os.environ.get("ADR_STUB_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write("%d\n" % len(pos))
 if len(pos) != 1:
     sys.stderr.write("usage: exactly one query\n"); sys.exit(2)
-sys.exit(10 if "gov" in pos[0] else 0)
+gov = "gov" in pos[0]
+if want_json:
+    print(json.dumps({"data": ([{"number": "ADR-001"}] if gov else []),
+                      "meta": {"query": pos[0], "schema": "claude-mods.adr-ops.touching/v1"}}))
+sys.exit(10 if gov else 0)
 PY
 mkdir -p "$PREPO/docs/adr"
 plan_pkt padr a1 <<'PKT'
@@ -2520,10 +2562,11 @@ depends_on: []
 
 A2 quotes its governing ADRs. FINAL REPLY: one line.
 PKT
-AJ="$(HOME="$ADRHOME" bash "$PLAN" lint --run padr --repo "$PREPO" --json 2>/dev/null)"; AJRC=$?
+ADRLOG="$TMP/adr-stub.log"; : > "$ADRLOG"
+AJ="$(ADR_STUB_LOG="$ADRLOG" HOME="$ADRHOME" bash "$PLAN" lint --run padr --repo "$PREPO" --json 2>/dev/null)"; AJRC=$?
 { [ "$AJRC" = "10" ] \
   && printf '%s' "$AJ" | jq -e 'any(.checks[]; .name=="adr-constraints" and .armed==true)' >/dev/null; } \
-  && ok "ff-plan: adr-constraints ARMS (one adr-touching call per owned path)" \
+  && ok "ff-plan: adr-constraints ARMS (one adr-touching call per packet)" \
   || bad "ff-plan: adr-constraints disarmed on a live adr-touching (rc=$AJRC)"
 printf '%s' "$AJ" | jq -e 'any(.findings[]; .check=="adr-constraints" and .severity=="hard"
     and (.packets|index("a1")) and (.files|index("src/gov.txt")))' >/dev/null 2>&1 \
@@ -2610,6 +2653,29 @@ PY
 else
   echo "  SKIP  ff-run triage ADR escalation (sequencer or ff-findings absent)"
 fi
+# --- C3d: adr-constraints spawn count (batched 2026-09-05) -----------------------
+# The whole point of batching: a1 owns two paths, a2 one - exactly TWO spawns,
+# each carrying every owned path of its packet. The stub logs one line per
+# spawn with its positional count, so the log IS the spawn trace.
+ADRCALLS="$(grep -c . "$ADRLOG" | tr -d '\r ')"
+ADRARGS="$(tr -d '\r' < "$ADRLOG" | sort | tr '\n' ',')"
+{ [ "$ADRCALLS" = "2" ] && [ "$ADRARGS" = "1,2," ]; } \
+  && ok "ff-plan: adr-constraints spawns adr-touching ONCE per packet with every owned path (2 spawns: 1,2 paths)" \
+  || bad "ff-plan: adr-constraints spawn count wrong (calls=$ADRCALLS positionals=$ADRARGS)"
+# Against a PRE-batching adr-touching (exit 2 on >1 positional) the batched
+# call fails usage and ff-plan must fall back to one call per path rather than
+# disarm: a1 = 1 failed batched + 2 per-path, a2 = 1 -> 4 spawns, still
+# armed, still the same hard finding scoped to the governed path, and the
+# check reason names the fallback.
+: > "$ADRLOG"
+LJ="$(ADR_STUB_LOG="$ADRLOG" HOME="$ADRHOME_LEGACY" bash "$PLAN" lint --run padr --repo "$PREPO" --json 2>/dev/null)"; LJRC=$?
+LCALLS="$(grep -c . "$ADRLOG" | tr -d '\r ')"
+{ [ "$LJRC" = "10" ] && [ "$LCALLS" = "4" ] \
+  && printf '%s' "$LJ" | jq -e 'any(.checks[]; .name=="adr-constraints" and .armed==true and (.reason|test("fell back")))' >/dev/null \
+  && printf '%s' "$LJ" | jq -e 'any(.findings[]; .check=="adr-constraints" and .severity=="hard"
+      and (.packets|index("a1")) and (.files==["src/gov.txt"]))' >/dev/null; } \
+  && ok "ff-plan: single-query (legacy) adr-touching -> per-path fallback, still armed, same finding (4 spawns)" \
+  || bad "ff-plan: legacy adr-touching fallback wrong (rc=$LJRC calls=$LCALLS)"
 
 # --- C4: draft scaffolds the plan, refuses to clobber ----------------------------
 check "ff-plan: draft with missing spec -> 3" 3 \
