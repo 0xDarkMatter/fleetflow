@@ -19,6 +19,21 @@ shipped, the ADRs own WHY.
   means the tool is genuinely absent, never a wrong invocation; a stub
   adr-touching that exits 2 on a second positional now pins this in
   `tests/run.sh`. Observed 2026-09-04.
+- `ff-run wave`'s triage had the same disarm one script over: its
+  ADR-governed-path escalation called `adr-touching.py --repo`, a flag the
+  script has never had (argparse exits 2), with stderr discarded and
+  `|| true`, so the verdict was always "ungoverned" and a finding on a
+  governed path was auto-queued for fix instead of escalated. The check now
+  makes ONE batched call per finding (`--json --dir <repo>/docs/adr` plus
+  every file; adr-touching accepts many positionals since 2026-09-05 and
+  reports a per-query `rc` in its `queries[]` envelope), keeps stderr in
+  `triage.err`, names the governed paths on stderr, and fails CLOSED: any
+  exit other than 0/10 is an unanswered query and escalates with the rc
+  rather than passing. A pre-batching adr-touching therefore escalates
+  multi-file findings visibly (rc=2) until the skill is synced, never
+  silently. A strict stub (unknown flag exits 2, `--dir` must exist, batched
+  positionals, `queries[]` envelope) pins both halves in `tests/run.sh`:
+  governed escalates, ungoverned stays queued. Observed 2026-09-05.
 
 ## [0.4.0] — 2026-09-04
 

@@ -499,9 +499,35 @@ run_triage_wave() {
       esc=1
     fi
     if [ "$esc" = 0 ] && [ "$USE_ADR" = 1 ] && [ -n "$files_text" ]; then
-      local touched=""
-      touched="$(printf '%s' "$files_text" | tr ' ' '\n' | xargs -I{} "$FF_PYTHON" "$ADR_TOOL" --repo "$REPO" {} 2>/dev/null || true)"
-      [ -n "$touched" ] && esc=1
+      # ADR-governed path => escalate (ADR-018 §3). ONE batched call per
+      # finding: adr-touching.py accepts many positionals (2026-09-05: parses
+      # the ADR set once; --json carries queries[] of {query,governing,rc};
+      # exit 10 if ANY query is governed). --dir is pinned to the TARGET
+      # repo's docs/adr, exactly as ff-plan lint check (c) does - the script
+      # has NO --repo flag. Until 2026-09-05 this passed `--repo`, which
+      # argparse rejects with rc=2; with stderr discarded and `|| true` the
+      # verdict was always "ungoverned", so a governed-path finding was never
+      # escalated (same failure class as the ff-plan lint bug, ADR-030).
+      # Hence: stderr is KEPT (triage.err), and any rc other than 0/10 is an
+      # UNANSWERED query, which fails CLOSED (escalate and say why). A human
+      # can clear a spurious escalation; a silently auto-fixed governed path
+      # cannot be un-fixed by triage. A pre-batching adr-touching (one
+      # positional only) therefore escalates every multi-file finding with
+      # rc=2 - visibly, never silently - until the skill is synced.
+      local -a adr_files=()
+      local adr_out="" adr_rc=0 adr_gov=""
+      mapfile -t adr_files < <(jqr '(.files // [])[] | select(length > 0)' <<<"$finding")
+      if [ "${#adr_files[@]}" -gt 0 ]; then
+        adr_out="$("$FF_PYTHON" "$ADR_TOOL" --json --dir "$REPO/docs/adr" "${adr_files[@]}" 2>>"$RUNDIR/triage.err")"; adr_rc=$?
+        case "$adr_rc" in
+          0) ;;
+          10) esc=1
+              adr_gov="$(jqr '[(.queries // [])[] | select(.rc==10) | .query] | join(", ")' <<<"$adr_out" 2>/dev/null)"
+              err "triage: $fp escalated - ADR-governed path(s): ${adr_gov:-$files_text}" ;;
+          *)  esc=1
+              err "triage: $fp escalated - adr-touching rc=$adr_rc (unanswered ADR query, see $RUNDIR/triage.err)" ;;
+        esac
+      fi
     fi
     if [ "$esc" = 1 ]; then
       bash "$FINDINGS" set-status --run "$RUN" --repo "$REPO" --fp "$fp" --status escalated >/dev/null 2>>"$RUNDIR/triage.err"

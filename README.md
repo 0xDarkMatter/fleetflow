@@ -350,6 +350,13 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   check now queries one path at a time, against the target repo's own
   `docs/adr`, so `disarmed` again means the tool is genuinely absent
   ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)).
+- 🚨 **Wave triage's ADR escalation was disarmed the same way**: it called
+  `adr-touching --repo`, a flag that does not exist, and swallowed the
+  usage error, so a finding on an ADR-governed path was auto-queued for
+  fix instead of escalated to a human. Triage now makes one batched call
+  per finding against the target repo's `docs/adr`, names the governed
+  paths on stderr, and fails closed - an unanswered query escalates
+  rather than passes.
 
 ### v0.4.0 · 2026-09-04
 
