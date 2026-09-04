@@ -2,7 +2,7 @@
 
 [![version](https://img.shields.io/github/v/tag/0xDarkMatter/fleetflow?label=version&color=2d3142)](https://github.com/0xDarkMatter/fleetflow/tags)
 [![license](https://img.shields.io/github/license/0xDarkMatter/fleetflow?color=4f5d75)](LICENSE)
-[![ADRs](https://img.shields.io/badge/ADRs-35-4f5d75)](docs/adr/)
+[![ADRs](https://img.shields.io/badge/ADRs-36-4f5d75)](docs/adr/)
 
 **Heterogeneous cross-provider agent fleets from one orchestrator session.**
 GLM (z.ai) · Codex (OpenAI) · Grok (xAI) · Pi (15+ providers) · Anthropic
@@ -52,7 +52,7 @@ land, and ship better software.
 - **Safety as defaults.** Worktree isolation, escape guard on the primary
   checkout, per-provider sandbox rules, orphan reaping, archive-before-remove
   teardown.
-- **A tested gate.** 525 hermetic assertions over the scripts, dashboard
+- **A tested gate.** 549 hermetic assertions over the scripts, dashboard
   wiring, and resume semantics; ADR lint runs inside it.
 
 ## Requirements
@@ -304,11 +304,11 @@ canonical doc and the implementation and is prompted to refute the doc, so
 every falsifiable claim gets tested like code.
 
 fleetflow eats its own cooking. This repo carries
-[35 ADRs](docs/adr/) covering everything from why the dashboard is one
+[36 ADRs](docs/adr/) covering everything from why the dashboard is one
 process ([ADR-002](docs/adr/ADR-002-ff-serve-is-one-process.md)) to why the
 sweep caches bytes but never verdicts
 ([ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)), and
-`adr-lint` runs inside the 525-assertion test gate: a malformed decision
+`adr-lint` runs inside the 549-assertion test gate: a malformed decision
 record fails the build. Several of those ADRs were written, refuted, and
 amended by the fleets they now govern.
 
@@ -530,7 +530,7 @@ fleetflow composes with a small family of tools, most of them skills in
 bash tests/run.sh
 ```
 
-525 assertions over the scripts, monitor, dashboard wiring, and import/resume
+549 assertions over the scripts, monitor, dashboard wiring, and import/resume
 semantics. The suite is hermetic: it exports its own `FLEETFLOW_HOME`, and a
 guard asserts the real `~/.fleetflow/history.jsonl` is byte-unchanged.
 
