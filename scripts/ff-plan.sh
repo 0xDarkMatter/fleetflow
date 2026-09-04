@@ -295,18 +295,40 @@ lint_cmd() {
   if [ "$fm_count" -gt 0 ]; then add_check dep-edges true "checked $fm_count packet(s)$legacy_reason"; else add_check dep-edges false "no frontmatter"; fi
 
   # (c) adr-touching exit 10 requires the standing-decisions heading.
+  # adr-touching.py accepts EXACTLY ONE positional query and exits 2 (usage) on
+  # more, so this MUST loop once per owned path. A single call carrying every
+  # owned path returned rc=2, which reads as "tool unavailable" and disarmed the
+  # whole check silently — governing ADR BLUFs went unverified for every packet
+  # (observed 2026-09-04). ADR-030: disarmed must mean genuinely absent, never a
+  # wrong invocation. --dir is pinned to the TARGET repo so the verdict comes
+  # from the planned repo's decision record rather than ff-plan's cwd.
   adr_script="$HOME/.claude/skills/adr-ops/scripts/adr-touching.py"
   if [ ! -f "$adr_script" ]; then add_check adr-constraints false "adr-touching.py unavailable$legacy_reason"
   else
+    local owned_path pkt_ok pkt_gov pkt_rc
+    local -a governed=()
     for ((i=0;i<${#fm_files[@]};i++)); do
       file="${fm_files[$i]}"; id="${ids[$i]}"; mapfile -t owned < <(fm_list "$file" owns)
       if [ "${#owned[@]}" -eq 0 ]; then adr_disarmed="${adr_disarmed:+$adr_disarmed, }$id(no owned paths)"; continue; fi
-      set +e; adr_output="$(ff_python "$adr_script" --json "${owned[@]}" 2>&1)"; rc=$?; set -e
-      if [ "$rc" -eq 0 ] || [ "$rc" -eq 10 ]; then adr_armed=$((adr_armed+1)); fi
-      if [ "$rc" -eq 10 ] && ! grep -qi "constraints from standing decisions" "$file"; then
-        add_finding adr-constraints hard "$(json_array "$id")" "$(json_array "${owned[@]}")" "governing ADRs found but packet lacks the Constraints from standing decisions heading"
-      elif [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ]; then
-        adr_disarmed="${adr_disarmed:+$adr_disarmed, }$id(adr-touching rc=$rc)"; [ -z "$adr_output" ] || err "adr-touching $id: $adr_output"
+      pkt_ok=1; pkt_gov=0; pkt_rc=""; governed=()
+      for owned_path in "${owned[@]}"; do
+        set +e
+        adr_output="$(ff_python "$adr_script" --json --dir "$repo/docs/adr" "$owned_path" 2>&1)"; rc=$?
+        set -e
+        case "$rc" in
+          0) ;;
+          10) pkt_gov=1; governed+=("$owned_path");;
+          # Any other rc is an unanswered query: the packet's verdict is
+          # incomplete, so it reports disarmed WITH the rc rather than passing.
+          *) pkt_ok=0; pkt_rc="$rc"; [ -z "$adr_output" ] || err "adr-touching $id $owned_path: $adr_output";;
+        esac
+      done
+      if [ "$pkt_ok" -eq 0 ]; then
+        adr_disarmed="${adr_disarmed:+$adr_disarmed, }$id(adr-touching rc=$pkt_rc)"; continue
+      fi
+      adr_armed=$((adr_armed+1))
+      if [ "$pkt_gov" -eq 1 ] && ! grep -qi "constraints from standing decisions" "$file"; then
+        add_finding adr-constraints hard "$(json_array "$id")" "$(json_array "${governed[@]}")" "governing ADRs found but packet lacks the Constraints from standing decisions heading"
       fi
     done
     if [ "$adr_armed" -gt 0 ]; then add_check adr-constraints true "checked $adr_armed packet(s)${adr_disarmed:+; disarmed: $adr_disarmed}$legacy_reason"

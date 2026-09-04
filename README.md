@@ -340,6 +340,17 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ## Recent Updates
 
+### Unreleased
+
+- 🚨 **The plan lint's ADR gate stopped skipping itself**: `ff plan
+  lint` handed every one of a packet's owned paths to `adr-touching` in
+  one call, but that tool takes a single query and exits 2 on more —
+  which the lint read as "tool missing" and reported `disarmed`.
+  Governing ADR BLUFs went unverified on every packet, quietly. The
+  check now queries one path at a time, against the target repo's own
+  `docs/adr`, so `disarmed` again means the tool is genuinely absent
+  ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)).
+
 ### v0.4.0 · 2026-09-04
 
 - 🎯 **The orchestrator seat is no longer Claude Code's alone.** Any agent

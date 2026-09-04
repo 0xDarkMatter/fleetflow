@@ -7,6 +7,19 @@ shipped, the ADRs own WHY.
 
 ## [Unreleased]
 
+### Fixed
+- `ff-plan lint`'s `adr-constraints` check silently reported `disarmed` on
+  every packet: it passed all of a packet's `owns:` paths to adr-ops's
+  `adr-touching.py` in one call, but that script takes exactly one positional
+  query and exits 2 on more, which ff-plan read as "tool unavailable". No
+  governing ADR BLUF was ever verified. The check now calls `adr-touching`
+  once per owned path and pins `--dir` to the target repo's `docs/adr`, so the
+  verdict comes from the planned repo rather than ff-plan's cwd. Findings name
+  only the paths that are actually governed. Per ADR-030, `disarmed` again
+  means the tool is genuinely absent, never a wrong invocation; a stub
+  adr-touching that exits 2 on a second positional now pins this in
+  `tests/run.sh`. Observed 2026-09-04.
+
 ## [0.4.0] — 2026-09-04
 
 ### Added

@@ -2420,6 +2420,85 @@ printf '%s\n' "$BTXT" | grep -qE '^CHECK [A-Za-z0-9._-]+ disarmed' \
   && ok "ff-plan: text mode reports the disarmed check" \
   || bad "ff-plan: no CHECK disarmed line for the bare packet"
 
+# --- C3b: adr-constraints ARMS (regression, 2026-09-04) --------------------------
+# adr-touching.py takes exactly ONE positional query and exits 2 on more. ff-plan
+# used to pass every owned path in a single call, so the check disarmed itself on
+# a usage error and governing ADR BLUFs were never verified. The stub below is
+# STRICT about that contract: >1 positional -> exit 2 (which would disarm the
+# check), a path containing "gov" -> exit 10 (governed), else 0.
+ADRHOME="$TMP/adrhome"; mkdir -p "$ADRHOME/.claude/skills/adr-ops/scripts"
+cat > "$ADRHOME/.claude/skills/adr-ops/scripts/adr-touching.py" <<'PY'
+import sys
+args, pos, i = sys.argv[1:], [], 0
+while i < len(args):
+    a = args[i]
+    if a == "--dir":
+        i += 2; continue
+    if a.startswith("-"):
+        i += 1; continue
+    pos.append(a); i += 1
+if len(pos) != 1:
+    sys.stderr.write("usage: exactly one query\n"); sys.exit(2)
+sys.exit(10 if "gov" in pos[0] else 0)
+PY
+mkdir -p "$PREPO/docs/adr"
+plan_pkt padr a1 <<'PKT'
+---
+id: a1
+role: Builder
+class: build
+model: sonnet
+owns:
+  - src/gov.txt
+  - src/plain.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+A1 owns a governed path and carries no BLUF heading. FINAL REPLY: one line.
+PKT
+plan_pkt padr a2 <<'PKT'
+---
+id: a2
+role: Scholar
+class: build
+model: sonnet
+owns:
+  - src/gov2.txt
+modifies: []
+registries: []
+depends_on: []
+---
+
+## Constraints from standing decisions
+
+A2 quotes its governing ADRs. FINAL REPLY: one line.
+PKT
+AJ="$(HOME="$ADRHOME" bash "$PLAN" lint --run padr --repo "$PREPO" --json 2>/dev/null)"; AJRC=$?
+{ [ "$AJRC" = "10" ] \
+  && printf '%s' "$AJ" | jq -e 'any(.checks[]; .name=="adr-constraints" and .armed==true)' >/dev/null; } \
+  && ok "ff-plan: adr-constraints ARMS (one adr-touching call per owned path)" \
+  || bad "ff-plan: adr-constraints disarmed on a live adr-touching (rc=$AJRC)"
+printf '%s' "$AJ" | jq -e 'any(.findings[]; .check=="adr-constraints" and .severity=="hard"
+    and (.packets|index("a1")) and (.files|index("src/gov.txt")))' >/dev/null 2>&1 \
+  && ok "ff-plan: missing BLUF heading on a governed path is a hard adr-constraints finding" \
+  || bad "ff-plan: adr-constraints finding missing or not scoped to the governed path"
+printf '%s' "$AJ" | jq -e '[.findings[] | select(.check=="adr-constraints" and (.packets|index("a2")))] | length == 0' >/dev/null 2>&1 \
+  && ok "ff-plan: a packet carrying the standing-decisions heading raises no finding" \
+  || bad "ff-plan: packet with the BLUF heading wrongly flagged"
+ATXT="$(HOME="$ADRHOME" bash "$PLAN" lint --run padr --repo "$PREPO" 2>&1 | tr -d '\r')"
+printf '%s\n' "$ATXT" | grep -qE '^CHECK adr-constraints armed' \
+  && ok "ff-plan: text mode reports adr-constraints armed" \
+  || bad "ff-plan: no CHECK adr-constraints armed line"
+# and the contract's other half: a genuinely absent tool still disarms
+NOHOME="$TMP/adrnohome"; mkdir -p "$NOHOME"
+NJ="$(HOME="$NOHOME" bash "$PLAN" lint --run padr --repo "$PREPO" --json 2>/dev/null)"
+printf '%s' "$NJ" | jq -e 'any(.checks[]; .name=="adr-constraints" and .armed==false
+    and (.reason|test("unavailable")))' >/dev/null 2>&1 \
+  && ok "ff-plan: adr-constraints disarms only when adr-touching is genuinely absent" \
+  || bad "ff-plan: absent adr-touching did not report disarmed(unavailable)"
+
 # --- C4: draft scaffolds the plan, refuses to clobber ----------------------------
 check "ff-plan: draft with missing spec -> 3" 3 \
   bash "$PLAN" draft --run pmiss --spec "$TMP/no-such-spec.md" --repo "$PREPO"
