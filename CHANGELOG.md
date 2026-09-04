@@ -34,11 +34,10 @@ shipped, the ADRs own WHY.
   positionals on 2026-09-05). Measured on the live `tess-v1` plan (41 packets,
   33 carrying `owns:`, 251 owned paths): 251 Python spawns collapse to 33, and
   the ADR phase drops 42.0s -> 6.4s with identical verdicts (73 governed).
-  That phase was NOT the lint's bottleneck - end-to-end wall time is unchanged
-  at ~24m because the O(n^2) scope matrix dominates, and the lint then dies
-  assembling its final envelope (`jq --argjson` on a large findings list ->
-  E2BIG, rc 126), so on that plan the lint still never prints. Both remain
-  open. Findings still name only the governed paths. If the installed
+  That phase was NOT the lint's bottleneck - the O(n^2) scope matrix was, and
+  the lint then died assembling its final envelope (`jq --argjson` on a large
+  findings list -> E2BIG, rc 126). Both are fixed by the re-engineering
+  entry below, landed the same day. Findings still name only the governed paths. If the installed
   adr-touching predates batching (exits 2 on a second positional) the packet
   falls back to one call per path and the check reason says so, so a stale
   skill install can never disarm the gate again (ADR-030). `tests/run.sh` C3b
@@ -72,6 +71,24 @@ shipped, the ADRs own WHY.
   silently. A strict stub (unknown flag exits 2, `--dir` must exist, batched
   positionals, `queries[]` envelope) pins both halves in `tests/run.sh`:
   governed escalates, ungoverned stays queued. Observed 2026-09-05.
+- `ff-plan lint` was unusable on Windows at real-run scale (41 packets / 251
+  owned paths): 24m43s wall, then nothing printed and a wrong exit code. Two
+  causes. The scope-conflict matrix re-parsed every packet per check and
+  tested every owned-path pair through subshell-forking helpers (~31k pairs,
+  several forks each), and the final envelope handed the findings JSON to jq
+  as an argument, which dies past the 32k-char Windows command line with
+  `Argument list too long`. The lint is re-engineered rather than patched:
+  one awk pass indexes every packet, the checks read that index from memory,
+  the whole O(n^2) matrix is a single awk program over it, and findings and
+  checks accumulate in TSV ledger files that one jq call turns into the
+  envelope by reading files, never argv. Same findings in the same order
+  (verified against the previous implementation on a tess-v1 subset); the
+  41-packet run now lints in about 1.3s with 9 external processes, where
+  the old code spent 1,613 on an 8-packet subset alone. Two new
+  pins in `tests/run.sh`: a 20-packet / 200-owned-path fixture must stay
+  inside a 40-external-process budget (counted through PATH shims) and a
+  30s wall ceiling, and an 8-packet fixture producing 280 overlaps (~83k
+  chars of JSON) must still exit 10 with every finding present.
 
 ## [0.4.0] — 2026-09-04
 

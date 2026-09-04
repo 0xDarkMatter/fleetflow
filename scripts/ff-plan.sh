@@ -6,11 +6,15 @@
 # sibling in the manifest without changing the frozen phases[] string array
 # (ADR-026); lint gates spawn and reports every check armed/disarmed (ADR-030).
 
+# Section map (grep '# ==='): SURFACE, PACKET FRONTMATTER, DRAFT, EXPAND,
+# LINT SUBSTRATE, LINT CHECKS, REFUTE, ESTIMATE, MAIN.
+
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 RS=$'\036'
 
+# === SURFACE: usage, arg helpers, repo/run resolution ========================
 usage() {
   cat <<'EOF' >&2
 ff-plan — plan a fleet run: draft, expand, lint, refute, estimate
@@ -59,6 +63,8 @@ require_run() {
 }
 repo_file() { if [ "$1" = "." ]; then printf '%s\n' "$2"; else printf '%s/%s\n' "${1%/}" "$2"; fi; }
 
+# === PACKET FRONTMATTER: per-file readers (draft/refute use these; lint has
+# its own one-pass index below) ================================================
 # Restricted YAML subset: flat scalars plus two-space list items between the
 # first two delimiter lines. Inline [] is the template's empty-list spelling.
 has_frontmatter() { awk '{sub(/\r$/,"")} $0=="---"{n++;if(n==2)exit} END{exit !(n>=2)}' "$1"; }
@@ -93,8 +99,8 @@ packet_id() {
   local v; v="$(fm_scalar "$1" id)"
   if [ -n "$v" ]; then printf '%s\n' "$v"; else v="${1##*/}"; printf '%s\n' "${v%.task.md}"; fi
 }
-json_array() { if [ "$#" -eq 0 ]; then printf '[]\n'; else printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]' | tr -d '\r'; fi; }
 
+# === DRAFT: plan doc + packet stubs + manifest =================================
 render_plan_template() {
   local template="$1" target="$2" run="$3" date="$4" spec="$5" line
   : > "$target"
@@ -174,6 +180,7 @@ draft_cmd() {
   mv "$tmp" "$manifest"; err "created or updated manifest: $manifest"; printf '%s\n' "$plan_file"
 }
 
+# === EXPAND: generator-stamped packets =========================================
 registry_rows() {
   awk -F'|' '/^\|/&&NF>=4{g=$2;s=$4;gsub(/`/,"",g);gsub(/^[[:space:]]+|[[:space:]]+$/, "",g);gsub(/^[[:space:]]+|[[:space:]]+$/, "",s);if(tolower(g)!="generator"&&g!~/^-+$/&&g!="")print g"\t"s}' "$1" | tr -d '\r'
 }
@@ -194,36 +201,143 @@ expand_cmd() {
   if [[ "${status,,}" == *pending* ]]; then err "generator $generator is registered but has no expansion tables yet"; return 3; fi
   err "generator $generator is registered but its Status is not an expansion table: $status"; return 3
 }
-FINDINGS='[]'
-CHECKS='[]'
-add_finding() {
-  FINDINGS="$(jq -c --arg check "$1" --arg severity "$2" --argjson packets "$3" --argjson files "$4" --arg detail "$5" \
-    '.+[{check:$check,severity:$severity,packets:$packets,files:$files,detail:$detail}]' <<< "$FINDINGS" | tr -d '\r')"
-}
-add_check() {
-  CHECKS="$(jq -c --arg name "$1" --argjson armed "$2" --arg reason "$3" \
-    '.+[{name:$name,armed:$armed,reason:$reason}]' <<< "$CHECKS" | tr -d '\r')"
-}
-scope_overlap() {
-  local a="$1" b="$2" ap bp ag=0 bg=0
-  [ -n "$a" ] && [ -n "$b" ] || return 1
-  [[ "$a" == */ ]] && a="${a}**"; [[ "$b" == */ ]] && b="${b}**"
-  [[ "$a" == *'*'* || "$a" == *'?'* || "$a" == *'['* ]] && ag=1
-  [[ "$b" == *'*'* || "$b" == *'?'* || "$b" == *'['* ]] && bg=1
-  if [ "$ag" -eq 0 ] && [ "$bg" -eq 0 ]; then [ "$a" = "$b" ]; return; fi
-  ap="$(printf '%s' "$a" | sed 's/[?*\[].*$//')"; bp="$(printf '%s' "$b" | sed 's/[?*\[].*$//')"
-  [[ "$ap" == "$bp"* || "$bp" == "$ap"* ]]
-}
-scope_pair_findings() {
-  local fa="$1" ia="$2" ka="$3" fb="$4" ib="$5" kb="$6" severity="$7" label="$8" a b
-  local -a av=() bv=(); mapfile -t av < <(fm_list "$fa" "$ka"); mapfile -t bv < <(fm_list "$fb" "$kb")
-  for a in "${av[@]}"; do for b in "${bv[@]}"; do
-    if scope_overlap "$a" "$b"; then
-      add_finding scope-conflict "$severity" "$(json_array "$ia" "$ib")" "$(json_array "$a" "$b")" "$label: '$a' overlaps '$b'"
-    fi
-  done; done
+# === LINT SUBSTRATE: parse once, analyse in memory, serialise once ===========
+# WHY this shape (measured 2026-09-05, 41 packets / 251 owned paths, Windows):
+# the previous lint re-parsed every packet with awk per check and tested every
+# pair of owned paths through subshell-forking helpers - ~31k pairs x several
+# forks at ~0.15s a fork on this host = 24m43s wall, and then the final jq took
+# the findings JSON as an ARGV and died with "Argument list too long" past the
+# 32k-char Windows command line (nothing printed, rc != 10). A fork is the unit
+# of cost here, so the lint is three stages with a fixed process count:
+#
+#   PARSE      lint_index: ONE awk pass over every packet -> a TSV index
+#              (file \t kind \t key \t value; kind = meta|scalar|list).
+#   ANALYSE    checks read PK_* associative arrays loaded from the index in
+#              pure bash; the O(n^2) scope matrix is ONE awk program over the
+#              same index (scope_matrix), emitting ledger rows directly.
+#   SERIALISE  findings/checks accumulate as TSV ledger FILES via builtin
+#              printf and become JSON in ONE jq call that reads them as files
+#              (--rawfile / stdin) - never as arguments.
+#
+# Ledger grammar (construction site: add_finding / add_check / scope_matrix):
+#   findings.tsv  check \t severity \t packets \t files \t detail
+#   checks.tsv    name  \t armed(true|false) \t reason
+# where packets/files are RS ($'\036')-joined lists, "" = []. TAB, RS and
+# newline cannot occur in a value: the packet grammar (assets/packet.tmpl.md)
+# admits neither in ids, paths or enum scalars. tests/run.sh pins the external-
+# process budget for a 200-owned-path fixture and a >32k-char findings JSON;
+# a per-pair or per-packet fork anywhere in this section trips the budget.
+
+# lint_index FILE... -> TSV index on stdout. Semantics mirror fm_scalar/fm_list
+# (restricted YAML subset, first two --- fences, first scalar wins, "[]"/"null"
+# read as absent, a "key: # comment" line is an empty scalar that opens a list).
+# A file whose second fence never arrives has no frontmatter: only its
+# `meta fm 0` row survives, so nothing parsed from it can leak into a check.
+lint_index() {
+  [ "$#" -gt 0 ] || return 0
+  awk '
+    function flush() {
+      if (cur == "") return
+      print cur "\tmeta\tfm\t" (marks >= 2 ? 1 : 0)
+      if (marks >= 2) printf "%s", buf
+      cur = ""
+    }
+    FNR == 1 { flush(); cur = FILENAME; marks = 0; buf = ""; current = ""; print cur "\tmeta\tfile\t" cur }
+    { sub(/\r$/, "") }
+    $0 == "---" { marks++; current = ""; if (marks >= 2) nextfile; next }
+    marks != 1 { next }
+    /^[a-z_]+:[[:space:]]*/ {
+      key = $0; sub(/:.*/, "", key); v = $0; sub(/^[^:]+:[[:space:]]*/, "", v)
+      if (v ~ /^#/) v = ""; else sub(/[[:space:]]+#.*$/, "", v)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      current = (v == "") ? key : ""
+      if (!((cur, key) in seen)) {
+        seen[cur, key] = 1
+        if (v != "" && v != "[]" && v != "null") buf = buf cur "\tscalar\t" key "\t" v "\n"
+      }
+      next
+    }
+    current != "" && /^  -[[:space:]]+/ {
+      v = $0; sub(/^  -[[:space:]]+/, "", v); sub(/[[:space:]]+#.*$/, "", v)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (v != "") buf = buf cur "\tlist\t" current "\t" v "\n"
+    }
+    END { flush() }
+  ' "$@"
 }
 
+# In-memory packet model, keyed "file|key". PK_FM[file] = 1 when the file has
+# frontmatter. Loaded once per lint from the index; every check reads these.
+declare -A PK_SCALAR=() PK_LIST=() PK_FM=()
+lint_load_index() { # index TSV on stdin
+  local file kind key value
+  PK_SCALAR=(); PK_LIST=(); PK_FM=()
+  while IFS=$'\t' read -r file kind key value; do
+    case "$kind" in
+      meta) [ "$key" != fm ] || PK_FM["$file"]="$value";;
+      scalar) PK_SCALAR["$file|$key"]="$value";;
+      list) PK_LIST["$file|$key"]="${PK_LIST["$file|$key"]:+${PK_LIST["$file|$key"]}$RS}$value";;
+    esac
+  done
+}
+pk_list() { # file key ARRAYNAME -> fills the named array (no subshell)
+  local -n _pk_out="$3"; local raw="${PK_LIST["$1|$2"]:-}"
+  _pk_out=(); [ -z "$raw" ] || IFS="$RS" read -r -a _pk_out <<< "$raw"
+}
+join_by() { local IFS="$1"; shift; REPLY="$*"; } # sets REPLY, no fork
+
+LINT_TMP="" FINDINGS_TSV="" CHECKS_TSV=""
+trap '[ -z "${LINT_TMP:-}" ] || rm -rf "$LINT_TMP"' EXIT
+add_finding() { # check severity packets(RS-joined) files(RS-joined) detail
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$FINDINGS_TSV"
+}
+add_check() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$CHECKS_TSV"; }
+
+# scope_matrix: index TSV on stdin -> findings ledger rows on stdout, for every
+# unordered pair of frontmatter packets in file order: owns x owns (hard),
+# owns x modifies both ways (warn), modifies x modifies (warn), then registries
+# single-writer (hard). overlap() is the glob-prefix rule: a trailing "/" means
+# "/**"; two literal paths overlap only when equal; with a glob on either side
+# they overlap when the literal prefixes (up to the first * ? [) nest.
+scope_matrix() {
+  awk -F'\t' -v rs="$RS" -v q="'" '
+    function overlap(a, b,   ag, bg) {
+      if (a == "" || b == "") return 0
+      if (a ~ /\/$/) a = a "**"
+      if (b ~ /\/$/) b = b "**"
+      ag = (a ~ /[*?\[]/); bg = (b ~ /[*?\[]/)
+      if (!ag && !bg) return (a "") == (b "")
+      if (match(a, /[*?\[]/)) a = substr(a, 1, RSTART - 1)
+      if (match(b, /[*?\[]/)) b = substr(b, 1, RSTART - 1)
+      return substr(a, 1, length(b)) == b || substr(b, 1, length(a)) == a
+    }
+    function emit(sev, pk, fl, detail) { print "scope-conflict\t" sev "\t" pk "\t" fl "\t" detail }
+    function pairs(i, j, ka, kb, sev, label,   x, y, a, b) {
+      for (x = 1; x <= cnt[i, ka]; x++) for (y = 1; y <= cnt[j, kb]; y++) {
+        a = val[i, ka, x]; b = val[j, kb, y]
+        if (overlap(a, b)) emit(sev, id[i] rs id[j], a rs b, label ": " q a q " overlaps " q b q)
+      }
+    }
+    $2 == "meta" && $3 == "file" { n++; ord[$1] = n; b = $1; sub(/.*\//, "", b); sub(/\.task\.md$/, "", b); id[n] = b }
+    $2 == "meta" && $3 == "fm" { fm[ord[$1]] = $4 }
+    $2 == "scalar" && $3 == "id" { id[ord[$1]] = $4 }
+    $2 == "list" && ($3 == "owns" || $3 == "modifies" || $3 == "registries") { i = ord[$1]; cnt[i, $3]++; val[i, $3, cnt[i, $3]] = $4 }
+    END {
+      for (i = 1; i <= n; i++) { if (!fm[i]) continue
+        for (j = i + 1; j <= n; j++) { if (!fm[j]) continue
+          pairs(i, j, "owns", "owns", "hard", "owns×owns")
+          pairs(i, j, "owns", "modifies", "warn", "owns×modifies")
+          pairs(j, i, "owns", "modifies", "warn", "owns×modifies")
+          pairs(i, j, "modifies", "modifies", "warn", "modifies×modifies")
+          for (x = 1; x <= cnt[i, "registries"]; x++) for (y = 1; y <= cnt[j, "registries"]; y++)
+            if (val[i, "registries", x] != "" && (val[i, "registries", x] "") == (val[j, "registries", y] ""))
+              emit("hard", id[i] rs id[j], val[i, "registries", x], "registries single-writer conflict: " val[i, "registries", x])
+        }
+      }
+    }'
+}
+
+# === LINT CHECKS: dependency DAG walk + lint_cmd ===============================
 declare -A DEP_STATE=() DEP_MAP=() ID_FILE=() DEP_INCOMING=()
 CYCLE_REPORTED=0
 visit_dep() {
@@ -232,7 +346,7 @@ visit_dep() {
   for dep in "${deps[@]}"; do
     [ -n "$dep" ] && [ -n "${ID_FILE[$dep]:-}" ] || continue
     if [ "${DEP_STATE[$dep]:-0}" -eq 1 ] && [ "$CYCLE_REPORTED" -eq 0 ]; then
-      add_finding dep-edges hard "$(json_array "$dep" "$id")" '[]' "dependency cycle includes $dep and $id"; CYCLE_REPORTED=1
+      add_finding dep-edges hard "$dep$RS$id" "" "dependency cycle includes $dep and $id"; CYCLE_REPORTED=1
     elif [ "${DEP_STATE[$dep]:-0}" -eq 0 ]; then visit_dep "$dep"; fi
   done
   DEP_STATE["$id"]=2; return 0
@@ -241,8 +355,8 @@ visit_dep() {
 lint_cmd() {
   local run="" json_mode=0 repo_arg="" repo run_dir manifest packet_dir file id role class model dep value reason
   local fm_count=0 legacy_count=0 legacy_reason="" adr_armed=0 adr_disarmed="" adr_script rc adr_output
-  local -a files=() fm_files=() legacy_ids=() ids=() av=() bv=() deps=() owned=() replies=()
-  FINDINGS='[]'; CHECKS='[]'; DEP_STATE=(); DEP_MAP=(); ID_FILE=(); DEP_INCOMING=(); CYCLE_REPORTED=0
+  local -a files=() fm_files=() legacy_ids=() ids=() deps=() owned=() replies=()
+  DEP_STATE=(); DEP_MAP=(); ID_FILE=(); DEP_INCOMING=(); CYCLE_REPORTED=0
   while [ "$#" -gt 0 ]; do case "$1" in
     --run) need_value "$#" "$1"; run="$2"; shift 2;; --json) json_mode=1; shift;;
     --repo) need_value "$#" "$1"; repo_arg="$2"; shift 2;; -h|--help) usage; return 0;;
@@ -256,40 +370,40 @@ lint_cmd() {
     jq -e 'type=="object"' "$manifest" >/dev/null 2>&1 || { err "manifest is malformed: $manifest"; return 3; }
   else manifest=""; fi
   shopt -s nullglob; files=("$packet_dir"/*.task.md); shopt -u nullglob
+
+  # PARSE: one awk pass -> index file; loaded once into PK_*; the ledgers
+  # start empty. The temp dir lives outside the target repo (a lint is
+  # read-only on the plan) and is removed on every return path.
+  LINT_TMP="$(mktemp -d)"; FINDINGS_TSV="$LINT_TMP/findings.tsv"; CHECKS_TSV="$LINT_TMP/checks.tsv"
+  : > "$FINDINGS_TSV"; : > "$CHECKS_TSV"
+  lint_index "${files[@]}" > "$LINT_TMP/index.tsv"
+  lint_load_index < "$LINT_TMP/index.tsv"
   for file in "${files[@]}"; do
-    id="$(packet_id "$file")"
-    if has_frontmatter "$file"; then fm_files+=("$file"); ids+=("$id"); ID_FILE["$id"]="$file"; fm_count=$((fm_count+1))
+    id="${PK_SCALAR["$file|id"]:-}"
+    if [ -z "$id" ]; then id="${file##*/}"; id="${id%.task.md}"; fi
+    if [ "${PK_FM[$file]:-0}" = 1 ]; then fm_files+=("$file"); ids+=("$id"); ID_FILE["$id"]="$file"; fm_count=$((fm_count+1))
     else legacy_ids+=("$id"); legacy_count=$((legacy_count+1)); fi
   done
-  [ "$legacy_count" -eq 0 ] || legacy_reason="; disarmed(no frontmatter): $(IFS=,; echo "${legacy_ids[*]}")"
+  if [ "$legacy_count" -gt 0 ]; then join_by , "${legacy_ids[@]}"; legacy_reason="; disarmed(no frontmatter): $REPLY"; fi
 
-  # (a) owns/modifies globs and registry single-writer.
-  for ((i=0;i<${#fm_files[@]};i++)); do for ((j=i+1;j<${#fm_files[@]};j++)); do
-    local fa="${fm_files[$i]}" fb="${fm_files[$j]}" ia="${ids[$i]}" ib="${ids[$j]}"
-    scope_pair_findings "$fa" "$ia" owns "$fb" "$ib" owns hard "owns×owns"
-    scope_pair_findings "$fa" "$ia" owns "$fb" "$ib" modifies warn "owns×modifies"
-    scope_pair_findings "$fb" "$ib" owns "$fa" "$ia" modifies warn "owns×modifies"
-    scope_pair_findings "$fa" "$ia" modifies "$fb" "$ib" modifies warn "modifies×modifies"
-    mapfile -t av < <(fm_list "$fa" registries); mapfile -t bv < <(fm_list "$fb" registries)
-    for value in "${av[@]}"; do for dep in "${bv[@]}"; do
-      [ -z "$value" ] || [ "$value" != "$dep" ] || add_finding scope-conflict hard "$(json_array "$ia" "$ib")" "$(json_array "$value")" "registries single-writer conflict: $value"
-    done; done
-  done; done
+  # (a) owns/modifies globs and registry single-writer: the whole O(n^2)
+  # matrix is one awk over the index, appending ledger rows directly.
+  scope_matrix < "$LINT_TMP/index.tsv" >> "$FINDINGS_TSV"
   if [ "$fm_count" -gt 0 ]; then add_check scope-conflict true "checked $fm_count packet(s)$legacy_reason"; else add_check scope-conflict false "no frontmatter"; fi
 
   # (b) dependency membership, cycle, and orphan checks.
   for ((i=0;i<${#fm_files[@]};i++)); do
-    file="${fm_files[$i]}"; id="${ids[$i]}"; mapfile -t deps < <(fm_list "$file" depends_on)
-    DEP_MAP["$id"]="$(IFS="$RS"; echo "${deps[*]}")"
+    file="${fm_files[$i]}"; id="${ids[$i]}"; pk_list "$file" depends_on deps
+    DEP_MAP["$id"]="${PK_LIST["$file|depends_on"]:-}"
     for dep in "${deps[@]}"; do
-      if [ -z "${ID_FILE[$dep]:-}" ]; then add_finding dep-edges hard "$(json_array "$id")" '[]' "depends_on id '$dep' is not in the packet set"
+      if [ -z "${ID_FILE[$dep]:-}" ]; then add_finding dep-edges hard "$id" "" "depends_on id '$dep' is not in the packet set"
       else DEP_INCOMING["$dep"]=$(( ${DEP_INCOMING[$dep]:-0} + 1 )); fi
     done
   done
   for id in "${ids[@]}"; do [ "${DEP_STATE[$id]:-0}" -ne 0 ] || visit_dep "$id"; done
   if [ "$fm_count" -gt 3 ]; then for id in "${ids[@]}"; do
     if [ -z "${DEP_MAP[$id]:-}" ] && [ "${DEP_INCOMING[$id]:-0}" -eq 0 ]; then
-      add_finding dep-edges warn "$(json_array "$id")" '[]' "orphan packet has no incoming or outgoing dependency edge"
+      add_finding dep-edges warn "$id" "" "orphan packet has no incoming or outgoing dependency edge"
     fi
   done; fi
   if [ "$fm_count" -gt 0 ]; then add_check dep-edges true "checked $fm_count packet(s)$legacy_reason"; else add_check dep-edges false "no frontmatter"; fi
@@ -317,7 +431,7 @@ lint_cmd() {
     local -a governed=()
     adr_err="$(mktemp)"
     for ((i=0;i<${#fm_files[@]};i++)); do
-      file="${fm_files[$i]}"; id="${ids[$i]}"; mapfile -t owned < <(fm_list "$file" owns)
+      file="${fm_files[$i]}"; id="${ids[$i]}"; pk_list "$file" owns owned
       if [ "${#owned[@]}" -eq 0 ]; then adr_disarmed="${adr_disarmed:+$adr_disarmed, }$id(no owned paths)"; continue; fi
       pkt_ok=1; pkt_gov=0; pkt_rc=""; governed=()
       set +e
@@ -356,7 +470,8 @@ lint_cmd() {
       fi
       adr_armed=$((adr_armed+1))
       if [ "$pkt_gov" -eq 1 ] && ! grep -qi "constraints from standing decisions" "$file"; then
-        add_finding adr-constraints hard "$(json_array "$id")" "$(json_array "${governed[@]}")" "governing ADRs found but packet lacks the Constraints from standing decisions heading"
+        join_by "$RS" "${governed[@]}"
+        add_finding adr-constraints hard "$id" "$REPLY" "governing ADRs found but packet lacks the Constraints from standing decisions heading"
       fi
     done
     rm -f "$adr_err"
@@ -370,29 +485,31 @@ lint_cmd() {
   local valid_roles=" Architect Oracle Scout Surveyor Scholar Builder Inspector Adversary Judge Critic Composer Warden "
   local valid_classes=" mechanical scout build verify judge generator interactive " valid_models=" glm codex grok pi sonnet haiku opus fable chip " scalar_reply
   for ((i=0;i<${#fm_files[@]};i++)); do
-    file="${fm_files[$i]}"; id="${ids[$i]}"; role="$(fm_scalar "$file" role)"; class="$(fm_scalar "$file" class)"; model="$(fm_scalar "$file" model)"
-    [[ "$valid_roles" == *" $role "* ]] || add_finding packet-contract hard "$(json_array "$id")" "$(json_array "$file")" "invalid role '$role'"
-    [[ "$valid_classes" == *" $class "* ]] || add_finding packet-contract hard "$(json_array "$id")" "$(json_array "$file")" "invalid class '$class'"
-    [[ "$valid_models" == *" $model "* ]] || add_finding packet-contract hard "$(json_array "$id")" "$(json_array "$file")" "invalid model '$model'"
-    mapfile -t replies < <(fm_list "$file" final_reply); scalar_reply="$(fm_scalar "$file" final_reply)"
+    file="${fm_files[$i]}"; id="${ids[$i]}"
+    role="${PK_SCALAR["$file|role"]:-}"; class="${PK_SCALAR["$file|class"]:-}"; model="${PK_SCALAR["$file|model"]:-}"
+    [[ "$valid_roles" == *" $role "* ]] || add_finding packet-contract hard "$id" "$file" "invalid role '$role'"
+    [[ "$valid_classes" == *" $class "* ]] || add_finding packet-contract hard "$id" "$file" "invalid class '$class'"
+    [[ "$valid_models" == *" $model "* ]] || add_finding packet-contract hard "$id" "$file" "invalid model '$model'"
+    pk_list "$file" final_reply replies; scalar_reply="${PK_SCALAR["$file|final_reply"]:-}"
     if [[ " mechanical build generator " == *" $class "* ]] && [ "${#replies[@]}" -eq 0 ] && [ -z "$scalar_reply" ]; then
-      add_finding packet-contract warn "$(json_array "$id")" "$(json_array "$file")" "file-mutating class '$class' has empty final_reply"
+      add_finding packet-contract warn "$id" "$file" "file-mutating class '$class' has empty final_reply"
     fi
   done
   if [ "$fm_count" -gt 0 ]; then add_check packet-contract true "checked $fm_count packet(s)$legacy_reason"; else add_check packet-contract false "no frontmatter"; fi
 
   # (e) routing sanity.
   for ((i=0;i<${#fm_files[@]};i++)); do
-    file="${fm_files[$i]}"; id="${ids[$i]}"; role="$(fm_scalar "$file" role)"; class="$(fm_scalar "$file" class)"; model="$(fm_scalar "$file" model)"
-    if [[ " verify judge " == *" $class "* ]] && [[ " glm haiku " == *" $model "* ]]; then add_finding routing warn "$(json_array "$id")" "$(json_array "$file")" "under-powered judge"; fi
-    if [ "$role" = Adversary ] && [ "$class" = mechanical ]; then add_finding routing warn "$(json_array "$id")" "$(json_array "$file")" "Adversary role cannot use mechanical class"; fi
+    file="${fm_files[$i]}"; id="${ids[$i]}"
+    role="${PK_SCALAR["$file|role"]:-}"; class="${PK_SCALAR["$file|class"]:-}"; model="${PK_SCALAR["$file|model"]:-}"
+    if [[ " verify judge " == *" $class "* ]] && [[ " glm haiku " == *" $model "* ]]; then add_finding routing warn "$id" "$file" "under-powered judge"; fi
+    if [ "$role" = Adversary ] && [ "$class" = mechanical ]; then add_finding routing warn "$id" "$file" "Adversary role cannot use mechanical class"; fi
   done
   if [ "$fm_count" -gt 0 ]; then add_check routing true "checked $fm_count packet(s)$legacy_reason"; else add_check routing false "no frontmatter"; fi
 
   # (f) every barrier under manifest.plan must name a non-empty string join.
   if [ -z "$manifest" ]; then add_check barriers false "no manifest"
   elif jq -e 'has("plan")' "$manifest" >/dev/null 2>&1; then
-    while IFS= read -r value; do [ -z "$value" ] || add_finding barriers warn '[]' '[]' "$value"; done < <(
+    while IFS= read -r value; do [ -z "$value" ] || add_finding barriers warn "" "" "$value"; done < <(
       jq -r '.plan.barriers//[]|to_entries[]|select((((.value.joins? //"")|type)!="string") or (((.value.joins? //"")|length)==0))|"barrier \(.key) has empty joins"' "$manifest" | tr -d '\r')
     add_check barriers true "manifest plan.barriers checked"
   else add_check barriers false "manifest has no plan key"; fi
@@ -401,10 +518,20 @@ lint_cmd() {
   # all disarms the check rather than manufacturing a finding.
   if [ -z "$manifest" ]; then add_check bounds false "no manifest"
   elif jq -e '(.plan? | type)=="object" and (.plan|has("bounds"))' "$manifest" >/dev/null 2>&1; then add_check bounds true "manifest plan.bounds declared"
-  else add_finding bounds warn '[]' '[]' "manifest plan.bounds is absent"; add_check bounds true "manifest checked; plan.bounds absent"; fi
+  else add_finding bounds warn "" "" "manifest plan.bounds is absent"; add_check bounds true "manifest checked; plan.bounds absent"; fi
 
+  # SERIALISE: both ledgers reach jq as FILES (findings on stdin via -R,
+  # checks via --rawfile). Never --argjson here: the findings JSON for a real
+  # run is hundreds of KB and argv is capped at 32k chars on Windows.
   local result count
-  result="$(jq -cn --argjson findings "$FINDINGS" --argjson checks "$CHECKS" '{findings:$findings,checks:$checks}' | tr -d '\r')"; count="$(jqr '.findings|length' <<< "$result")"
+  result="$(jq -Rn --rawfile checks "$CHECKS_TSV" --arg rs "$RS" '
+    def cells: split("\t");
+    def list: if . == "" then [] else split($rs) end;
+    { findings: [inputs | cells | {check:.[0], severity:.[1], packets:(.[2]|list), files:(.[3]|list), detail:.[4]}],
+      checks: [$checks | split("\n")[] | select(. != "") | cells | {name:.[0], armed:(.[1] == "true"), reason:.[2]}] }' \
+    "$FINDINGS_TSV" | tr -d '\r')"
+  rm -rf "$LINT_TMP"; LINT_TMP=""
+  count="$(jqr '.findings|length' <<< "$result")"
   if [ "$json_mode" -eq 1 ]; then printf '%s\n' "$result"
   else
     jq -r '.findings[]|"FINDING \(.check) \(.severity) \(if (.packets|length)>0 then (.packets|join(",")) else "-" end) — \(.detail)"' <<< "$result" | tr -d '\r'
@@ -412,6 +539,7 @@ lint_cmd() {
   fi
   [ "$count" -eq 0 ] || return 10
 }
+# === REFUTE: one cross-provider Adversary against the decomposition ============
 choose_refute_model() {
   local manifest="$1" candidate used
   for candidate in codex grok pi glm; do
@@ -497,6 +625,7 @@ EOF
   [ "$findings" -eq 0 ] || return 10
 }
 
+# === ESTIMATE: price lanes and wall-clock ======================================
 pricing_record() {
   jq -c --arg model "$2" '
     def pick($key): if type=="object" then .[$key] else null end;
@@ -553,6 +682,7 @@ estimate_cmd() {
   bounds="$(jqr '.plan.bounds//"absent"' "$manifest")"; printf 'BOUNDS: %s\n' "$bounds"
 }
 
+# === MAIN ======================================================================
 main() {
   local cmd="${1:-}"
   case "$cmd" in

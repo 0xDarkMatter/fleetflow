@@ -2676,6 +2676,73 @@ LCALLS="$(grep -c . "$ADRLOG" | tr -d '\r ')"
       and (.packets|index("a1")) and (.files==["src/gov.txt"]))' >/dev/null; } \
   && ok "ff-plan: single-query (legacy) adr-touching -> per-path fallback, still armed, same finding (4 spawns)" \
   || bad "ff-plan: legacy adr-touching fallback wrong (rc=$LJRC calls=$LCALLS)"
+# --- C8: scale - resource budget + oversized findings (regression, 2026-09-05) --
+# The real thing (41 packets / 251 owned paths) took 24m43s on Windows and then
+# printed nothing: the scope matrix forked several subshells per owned-path
+# pair (~31k pairs), and the final envelope passed the findings JSON to jq as
+# an ARGV, which dies past the 32k-char Windows command line ("Argument list
+# too long", rc != 10). The suite was green throughout because every fixture
+# above is tiny. Two pins, so the next hot spot cannot hide behind small data:
+#  (1) a 20-packet / 200-owned-path fixture must lint inside a fixed budget
+#      of EXTERNAL PROCESSES - counted through PATH shims, because on this
+#      host a fork is the unit of cost and wall-clock alone is noisy - plus a
+#      generous wall ceiling as the backstop;
+#  (2) a fixture whose findings JSON exceeds 32k chars must still exit 10
+#      with parseable JSON and every finding present.
+# HOME is a bare dir so adr-constraints disarms: adr-touching is one python per
+# owned path by contract (C3b) and is not what this budget measures.
+for k in $(seq 1 20); do
+  {
+    printf -- '---\nid: s%02d\nrole: Builder\nclass: build\nmodel: sonnet\nowns:\n' "$k"
+    for m in $(seq 1 10); do printf '  - src/p%02d/f%02d.txt\n' "$k" "$m"; done
+    printf 'modifies:\n  - shared/m%02d.txt\nregistries: []\nfinal_reply:\n  - "DONE: <n>"\n' "$k"
+    if [ "$k" -gt 1 ]; then printf 'depends_on:\n  - s%02d\n' "$((k-1))"; else printf 'depends_on: []\n'; fi
+    printf -- '---\n\nPacket %d. FINAL REPLY: one line.\n' "$k"
+  } | plan_pkt pscale "s$(printf '%02d' "$k")"
+done
+SHIM="$TMP/lint-shims"; SHIMLOG="$TMP/lint-shims.log"; mkdir -p "$SHIM"; : > "$SHIMLOG"
+for tool in jq awk sed tr grep cut sort wc head mktemp python3 python; do
+  SHIMREAL="$(command -v "$tool" 2>/dev/null)" || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$tool" "$SHIMLOG" "$SHIMREAL" > "$SHIM/$tool"
+  chmod +x "$SHIM/$tool"
+done
+SCALE_T0="$(date +%s)"
+SJ="$(HOME="$NOHOME" PATH="$SHIM:$PATH" bash "$PLAN" lint --run pscale --repo "$PREPO" --json 2>/dev/null)"; SJRC=$?
+SCALE_T1="$(date +%s)"
+SCALE_PROCS="$(wc -l < "$SHIMLOG" | tr -d ' ')"
+{ [ "$SJRC" = "0" ] && printf '%s' "$SJ" | jq -e '(.findings|length)==0 and any(.checks[]; .name=="scope-conflict" and .armed)' >/dev/null; } \
+  && ok "ff-plan: 200-owned-path scale fixture lints clean (exit 0)" \
+  || bad "ff-plan: scale fixture not clean (rc=$SJRC)"
+# Budget: the lint is parse-once (1 awk) + matrix (1 awk) + envelope (1 jq) +
+# count (jq, tr) + mktemp + the python probe in _env.sh - measured 9 external
+# processes for ANY packet count (2026-09-05). 40 leaves 4x headroom; the
+# pre-fix implementation spent several per owned-path PAIR.
+# The lower bound proves the shims actually intercepted (a shim dir the shell
+# will not exec shebang scripts from would count 0 and pass vacuously).
+{ [ "$SCALE_PROCS" -ge 3 ] && [ "$SCALE_PROCS" -le 40 ]; } \
+  && ok "ff-plan: scale lint stays inside the external-process budget ($SCALE_PROCS <= 40)" \
+  || bad "ff-plan: scale lint spawned $SCALE_PROCS external processes (budget 3..40) - a per-pair or per-packet fork is back, or the shims did not fire"
+[ $((SCALE_T1 - SCALE_T0)) -le 30 ] \
+  && ok "ff-plan: scale lint wall time within 30s ($((SCALE_T1 - SCALE_T0))s)" \
+  || bad "ff-plan: scale lint took $((SCALE_T1 - SCALE_T0))s (ceiling 30s)"
+# (2) oversized envelope: 8 packets owning the same 10 literal paths -> 28
+# pairs x 10 equal-path overlaps = 280 hard findings, ~83k chars of JSON.
+for k in $(seq 1 8); do
+  {
+    printf -- '---\nid: b%d\nrole: Builder\nclass: build\nmodel: sonnet\nowns:\n' "$k"
+    for m in $(seq 1 10); do printf '  - src/same/f%02d.txt\n' "$m"; done
+    printf 'modifies: []\nregistries: []\ndepends_on: []\nfinal_reply:\n  - "DONE: <n>"\n---\n\nPacket %d. FINAL REPLY: one line.\n' "$k"
+  } | plan_pkt pbig "b$k"
+done
+BIGJ="$(HOME="$NOHOME" bash "$PLAN" lint --run pbig --repo "$PREPO" --json 2>/dev/null)"; BIGRC=$?
+{ [ "$BIGRC" = "10" ] && [ "${#BIGJ}" -gt 32768 ] \
+  && printf '%s' "$BIGJ" | jq -e '([.findings[]|select(.check=="scope-conflict" and .severity=="hard")]|length)==280' >/dev/null; } \
+  && ok "ff-plan: >32k-char findings JSON still exits 10 with every finding (${#BIGJ} chars)" \
+  || bad "ff-plan: oversized findings envelope broke (rc=$BIGRC, ${#BIGJ} chars) - jq argv limit is back"
+BIGTXT="$(HOME="$NOHOME" bash "$PLAN" lint --run pbig --repo "$PREPO" 2>/dev/null | tr -d '\r')"
+[ "$(printf '%s\n' "$BIGTXT" | grep -c '^FINDING scope-conflict hard')" = "280" ] \
+  && ok "ff-plan: text mode prints all 280 FINDING lines for the oversized run" \
+  || bad "ff-plan: text mode dropped FINDING lines on the oversized run"
 
 # --- C4: draft scaffolds the plan, refuses to clobber ----------------------------
 check "ff-plan: draft with missing spec -> 3" 3 \
