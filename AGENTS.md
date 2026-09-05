@@ -162,6 +162,15 @@ a plain clone with neither, the git rules relax to ordinary practice.
   live skill every session loads, and a supervised dashboard holds this dir as
   CWD. All development happens in worktree lanes; `main` stays parked on `main`.
   On a plain clone with neither, branch normally.
+- **`ff-plan lint` never passes findings through argv, and parses each packet
+  once — both look like premature optimisation and are neither.** A real run's
+  findings JSON is hundreds of KB against a ~32k-char Windows command line, so
+  `jq --argjson "$FINDINGS"` dies E2BIG (rc 126) printing NOTHING; serialise by
+  reading files (`--rawfile`/stdin) only. And the scope matrix is ONE awk pass
+  over a prebuilt index, not per-check re-parsing — the old shape forked per
+  owned-path pair (~31k pairs) and took 24m43s where this takes ~8s. **Both are
+  invisible at test scale**, which is why the "simpler" `--argjson` survived so
+  long; `tests/run.sh` C8 pins them. Fixed 2026-09-05.
 - **Windows `jq.exe` emits CRLF — strip `\r` on EVERY `jq -r` capture.**
   A raw `$(jq -r …)` or `< <(jq -r …)` carries a trailing `\r` that silently
   breaks `=` comparisons, `[ -f ]` checks, `case` matches, and `--fp` lookups.
