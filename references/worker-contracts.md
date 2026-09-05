@@ -195,8 +195,19 @@ Verified live 2026-09-04: `google` + `GEMINI_API_KEY` ran full lanes on
 **Uncatalogued ids are accepted**: pi warns `Model "X" not found for
 provider "P". Using custom model id.` and sends it anyway, so a model newer
 than pi's bundled catalogue only needs its exact id in `FLEETFLOW_PI_MODEL`.
-`openrouter` + `OPENROUTER_API_KEY` ran a full `meta/muse-spark-1.3` lane
-at `--effort max` (pi `--thinking xhigh`).
+`openrouter` + `OPENROUTER_API_KEY` ran full lanes on `meta/muse-spark-1.3`
+at `--effort max` (pi `--thinking xhigh`) and on `openai/gpt-6-astra`
+(2026-09-05).
+**Before concluding a model is unavailable, probe its CANONICAL id.** Codex
+returns `not supported when using Codex with a ChatGPT account` for an
+unrecognised name — including a misspelling — so that message distinguishes
+neither "gated" from "does not exist" NOR either from "wrong id". Only a
+*different* error proves acceptance: `gpt-6-astra` is served to a ChatGPT-plan
+codex seat and reaches the usage-limit check, while `astra`, `gpt-6`,
+`gpt-6-astra-pro` and `gpt-6-astra-max` all take the not-supported path
+(verified side by side 2026-09-05, after this file briefly recorded the
+opposite on the strength of a made-up short name). Take the id from the
+provider listing, not from the marketing name.
 **Some OpenRouter models are gated per ACCOUNT, not per key**: that model
 first returned 403 `missing_attestation_types: age_18plus` until the
 attestation was accepted at openrouter.ai/settings/preferences. The lane

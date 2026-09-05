@@ -8,6 +8,19 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- Model-routing docs name the verified wildcard routes and the seat each one
+  earns by RATE rather than novelty: `gemini-3.8-flash` ($0.75/$3.75) as a
+  build lane, `meta/muse-spark-1.3` ($1.25/$4.25) for build or dissent. All
+  were reached with no code change (pi accepts ids newer than its catalogue).
+- GPT-6 Astra IS served to a ChatGPT-plan codex seat as `gpt-6-astra`
+  (`FLEETFLOW_CODEX_MODEL=gpt-6-astra`); the pi/openrouter route at $10/$50 is
+  a quota fallback, not the primary. The contract records the probe trap that
+  made this look unavailable: codex answers an unrecognised name with
+  `not supported when using Codex with a ChatGPT account`, so that message
+  separates neither gated from nonexistent NOR either from a WRONG ID. Only a
+  different error proves acceptance - `gpt-6-astra` reaches the usage-limit
+  check where `astra`/`gpt-6`/`-pro`/`-max` do not. Probe the canonical id
+  from the provider listing before concluding anything.
 - `ff-spawn --config-dir DIR`: run a claude-family lane against another
   `CLAUDE_CONFIG_DIR` instead of the host's. Anthropic lanes inherit the host
   store by design, which makes one expired host token fatal to every

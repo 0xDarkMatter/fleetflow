@@ -138,6 +138,23 @@ with the Codex/Grok columns and the orchestrator rule:
 | **wildcard** (build or verify on a provider none of the fixed models cover) | Pi (`FLEETFLOW_PI_PROVIDER=google\|openrouter\|deepseek\|…` — pi's provider names, so Gemini is `google`, not `gemini`) | one integration, 15+ providers; builds as readily as it refutes; no sandbox and no turn cap — worktree + stall detector are the bounds |
 | **synthesize / land decisions** | orchestrator (Fable > Opus) | needs the conversation's context |
 
+**Wildcard routes verified on this box** — the seat a wildcard model takes is
+decided by its rate, not its novelty. Cheap ones are build and mechanical
+lanes; premium ones are judge and refuter seats, where diversity is worth
+paying for and the token count is small:
+
+| `FLEETFLOW_PI_PROVIDER` / `_MODEL` | Rate (in/out per 1M) | Seat |
+|---|---|---|
+| `google` / `gemini-3.8-flash` | $0.75 / $3.75 | build, scout — cheap and fast |
+| `google` / `gemini-3.6-flash` | cheaper still | mechanical |
+| `openrouter` / `openai/gpt-6-astra` | $10 / $50 | fallback route only — **prefer `--model codex` with `FLEETFLOW_CODEX_MODEL=gpt-6-astra`**, which your ChatGPT plan already covers; this pi route is for when codex quota is exhausted, and is Opus-tier, ~12x a GLM lane on output |
+| `openrouter` / `meta/muse-spark-1.3` | $1.25 / $4.25 | build or dissent; 53s to first token at xhigh |
+
+Rates verified 2026-09-05; they move, so re-check before planning a wide
+fan-out on one. A launch-week model needs no fleetflow change — pi accepts an
+id newer than its own catalogue (contract §4), which is how all four above
+were reached.
+
 Two guardrails carried over verbatim from the native tool's doctrine: reach for
 the **effort lever before the model lever**, and a cheap rubber-stamp verifier is
 worse than none.
