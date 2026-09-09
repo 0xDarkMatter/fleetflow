@@ -497,6 +497,29 @@ lint_cmd() {
   done
   if [ "$fm_count" -gt 0 ]; then add_check packet-contract true "checked $fm_count packet(s)$legacy_reason"; else add_check packet-contract false "no frontmatter"; fi
 
+  # (d2) fleet-wide rules reach every provider (ADR-037). Two channels exist
+  # for a non-Claude lane: the guard preamble (every guarded spawn) and the
+  # target repo's AGENTS.md (every harness reads it, including ones added
+  # later). Claude-family lanes also inherit ~/.claude/rules implicitly - which
+  # is exactly why godaddy-build's GLM lanes commented at 14-16% and its Codex
+  # lanes at 1-3% on identical packets. Preamble tags are the doctor's fail;
+  # here they are a warn, and the AGENTS.md pointer is the check this lint
+  # adds. warn, not hard: a missing pointer is a property of the target repo,
+  # and blocking a plan on it would push orchestrators to disable the check.
+  local fr_pre="$SCRIPT_DIR/../assets/guard-preamble.txt" fr_agents fr_rules fr fr_seen=0 fr_total=0 fr_missing="" fr_ptr="no"
+  fr_agents="$(repo_file "$repo" AGENTS.md)"
+  IFS=, read -r -a fr_rules <<< "${FLEETFLOW_FLEET_RULES:-agentic-quality}"
+  for fr in "${fr_rules[@]}"; do
+    fr="${fr// /}"; [ -n "$fr" ] || continue
+    fr_total=$((fr_total+1))
+    if grep -q "\[fleet-rule: $fr\]" "$fr_pre" 2>/dev/null; then fr_seen=$((fr_seen+1)); else fr_missing="$fr_missing $fr"; fi
+  done
+  [ -z "$fr_missing" ] || add_finding fleet-rules warn "" "assets/guard-preamble.txt" "declared fleet rule(s) with no [fleet-rule: NAME] block in the guard preamble:$fr_missing - codex/grok/pi lanes will never see them"
+  if [ -f "$fr_agents" ] && grep -qiE "fleet-rule:|CODE DOCTRINE|agentic-quality" "$fr_agents"; then fr_ptr="yes"
+  else add_finding fleet-rules warn "" "AGENTS.md" "target repo AGENTS.md carries neither the CODE DOCTRINE block nor a pointer to it - AGENTS.md is the one channel every harness reads; non-Claude lanes get the doctrine from the preamble only"
+  fi
+  add_check fleet-rules true "claude lanes: inherit ~/.claude/rules implicitly; codex/grok/pi lanes: preamble carries $fr_seen/$fr_total declared rule(s), AGENTS.md pointer: $fr_ptr"
+
   # (e) routing sanity.
   for ((i=0;i<${#fm_files[@]};i++)); do
     file="${fm_files[$i]}"; id="${ids[$i]}"

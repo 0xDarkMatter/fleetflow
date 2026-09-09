@@ -8,6 +8,18 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- Fleet-wide rules are carried in the guard preamble (ADR-037). `claude -p`
+  lanes inherit `~/.claude/rules/*.md` implicitly; codex/grok/pi lanes see
+  only the packet, the preamble and the repo `AGENTS.md` — on godaddy-build
+  the commenting doctrine reached GLM lanes (14–16% comment density) and not
+  Codex lanes (1–3%) on identical packets. Each rule in
+  `FLEETFLOW_FLEET_RULES` (default `agentic-quality`) needs a
+  `[fleet-rule: NAME]` block in `assets/guard-preamble.txt`; `ff-doctor
+  --offline` gains `fleet-rules` (fail when a declared rule has no block) and
+  `rule-inheritance` (the asymmetry, stated); `ff-plan lint` gains a
+  `fleet-rules` check that warns when the target repo's `AGENTS.md` carries
+  neither the doctrine nor a pointer to it; the Adversary role card gains a
+  shape lens with the same thresholds as the GoDaddy comment gate.
 - Lane cards report OUTCOME, not only effort. `ff-status` lifts the
   builder-role final-reply contract into the lane record — `verdict`
   (`STATUS:`), `tests`, `files_changed`, `deferred` — from `<id>.last.txt`

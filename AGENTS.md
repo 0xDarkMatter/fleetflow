@@ -31,6 +31,17 @@ operational playbook — read it first; this file only carries repo mechanics.
 | `docs/REFERENCE.md` | env-var registry mirror (source of truth: `ff-doctor --env`) + exit-code table |
 | `tests/` | `run.sh` — the one gate; run it before landing anything |
 
+## Conventions
+
+- **Code doctrine, every provider:** the `CODE DOCTRINE` block in
+  [assets/guard-preamble.txt](assets/guard-preamble.txt) (`[fleet-rule:
+  agentic-quality]`) is the commenting standard for workers of any harness —
+  contract block in the first 30 lines of a 40+ line file, WHY-only inline
+  comments, guard comments on wrong-looking choices, section markers at 400
+  lines and a section map at 800. Claude-family lanes also inherit the full
+  rule from `~/.claude/rules/agentic-quality.md`; nobody else does, which is why
+  the block exists ([ADR-037](docs/adr/ADR-037-fleet-wide-rules-are-carried-in-the-preamble.md)).
+
 ## Landmines
 
 Some of these are **conditional on how this checkout is mounted**, not universal:

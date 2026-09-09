@@ -102,6 +102,32 @@ grep -q 'claude-auth-fallback' "$S/ff-doctor.sh" \
 check "collect: no args" 2 bash "$S/ff-collect.sh" --repo "$REPO"
 check "doctor: bad flag" 2 bash "$S/ff-doctor.sh" --frobnicate
 
+# --- fleet-wide rules reach every provider (ADR-037) ------------------------------
+# claude -p lanes load ~/.claude/rules implicitly; nobody else does. A declared
+# fleet rule therefore needs a [fleet-rule: NAME] block in the guard preamble,
+# and the doctor must say so BEFORE a spawn - on godaddy-build the commenting
+# doctrine reached GLM lanes and not Codex lanes on identical packets.
+grep -q '\[fleet-rule: agentic-quality\]' "$HERE/../assets/guard-preamble.txt" \
+  && ok "preamble: carries the agentic-quality fleet-rule block" \
+  || bad "preamble: [fleet-rule: agentic-quality] tag missing (ADR-037)"
+DOCROWS="$(bash "$S/ff-doctor.sh" --offline 2>/dev/null)"
+printf '%s\n' "$DOCROWS" | grep -qE "^fleet-rules	ok	" \
+  && ok "doctor: fleet-rules ok when every declared rule is in the preamble" \
+  || bad "doctor: fleet-rules row wrong: $(printf '%s\n' "$DOCROWS" | grep '^fleet-rules' | cut -c1-120)"
+printf '%s\n' "$DOCROWS" | grep -qE "^rule-inheritance	(ok|advisory)	claude lanes inherit [0-9]+ rule file" \
+  && ok "doctor: rule-inheritance states the claude-vs-other asymmetry" \
+  || bad "doctor: rule-inheritance row missing or malformed"
+env FLEETFLOW_FLEET_RULES="agentic-quality,no-such-rule-zz" bash "$S/ff-doctor.sh" --offline 2>/dev/null \
+  | grep -qE "^fleet-rules	fail	NOT in guard-preamble.txt: no-such-rule-zz" \
+  && ok "doctor: a declared rule with no preamble block is a FAIL" \
+  || bad "doctor: missing fleet rule not reported as fail"
+grep -q "Shape lens" "$HERE/../assets/roles/adversary.role.md" \
+  && grep -q "first 30 lines" "$HERE/../assets/roles/adversary.role.md" \
+  && grep -q "400" "$HERE/../assets/roles/adversary.role.md" \
+  && grep -q "800" "$HERE/../assets/roles/adversary.role.md" \
+  && ok "adversary card carries the shape lens with the gate's thresholds" \
+  || bad "adversary card: shape lens missing or thresholds drifted from the gate (40/30/400/800)"
+
 # --- codex windows.sandbox override (2026-07-27 elevation-hang guard) ------------
 # the flag itself can't be exercised offline (no codex binary), so gate the two
 # things that CAN rot: the value validation, and the wiring into `codex exec`.
@@ -2400,6 +2426,23 @@ line. Frontmatter-dependent checks must report disarmed, not fail.
 PKT
 
 # --- C2: lint JSON on the conflict fixture --------------------------------------
+# --- fleet-rules lint (ADR-037): the AGENTS.md channel ---------------------------
+# The conflict fixture exits 10 for scope-conflict regardless; only the
+# fleet-rules check and finding are inspected here.
+rm -f "$PREPO/AGENTS.md"
+FRJ="$(bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true)"
+printf '%s' "$FRJ" | jq -e 'any(.checks[]; .name=="fleet-rules" and .armed==true and (.reason|test("AGENTS.md pointer: no")))' >/dev/null \
+  && ok "ff-plan: lint fleet-rules check reports per-provider visibility" \
+  || bad "ff-plan: fleet-rules check missing or wrong: $(printf '%s' "$FRJ" | jq -c '[.checks[]|select(.name=="fleet-rules")]' 2>/dev/null)"
+printf '%s' "$FRJ" | jq -e 'any(.findings[]; .check=="fleet-rules" and .severity=="warn" and (.files|index("AGENTS.md")))' >/dev/null \
+  && ok "ff-plan: lint warns when the target AGENTS.md has no doctrine pointer" \
+  || bad "ff-plan: no fleet-rules warn for a pointer-less AGENTS.md"
+printf '%s\n' "# Agents" "" "Code doctrine: see fleetflow assets/guard-preamble.txt [fleet-rule: agentic-quality]." > "$PREPO/AGENTS.md"
+FRJ2="$(bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true)"
+printf '%s' "$FRJ2" | jq -e '(any(.findings[]; .check=="fleet-rules")|not) and any(.checks[]; .name=="fleet-rules" and (.reason|test("AGENTS.md pointer: yes")))' >/dev/null \
+  && ok "ff-plan: lint fleet-rules is clean once AGENTS.md points at the doctrine" \
+  || bad "ff-plan: fleet-rules still finding with a pointer present: $(printf '%s' "$FRJ2" | jq -c '[.findings[]|select(.check=="fleet-rules")]' 2>/dev/null)"
+
 check "ff-plan: lint conflicting owns exits 10" 10 \
   bash "$PLAN" lint --run pconf --repo "$PREPO" --json
 PJ="$(bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null)"; PJRC=$?

@@ -230,6 +230,17 @@ ff-plan (draft → lint → refute) → ff-doctor → ff-spawn (×N, background)
    under `.claude/`), injects the guard preamble
    ([assets/guard-preamble.txt](assets/guard-preamble.txt)), journals a
    `started` record, runs the worker to completion, journals the `result`.
+   **The preamble is the only channel a fleet-wide rule has to non-Claude
+   lanes.** `claude -p` lanes load `~/.claude/rules/*.md` implicitly; codex,
+   grok and pi lanes see the packet, the preamble and the repo `AGENTS.md`,
+   nothing else — so any rule every provider must follow is a tagged
+   `[fleet-rule: NAME]` block in the preamble, declared in
+   `FLEETFLOW_FLEET_RULES` (default `agentic-quality`, the commenting
+   doctrine). `ff-doctor --offline` fails when a declared rule has no block and
+   reports the inheritance asymmetry; `ff-plan lint` warns when the target
+   repo's `AGENTS.md` carries neither the doctrine nor a pointer. Born of
+   godaddy-build, where Codex lanes commented at 1–3% and GLM lanes at 14–16%
+   on identical packets ([ADR-037](docs/adr/ADR-037-fleet-wide-rules-are-carried-in-the-preamble.md)).
    **Author packets at `.fleetflow/<run>/packets/<id>.task.md`** (any path
    outside the run dir works too) — **never `.fleetflow/<run>/<id>.prompt.txt`**,
    which ff-spawn owns and refuses as input (exit 2): pointing `--prompt-file`

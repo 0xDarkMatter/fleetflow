@@ -136,6 +136,7 @@ FLEETFLOW_BUS	0	=1 opts lanes into raven bus heartbeats (ff-spawn, ADR-022)
 FLEETFLOW_ORCHESTRATOR	(unset)	declared orchestrator seat: consumed by ff-doctor (skips the claude auto-probe, ADR-033) and recorded in the journal; falls back to $FLEETFLOW_HOME/orchestrator
 FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permission mode for claude-family lanes; default differs by lane kind
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
+FLEETFLOW_FLEET_RULES	agentic-quality	comma-separated ~/.claude/rules names every provider must see; each needs a [fleet-rule: NAME] tag in assets/guard-preamble.txt (ff-doctor, ff-plan lint, ADR-037)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
 FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence
@@ -200,6 +201,36 @@ PIBIN="${FLEETFLOW_PI_BIN:-pi}"
 _piok=0; { command -v "$PIBIN" >/dev/null || [ -f "$PIBIN" ]; } && _piok=1
 _piw=0; [ -n "$FOR_MODELS" ] && wants pi && _piw=1
 req_bin "bin-pi" "$_piok" "pi $("$PIBIN" --version 2>/dev/null | head -1)" "missing - --model pi exits 5; set FLEETFLOW_PI_BIN or install https://github.com/earendil-works/pi" "$_piw"
+
+# --- fleet-wide rules (ADR-037) -------------------------------------------------
+# `claude -p` lanes load ~/.claude/CLAUDE.md and every ~/.claude/rules/*.md
+# implicitly. codex exec / grok / pi lanes see the packet, the guard preamble
+# and the target repo's AGENTS.md - and nothing else. On godaddy-build
+# (2026-09-09) the commenting doctrine reached the Claude-family lanes through
+# that back door and no other: GLM lanes commented at 14-16%, Codex lanes at
+# 1-3% on the same packets. A rule that must hold across the fleet therefore
+# has to be CARRIED in the preamble, and this row is what says so before a
+# spawn rather than after a port. Each declared rule needs a
+# `[fleet-rule: NAME]` tag in assets/guard-preamble.txt; the tag is checked,
+# not the prose, because the prose is a compression the tag names.
+_rules_dir="$HOME/.claude/rules"
+_rules_n=0; [ -d "$_rules_dir" ] && _rules_n="$(ls "$_rules_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+_pre="$HERE/../assets/guard-preamble.txt"
+_fr_missing=""; _fr_nosrc=""; _fr_total=0; _fr_ok=0
+IFS=, read -r -a _fr_list <<< "${FLEETFLOW_FLEET_RULES:-agentic-quality}"
+for _fr in "${_fr_list[@]}"; do
+  _fr="${_fr// /}"; [ -n "$_fr" ] || continue
+  _fr_total=$((_fr_total+1))
+  if grep -q "\[fleet-rule: $_fr\]" "$_pre" 2>/dev/null; then _fr_ok=$((_fr_ok+1)); else _fr_missing="$_fr_missing $_fr"; fi
+  [ -f "$_rules_dir/$_fr.md" ] || _fr_nosrc="$_fr_nosrc $_fr"
+done
+if [ -z "$_fr_missing" ]; then
+  say "fleet-rules" ok "$_fr_ok/$_fr_total declared rule(s) carried in guard-preamble.txt${_fr_nosrc:+; no ~/.claude/rules source for:$_fr_nosrc (preamble copy still reaches every lane)}"
+else
+  say "fleet-rules" fail "NOT in guard-preamble.txt:$_fr_missing - codex/grok/pi lanes will never see it; add a [fleet-rule: NAME] block (ADR-037)"; FAIL=1
+fi
+_ri_status=ok; [ "$_fr_ok" = "$_fr_total" ] || _ri_status=advisory
+say "rule-inheritance" "$_ri_status" "claude lanes inherit $_rules_n rule file(s) + CLAUDE.md implicitly; codex/grok/pi lanes see packet + preamble + repo AGENTS.md only - $_fr_ok/$_fr_total fleet rule(s) reach them via the preamble"
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
 _fwok=0; [ -f "$FW" ] && _fwok=1

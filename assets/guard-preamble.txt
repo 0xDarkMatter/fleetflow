@@ -7,6 +7,7 @@ HARD CONSTRAINTS (fleetflow worker):
 - Your final reply is DATA consumed by an orchestrator, not prose for a human. End with the exact FINAL REPLY shape your task specifies.
 
 CODE DOCTRINE (every provider; the next agent session is your only reader):
+  [fleet-rule: agentic-quality] - compressed from ~/.claude/rules/agentic-quality.md, which Claude-family lanes inherit implicitly and no other harness sees; keep the two in step. ff-doctor and ff-plan lint check this tag (ADR-037).
 - Every substantive source file (40+ lines) OPENS with a contract block: 3-12 lines saying what the module is, the invariants it enforces or relies on, and the doc/ADR that owns the reasoning. A file whose first 30 lines contain no comment is incomplete.
 - Inline comments state WHY, never WHAT: constraints, invariants, units, ranges, the reason a wrong-looking choice is right. Never narrate the next line. No commented-out code. TODOs carry an owner and a reference.
 - Anything that LOOKS refactorable but is not (a reused buffer, a bound function, a pinned version, an odd key format, a single big file) gets a guard comment naming what breaks if it is "fixed".
