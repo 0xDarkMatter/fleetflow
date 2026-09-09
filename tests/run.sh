@@ -3171,6 +3171,36 @@ printf '%s' "$RLCLEAN" | grep -q "landedness measured against: main" \
   && ok "clean: reclaimed the landed lane, kept the unmerged one" \
   || bad "clean: wrong reclaim under a landed base (wl present=$([ -d "$RL/wt-wl" ] && echo y || echo n), wu present=$([ -d "$RL/wt-wu" ] && echo y || echo n))"
 
+# --- dead spawner + envelope failure reason (ADR-025 addendum) -------------------
+# `result` is journaled by ff-spawn after the worker exits; a dead ff-spawn can
+# never write it, and the lane read `running` until the 6h horizon. The probe
+# errs toward alive: an unprobeable pid must leave the lane exactly as before.
+RD="$REPO/.fleetflow/rd"; mkdir -p "$RD"
+for l in dead live quiet envf; do printf 'x\n' > "$RD/$l.prompt.txt"; done
+: > "$RD/dead.result.json"; : > "$RD/live.result.json"; : > "$RD/envf.err"
+jq -nc '{type:"result",subtype:"error_max_turns",is_error:true,num_turns:121,stop_reason:"tool_use",
+         usage:{input_tokens:1,output_tokens:1},result:null}' > "$RD/envf.result.json"
+printf '%s\n' '{"type":"started","key":"rd1","id":"dead","model":"sonnet"}' \
+  '{"type":"proc","id":"dead","model":"sonnet","pid":4194303,"winpid":4194303,"at":1}' \
+  '{"type":"started","key":"rd2","id":"live","model":"sonnet"}' \
+  "{\"type\":\"proc\",\"id\":\"live\",\"model\":\"sonnet\",\"pid\":$$,\"winpid\":null,\"at\":1}" \
+  '{"type":"started","key":"rd3","id":"quiet","model":"sonnet"}' \
+  '{"type":"started","key":"rd4","id":"envf","model":"sonnet"}' \
+  '{"type":"result","key":"rd4","id":"envf","rc":1,"artifact":"envf.result.json"}' > "$RD/journal.jsonl"
+RDOUT="$(bash "$S/ff-status.sh" --run rd --repo "$REPO" 2>/dev/null)"
+printf '%s' "$RDOUT" | jq -e '.lanes[]|select(.id=="dead")|.state=="abandoned" and .stalled==false and (.activity|startswith("spawner pid 4194303 is gone"))' >/dev/null \
+  && ok "status: dead spawner demotes to abandoned at once, naming the pid" \
+  || bad "status: dead spawner not demoted: $(printf '%s' "$RDOUT" | jq -c '.lanes[]|select(.id=="dead")|{state,activity}' 2>/dev/null)"
+printf '%s' "$RDOUT" | jq -e '.lanes[]|select(.id=="live")|.state=="running"' >/dev/null \
+  && ok "status: live spawner (this shell) keeps the lane running" \
+  || bad "status: live spawner wrongly demoted: $(printf '%s' "$RDOUT" | jq -c '.lanes[]|select(.id=="live")|{state,activity}' 2>/dev/null)"
+printf '%s' "$RDOUT" | jq -e '.lanes[]|select(.id=="quiet")|.state=="running"' >/dev/null \
+  && ok "status: no proc record -> probe skipped, lane untouched (legacy journals)" \
+  || bad "status: proc-less lane changed state"
+printf '%s' "$RDOUT" | jq -e '.lanes[]|select(.id=="envf")|.state=="failed" and .err_tail=="error_max_turns after 121 turn(s) - stop_reason tool_use"' >/dev/null \
+  && ok "status: failed lane with empty .err takes its reason from the envelope" \
+  || bad "status: envelope reason missing: $(printf '%s' "$RDOUT" | jq -c '.lanes[]|select(.id=="envf")|{state,err_tail}' 2>/dev/null)"
+
 # --- resource budget: lane count must not overflow the command line -------------
 # REGRESSION GUARD (2026-09-09). ff-status used to fold every lane into a growing
 # JSON array that was passed BACK THROUGH jq's argv on each iteration, making argv

@@ -113,6 +113,20 @@ shipped, the ADRs own WHY.
   2 batched, 4 via the legacy fallback.
 
 ### Fixed
+- A failed claude-family lane with an empty `.err` now says why: `err_tail`
+  falls back to the envelope (`error_max_turns after 121 turn(s) - stop_reason
+  tool_use`, `api_error_status`, the result text). `claude -p` reports failures
+  there, not on stderr — 27 of this box's 68 failed lanes had no reason on the
+  card.
+- `ff-status` silently dropped a running lane's journalled `model_id` (and
+  would have dropped the new proc pid): its per-lane journal rows were
+  tab-separated, tab is IFS whitespace, and `read` collapses a run of tabs —
+  so every empty column (rc, artifact and model_id are all empty on a running
+  lane) shifted the later fields left. Rows are now 0x1f-separated.
+- A lane whose spawner is dead no longer reads `running` for six hours:
+  ff-status probes the `proc` record's pid for in-flight lanes and demotes to
+  `abandoned` at once, naming the pid (ADR-025 addendum). The probe errs only
+  toward alive.
 - `ff-status` emitted NOTHING — and exited 0 — for any run past ~37 lanes,
   so the machine-wide dashboard rendered its three largest runs
   (godaddy-build at 123 lanes, newbook-v1, tess-v1) as empty "could not read

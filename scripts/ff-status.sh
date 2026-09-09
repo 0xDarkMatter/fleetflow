@@ -108,6 +108,32 @@ mtime() {
   if [ -n "$v" ]; then printf '%s\n' "$v"; else stat -c %Y "$1" 2>/dev/null || echo 0; fi
 }
 
+# spawner_alive PID WINPID -> 0 when the ff-spawn process that owns a lane is
+# still running. Prefers the Windows pid (global; tasklist) over the MSYS pid,
+# which is visible only inside the same MSYS runtime - a spawn from another
+# bash would read falsely dead by `kill -0`. UNKNOWN MEANS ALIVE: this probe
+# may only ever err toward today's behaviour (wait for ADR-025's horizon),
+# never toward a demotion. Only called for in-flight lanes, so its cost is
+# one tasklist per running lane, not per lane.
+spawner_alive() {
+  local pid="$1" winpid="$2"
+  if [ -n "$winpid" ] && [ "$winpid" != "null" ] && command -v tasklist >/dev/null 2>&1; then
+    # tasklist prints "INFO: No tasks are running..." on a miss, exit 0 either
+    # way - match the pid column, never the exit code or a non-empty line.
+    # MSYS_NO_PATHCONV: Git Bash rewrites the `/FI` and `/NH` switches into
+    # `C:/Program Files/Git/FI` before a native exe sees them (observed
+    # 2026-09-09), so without it tasklist only ever prints a usage error.
+    MSYS_NO_PATHCONV=1 tasklist /FI "PID eq $winpid" /NH 2>/dev/null | tr -d '\r' \
+      | grep -qE "(^|[[:space:]])$winpid([[:space:]]|$)" && return 0
+    return 1
+  fi
+  if [ -n "$pid" ] && [ "$pid" != "null" ]; then
+    kill -0 "$pid" 2>/dev/null && return 0
+    return 1
+  fi
+  return 0
+}
+
 # scan_transcript FILE -> ONE tab-separated line, ONE gawk pass over a claude/glm
 # session transcript. Replaces three greps plus an awk.
 #
@@ -174,7 +200,7 @@ scan_transcript() {
 emit() {
   local now lanefile id model state started finished elapsed art commits last_c tools activity tokens etail rc
   local T enc f m last_act idle stalled live
-  local landed authored verdict tests fchg deferred stop_reason denials summary
+  local landed authored verdict tests fchg deferred stop_reason denials summary eerr jpid jwinpid
   local base_ref integ integ_sha base_sha cand fra
   # NOT local: --exit-stalled reads it after emit returns, and in --watch mode it
   # must reset every tick so a lane that resumes writing clears the verdict.
@@ -250,9 +276,17 @@ emit() {
   # paying ~17s just to re-read the same small file 138 times - enough that the
   # machine-wide aggregator timed out on its biggest runs.
   #
-  # TSV is safe here because every field is an id, a model name, a phase name, a
-  # record type, an integer rc, or a filesystem path - none of which contain tabs.
-  while IFS="$(printf '\t')" read -r id model phase last_type rc art jmodel; do
+  # Rows are 0x1f-separated (see the `read` below for why not tab). Safe because
+  # every field is an id, a model name, a phase name, a record type, an integer
+  # rc, a pid, or a filesystem path - none of which can contain 0x1f.
+  # The row delimiter is the ASCII unit separator (0x1f), NOT a tab, and that
+  # is load-bearing: tab is IFS *whitespace*, so `read` collapses a run of
+  # tabs into one separator and every empty column (rc, artifact and model_id
+  # are all empty on a running lane) shifts the later fields left. That is
+  # how a running lane silently lost its journalled model_id, and how the
+  # proc pid added 2026-09-09 never reached the loop. 0x1f is not whitespace,
+  # so empty columns stay empty. No field can contain it.
+  while IFS="$(printf '\037')" read -r id model phase last_type rc art jmodel jpid jwinpid; do
     [ -n "$id" ] || continue
     if [ "$last_type" = "started" ]; then state="running"; finished=0
     elif [ -z "$rc" ]; then state="running"; finished=0
@@ -313,7 +347,7 @@ emit() {
     # ~360ms/lane on Windows spawns and a 123-lane run takes 88s of the
     # aggregator's 180s budget. Empty means "not in the reply" - the dashboard
     # shows nothing rather than a placeholder.
-    verdict=""; tests=""; fchg=""; deferred=""; stop_reason=""; denials=0; summary=""
+    verdict=""; tests=""; fchg=""; deferred=""; stop_reason=""; denials=0; summary=""; eerr=""
     # Journalled launch model_id is the FLOOR; a worker that reports what it
     # actually ran (modelUsage, transcript) overrides it below, because an
     # alias like "glm" is less true than the resolved "GLM-5.2".
@@ -404,6 +438,16 @@ emit() {
           "stop_reason=\(.stop_reason // "" | @sh) denials=\((.permission_denials // []) | length) " +
           "verdict=\(fld($fr; "STATUS") | ascii_downcase | .[0:24] | @sh) tests=\(fld($fr; "TESTS") | @sh) " +
           "fchg=\(fld($fr; "FILES_CHANGED") | @sh) deferred=\(fld($fr; "DEFERRED") | @sh) " +
+          # what the envelope itself says about a failure: claude -p writes it
+          # HERE, not on stderr - 27 of 68 failed lanes on this box had an
+          # empty .err. (No apostrophes in this comment: it sits inside the
+          # single-quoted jq program.)
+          "eerr=\((if ((.is_error // false) == true) or ((.subtype // "success") | tostring | startswith("error"))
+                   then ((.subtype // "error") | tostring) + " after " + ((.num_turns // 0) | tostring) + " turn(s)"
+                        + (if .stop_reason then " - stop_reason " + (.stop_reason | tostring) else "" end)
+                        + (if .api_error_status then " - api " + (.api_error_status | tostring) else "" end)
+                        + (if ((.result | type) == "string" and (.result | length) > 0) then ": " + (.result | gsub("\n"; " ") | .[0:120]) else "" end)
+                   else "" end) | @sh) " +
           "summary=\(fldl($fr; "SUMMARY"; 1500) | @sh)"
         ' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
       [ -n "${cost:-}" ] || cost=null
@@ -457,6 +501,11 @@ emit() {
         sub(/^[ \t|]+/, ""); sub(/[ \t]+$/, "");
         if ($0 ~ /[A-Za-z]{3,}/) last = $0
       } END { print substr(last, 1, 200) }' "$RUNDIR/$id.err" 2>/dev/null)"
+    # .err is a redirect of the worker's stderr and was EMPTY on 27 of this
+    # box's 68 failed lanes (2026-09-09): claude -p reports its failure in the
+    # envelope (subtype error_max_turns, api_error_status, stop_reason), not on
+    # stderr. Fall back to it so a failed lane always says why.
+    [ -n "$etail" ] || etail="${eerr:-}"
 
     # --- stall detection (incident 2026-07-27, run bkv2p2) --------------------
     # elapsed_s cannot distinguish a working lane from a wedged one: a codex lane
@@ -501,6 +550,20 @@ emit() {
     stalled=false
     if [ "$state" = "running" ] && [ "$live" = true ] && [ "$idle" -gt "$STALL_S" ]; then
       state="stalled"; stalled=true; STALL_ANY=1
+    fi
+    # --- dead spawner (ADR-025 addendum, 2026-09-09) -----------------------------
+    # A lane's `result` record is journaled by ff-spawn AFTER its worker exits.
+    # If ff-spawn itself is gone (its Bash tool call died with the session, the
+    # machine rebooted) no result can ever arrive and the lane reads `running`
+    # until the 6h abandonment horizon. A dead spawner is a process fact,
+    # decisive at any timescale - ADR-025's reasoning about hours of silence,
+    # applied to the one signal that needs no waiting. spawner_alive errs toward
+    # alive, so a probe that cannot tell changes nothing. Journal-free like
+    # abandonment: a respawn's fresh `started` record revives the lane.
+    if { [ "$state" = "running" ] || [ "$state" = "stalled" ]; } && [ -n "${jpid:-}${jwinpid:-}" ] \
+       && ! spawner_alive "${jpid:-}" "${jwinpid:-}"; then
+      state="abandoned"; stalled=false; STALL_ANY=1
+      activity="spawner pid ${jwinpid:-$jpid} is gone - no result will be journaled"
     fi
     # --- abandonment (ADR-025) ------------------------------------------------
     # A second, much longer silence horizon that - unlike the stall verdict -
@@ -581,8 +644,13 @@ emit() {
           # Post-rename it is `model_id`; in legacy journals it lived under
           # `model` (alongside `brain`), so only read `model` when `brain` exists.
           (($recs | map(select(.type=="started")) | last) as $s
-           | (($s.model_id) // (if ($s.brain != null) then $s.model else null end)) // "")
-        ] | @tsv' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r')
+           | (($s.model_id) // (if ($s.brain != null) then $s.model else null end)) // ""),
+          # spawner identity from the LAST proc record (a respawn appends a new
+          # one): the MSYS pid and, on Windows, the global winpid. A dead spawner
+          # can never journal a result - the loop probes it (ADR-025 addendum).
+          ((($recs | map(select(.type=="proc")) | last | .pid) // "") | tostring),
+          ((($recs | map(select(.type=="proc")) | last | .winpid) // "") | tostring)
+        ] | join("")' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r')
 # tr -d '\r' is load-bearing, not tidiness: journals are written with CRLF line
 # endings on Windows and jq's stdout carries the CR through. The per-lane
 # `jq | head -1` pipes this replaced were absorbing it; reading jq directly does

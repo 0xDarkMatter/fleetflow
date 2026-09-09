@@ -605,6 +605,16 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   tell*, never *healthy* — one more reason to spawn mutating workers with
   `--worktree`. Boundaries, false-positive history, and the grok deferral:
   [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **A dead spawner is a verdict at any timescale.** The `result` record is
+  journaled by ff-spawn after its worker exits, so if ff-spawn is gone (session
+  died, reboot) the lane can never finish. ff-status probes the `proc` record's
+  pid (`tasklist` on the winpid, else `kill -0`) for in-flight lanes and demotes
+  to `abandoned` at once, naming the pid in `activity`. The probe errs only
+  toward alive — unknown leaves the lane on the hours horizon below
+  ([ADR-025 addendum](docs/adr/ADR-025-abandonment-is-a-final-verdict-at-the-hours-scale.md)).
+  A failed lane with an empty `.err` takes `err_tail` from the envelope
+  (`error_max_turns after 121 turn(s) - stop_reason tool_use`) — `claude -p`
+  reports failures there, not on stderr.
 - **Silence for hours is a verdict of its own — `abandoned`.** A `running` or
   `stalled` lane whose `last_activity_s` passes `FLEETFLOW_ABANDON_SECONDS`
   (default 21600 = 6h) demotes to the FINAL state `abandoned` — even where

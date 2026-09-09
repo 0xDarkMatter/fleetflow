@@ -119,6 +119,29 @@ ever get, and for covered lanes the watchdog fired hours earlier at the stall.
 - Does not journal anything: `abandoned` is derived at read time, so a
   respawn's fresh `started` record revives the lane exactly as before.
 
+## Addendum — 2026-09-09: a dead spawner is decisive at any timescale
+
+The horizon above exists because silence alone cannot be trusted at the
+minute scale. One signal needs no horizon: the `result` record is written by
+**ff-spawn after its worker exits**, so if ff-spawn itself is gone — its Bash
+tool call died with the orchestrator's session, the machine rebooted — no
+result can ever arrive, and `running` was sticky for six hours on a lane that
+could not finish.
+
+**Amendment:** for a `running` or `stalled` lane whose journal carries a
+`proc` record, ff-status probes the spawner (`winpid` via `tasklist` on
+Windows, else `kill -0` on the MSYS pid). If the spawner is gone, the lane
+demotes to `abandoned` immediately, with `activity` naming the dead pid.
+The probe **errs only toward alive**: an unknown or unprobeable pid leaves the
+lane on the existing horizon, so this can never demote a lane the old rule
+would have kept. Like the horizon it is derived at read time and journals
+nothing; a respawn's `started` revives the lane.
+
+Also from the same day: a failed lane whose `.err` is empty now takes its
+`err_tail` from the envelope (`subtype`, `num_turns`, `stop_reason`,
+`api_error_status`) — 27 of the box's 68 failed lanes had no reason on the
+card because `claude -p` reports failures there, not on stderr.
+
 ## See also
 
 - [ADR-008](ADR-008-stall-detection-trusts-activity-not-state.md) — the stall
