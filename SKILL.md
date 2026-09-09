@@ -802,6 +802,28 @@ cost totals per run. It is registered with the Process Compose stack (port 8161,
   — the normal end of a healthy lane), `none` (spawned without `--worktree`, so the
   stall detector cannot attribute a transcript and reports "cannot tell"). Reading
   a reclaimed lane as `none` inverts the diagnosis.
+- **Outcome fields, lifted from the builder-role final-reply contract:**
+  `verdict` (the worker's own `STATUS:` line, lowercased — `done`/`partial`/…),
+  `tests` (the raw `TESTS:` value, e.g. `77/0 owned; 84/18 full`),
+  `files_changed`, `deferred` (the `DEFERRED:` line — *why* a lane is partial),
+  `summary` (the `SUMMARY:` **block** — a bold key followed by bullet lines joins
+  to one string and stops at the next `KEY:`; up to 1500 chars).
+  Parsed from `<id>.last.txt` (codex) or `result.json` `.result` (claude-family,
+  bold-markdown `**KEY:**` accepted) inside the jq passes ff-status already runs —
+  never a third process per lane. **Absent means null**, never a placeholder.
+  The dashboard shows `verdict` as a tag beside the state: on godaddy-build 22
+  lanes badged `done` reported `partial`, and the card had been hiding it in
+  truncated prose. From the envelope: `stop_reason` (`max_tokens` = the worker was
+  cut off) and `permission_denials` (count).
+- **`landed` / `commits` / `commits_authored` — three numbers, deliberately:**
+  `commits` is the UNMERGED count against the integration ref, resolved exactly as
+  ff-clean resolves it (manifest base if a live branch, else main/master/HEAD —
+  [ADR-035](docs/adr/ADR-035-landedness-is-ancestry-in-the-integration-branch.md));
+  `landed` is its zero case made explicit (`merge-base --is-ancestor`); and
+  `commits_authored` counts the lane's OWN commits against a **frozen-sha** base
+  — the only count that survives a landing — and is `null` when the base is a
+  branch name. Until 2026-09-09 ff-status counted `main..HEAD`, so a fully landed
+  run read `0 commits` on every card, indistinguishable from "never committed".
 - **`trace_id`** is the first 8 hex of the journal's existing
   `sha256(model+prompt+opts)` cache key — free correlation for metrics and traces.
   It answers *"was this the same work?"*, not *"which lane"*; artifact filenames

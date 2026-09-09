@@ -362,8 +362,11 @@ class Roost:
                 stdin=subprocess.DEVNULL)
             data = json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
             if data is None:
-                tail = (p.stderr or "").strip().splitlines()
-                raise RuntimeError(tail[-1] if tail else f"roost exit {p.returncode}")
+                # Same picker the run cards use: a failing CLI's last stderr line
+                # is its least informative one (usage boilerplate, or a cascade's
+                # fallout rather than its cause). See error_line in ff-aggregate.
+                raise RuntimeError(
+                    agg.error_line(p.stderr or "", f"roost exit {p.returncode}"))
             doc = self._trim(data)
             # `roost widget` is roost's OWN visual for exactly this data — a
             # self-contained, script-free, .rw-scoped HTML fragment built for

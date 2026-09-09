@@ -824,9 +824,14 @@ grep -q 'function worktreeLine' "$DASH" \
 # gated on that, not rendered unconditionally - an ungated chip tells the majority
 # of a healthy fleet's lanes that they produced nothing.
 grep -q 'const measuredCommits' "$DASH" \
-  && grep -q 'measuredCommits(l) ? chip("git"' "$DASH" \
+  && grep -q 'if (!measuredCommits(l)) return ""' "$DASH" \
   && ok "dashboard: commits chip gated on a real measurement" \
   || bad "dashboard: commits chip asserts 0 where nothing was measured"
+# and the chip never says "0 commits": unmeasured -> nothing, landed -> landed,
+# otherwise the true unmerged count (the old chip read 0 on 122/123 landed lanes)
+grep -q 'chip("git", nf(l.commits), "commits")' "$DASH" \
+  && bad "dashboard: commits chip still renders a bare count (0 == landed ambiguity)" \
+  || ok "dashboard: commits chip distinguishes landed from unmerged"
 grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
   && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
   || bad "dashboard: no build marker"
@@ -3025,6 +3030,141 @@ printf '%s' "$SUMERR2" | grep -q "complete:"   && bad "ff-collect: summary fired
 SUMERR3="$(bash "$HERE/../scripts/ff-collect.sh" --run sumrun --id a --repo "$SUMREPO" --check-main-clean 2>&1 >/dev/null)"
 printf '%s' "$SUMERR3" | grep -q "command not found"   && bad "ff-collect: EXIT trap calls an undefined name on the guard path"   || ok "ff-collect: guard-path exit is clean (summary defined before the trap)"
 
+
+# --- final-reply contract -> lane outcome fields --------------------------------
+# The builder role card requires STATUS / TESTS: p/f / FILES_CHANGED: n (+ DEFERRED
+# when partial) in the final reply. ff-status lifts them into the lane record
+# from wherever the model writes its reply: codex -> <id>.last.txt (plain
+# "KEY: value"), claude-model -> result.json .result (often bold markdown
+# "**KEY:** value"). Both shapes must parse, and a reply that lacks a field must
+# yield null, never a placeholder.
+RF="$REPO/.fleetflow/rf"; mkdir -p "$RF"
+printf 'x\n' > "$RF/cx.prompt.txt"; printf 'x\n' > "$RF/cl.prompt.txt"
+jq -nc '{type:"item.completed",item:{type:"agent_message",text:"agent_message: STATUS: partial SUMMARY: half"}}' > "$RF/cx.events.jsonl"
+printf 'STATUS: partial\nSUMMARY: Half the endpoints.\nDEFERRED: Typecheck still red on demo.\nTESTS: 77/0 owned; 84/18 full\nFILES_CHANGED: 15\n' > "$RF/cx.last.txt"
+jq -nc '{type:"result",subtype:"success",is_error:false,num_turns:9,stop_reason:"max_tokens",
+         permission_denials:[{tool_name:"Bash"}],usage:{input_tokens:10,output_tokens:5},
+         result:"All done.\n\n**STATUS:** done\n\n**SUMMARY:**\n- Reworked all four dispatchers\n- Frozen schema\n\n**TESTS:** 12/1\n\n**FILES_CHANGED:** 3\n"}' > "$RF/cl.result.json"
+printf '%s\n' '{"type":"started","key":"rf1","id":"cx","model":"codex"}' \
+  '{"type":"result","key":"rf1","id":"cx","rc":0,"artifact":"cx.last.txt"}' \
+  '{"type":"started","key":"rf2","id":"cl","model":"sonnet"}' \
+  '{"type":"result","key":"rf2","id":"cl","rc":0,"artifact":"cl.result.json"}' > "$RF/journal.jsonl"
+RFOUT="$(bash "$S/ff-status.sh" --run rf --repo "$REPO" 2>/dev/null)"
+printf '%s' "$RFOUT" | jq -e '.lanes[]|select(.id=="cx")|.verdict=="partial" and .tests=="77/0 owned; 84/18 full" and .files_changed=="15" and (.deferred|startswith("Typecheck"))' >/dev/null \
+  && ok "status: codex final-reply contract parsed from last.txt" \
+  || bad "status: codex contract fields wrong: $(printf '%s' "$RFOUT" | jq -c '.lanes[]|select(.id=="cx")|{verdict,tests,files_changed,deferred}' 2>/dev/null)"
+printf '%s' "$RFOUT" | jq -e '.lanes[]|select(.id=="cl")|.verdict=="done" and .tests=="12/1" and .files_changed=="3" and .deferred==null' >/dev/null \
+  && ok "status: bold-markdown contract parsed from result.json (.result)" \
+  || bad "status: claude contract fields wrong: $(printf '%s' "$RFOUT" | jq -c '.lanes[]|select(.id=="cl")|{verdict,tests,files_changed,deferred}' 2>/dev/null)"
+# SUMMARY is a BLOCK: a bold key on its own line followed by bullets (the claude
+# shape) must join to one string and stop at the next KEY:; the codex one-liner
+# must come through whole. The card face was cut at 70 chars by the activity
+# tail ("F2 credential-fr"); the full summary is what the tooltip shows.
+printf '%s' "$RFOUT" | jq -e '(.lanes[]|select(.id=="cl")|.summary=="- Reworked all four dispatchers - Frozen schema") and (.lanes[]|select(.id=="cx")|.summary=="Half the endpoints.")' >/dev/null \
+  && ok "status: SUMMARY block joins bullet lines and stops at the next key" \
+  || bad "status: summary wrong: $(printf '%s' "$RFOUT" | jq -c '[.lanes[]|{id,summary}]' 2>/dev/null)"
+printf '%s' "$RFOUT" | jq -e '.lanes[]|select(.id=="cl")|.stop_reason=="max_tokens" and .permission_denials==1' >/dev/null \
+  && ok "status: stop_reason + permission_denials lifted from the envelope" \
+  || bad "status: envelope verdict fields wrong: $(printf '%s' "$RFOUT" | jq -c '.lanes[]|select(.id=="cl")|{stop_reason,permission_denials}' 2>/dev/null)"
+printf '%s' "$RFOUT" | jq -e '.lanes[]|select(.id=="cx")|.stop_reason==null and .permission_denials==0' >/dev/null \
+  && ok "status: envelope-only fields are null/0 on a codex lane" || bad "status: codex lane fabricated envelope fields"
+
+# --- landedness (ADR-035) on the status feed -------------------------------------
+# `commits` counts UNMERGED work against the integration ref (the same number
+# ff-clean's reclaim uses), `landed` makes its zero case explicit, and
+# `commits_authored` counts the lane's OWN commits against the frozen sha base -
+# the only count that survives a landing. Until 2026-09-09 ff-status hardcoded
+# main..HEAD, and a fully landed run showed `0 commits` on every card, which is
+# indistinguishable from "never committed". Fresh repo: the shared $REPO carries
+# state from earlier sections and a merge needs a clean index.
+LREPO="$TMP/lrepo"; RL="$LREPO/.fleetflow/rl"; mkdir -p "$RL"
+git -C "$LREPO" init -q -b main
+git -C "$LREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+RLBASE="$(git -C "$LREPO" rev-parse HEAD | tr -d '\r')"
+git -C "$LREPO" worktree add -q "$RL/wt-wl" -b fleetflow/rl/wl >/dev/null 2>&1
+echo l > "$RL/wt-wl/l.txt"; git -C "$RL/wt-wl" add l.txt
+git -C "$RL/wt-wl" -c user.email=t@t -c user.name=t commit -qm "lane wl"
+git -C "$LREPO" worktree add -q "$RL/wt-wu" -b fleetflow/rl/wu "$RLBASE" >/dev/null 2>&1
+echo u > "$RL/wt-wu/u.txt"; git -C "$RL/wt-wu" add u.txt
+git -C "$RL/wt-wu" -c user.email=t@t -c user.name=t commit -qm "lane wu"
+git -C "$LREPO" -c user.email=t@t -c user.name=t merge -q --no-ff -m "land wl" fleetflow/rl/wl >/dev/null 2>&1
+jq -nc --arg b "$RLBASE" '{base:$b,packets:[{id:"wl",worktree:true},{id:"wu",worktree:true}]}' > "$RL/manifest.json"
+printf 'x\n' > "$RL/wl.prompt.txt"; printf 'x\n' > "$RL/wu.prompt.txt"
+printf '%s\n' '{"type":"started","key":"rl1","id":"wl","model":"sonnet"}' \
+  '{"type":"result","key":"rl1","id":"wl","rc":0,"artifact":"x"}' \
+  '{"type":"started","key":"rl2","id":"wu","model":"sonnet"}' \
+  '{"type":"result","key":"rl2","id":"wu","rc":0,"artifact":"x"}' > "$RL/journal.jsonl"
+RLOUT="$(bash "$S/ff-status.sh" --run rl --repo "$LREPO" 2>/dev/null)"
+printf '%s' "$RLOUT" | jq -e '.lanes[]|select(.id=="wl")|.landed==true and .commits==0 and .commits_authored==1' >/dev/null \
+  && ok "status: merged lane reads landed, 0 unmerged, 1 authored" \
+  || bad "status: landed lane wrong: $(printf '%s' "$RLOUT" | jq -c '.lanes[]|select(.id=="wl")|{landed,commits,commits_authored}' 2>/dev/null)"
+printf '%s' "$RLOUT" | jq -e '.lanes[]|select(.id=="wu")|.landed==false and .commits==1 and .commits_authored==1 and .last_commit=="lane wu"' >/dev/null \
+  && ok "status: unmerged lane reads not-landed with its true unmerged count" \
+  || bad "status: unmerged lane wrong: $(printf '%s' "$RLOUT" | jq -c '.lanes[]|select(.id=="wu")|{landed,commits,commits_authored,last_commit}' 2>/dev/null)"
+# a branch-name base (a wave re-planned from a lane branch) cannot count authored
+# commits - the field must be null, not a fabricated 0
+jq -nc '{base:"main",packets:[{id:"wl",worktree:true},{id:"wu",worktree:true}]}' > "$RL/manifest.json"
+bash "$S/ff-status.sh" --run rl --repo "$LREPO" 2>/dev/null | jq -e '.lanes[]|select(.id=="wl")|.landed==true and .commits_authored==null' >/dev/null \
+  && ok "status: branch-name base -> landed known, authored count null" || bad "status: branch base fabricated an authored count"
+# ADR-035 amendment: a base that names a lane branch which has ITSELF landed
+# (here fleetflow/rl/wl, merged into main above) is a frozen ancestor of main.
+# Measured against it, wl reads landed only by accident (HEAD == base) and wu's
+# unmerged count is measured against a stale ref. Both scripts must promote the
+# ref to main. godaddy-build shipped exactly this shape: base perf-groups-a, 95
+# commits behind main, all 93 landed lanes reading "unmerged".
+jq -nc '{base:"fleetflow/rl/wl",packets:[{id:"wl",worktree:true},{id:"wu",worktree:true}]}' > "$RL/manifest.json"
+RLOUT2="$(bash "$S/ff-status.sh" --run rl --repo "$LREPO" 2>"$TMP/rl2.err")"
+printf '%s' "$RLOUT2" | jq -e '(.lanes[]|select(.id=="wl")|.landed==true and .commits==0) and (.lanes[]|select(.id=="wu")|.landed==false and .commits==1)' >/dev/null \
+  && ok "status: landed lane-branch base promotes to main (ADR-035 amendment)" \
+  || bad "status: landed base not promoted: $(printf '%s' "$RLOUT2" | jq -c '[.lanes[]|{id,landed,commits}]' 2>/dev/null)"
+# ff-clean has no dry-run, so exercise the real thing on the throwaway repo: the
+# landed lane must be reclaimed and the unmerged one kept, measured against
+# main and NOT the stale lane branch the manifest names.
+RLCLEAN="$(bash "$S/ff-clean.sh" --run rl --repo "$LREPO" --no-archive 2>&1 >/dev/null)"
+printf '%s' "$RLCLEAN" | grep -q "landedness measured against: main" \
+  && ok "clean: landed lane-branch base promotes to main (same rule)" \
+  || bad "clean: did not promote a landed base to main: $(printf '%s' "$RLCLEAN" | grep 'measured against')"
+{ [ ! -d "$RL/wt-wl" ] && [ -d "$RL/wt-wu" ]; } \
+  && ok "clean: reclaimed the landed lane, kept the unmerged one" \
+  || bad "clean: wrong reclaim under a landed base (wl present=$([ -d "$RL/wt-wl" ] && echo y || echo n), wu present=$([ -d "$RL/wt-wu" ] && echo y || echo n))"
+
+# --- resource budget: lane count must not overflow the command line -------------
+# REGRESSION GUARD (2026-09-09). ff-status used to fold every lane into a growing
+# JSON array that was passed BACK THROUGH jq's argv on each iteration, making argv
+# bytes quadratic in lane count. Past ~37 real lanes that exceeded the Windows
+# command-line limit: jq died "Argument list too long", `$(...)` collapsed the
+# accumulator to "", every later lane failed `--argjson`, and emit produced
+# NOTHING while still exiting 0 - so the machine-wide dashboard rendered its three
+# LARGEST runs as empty "could not read this run" cards while small runs looked
+# perfect. Verified before landing: the pre-fix script emits 0 bytes on this
+# fixture, the fixed one emits all 200 lanes.
+# This asserts the BUDGET, not the implementation - 200 lanes must survive, which
+# is comfortable headroom over the 123-lane run that exposed it. Any future change
+# that reintroduces per-lane argv growth fails here rather than on the dashboard.
+BIGREPO="$TMP/bigrepo"; BIGRD="$BIGREPO/.fleetflow/big"
+mkdir -p "$BIGRD" && git -C "$BIGREPO" init -q -b main
+git -C "$BIGREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+: > "$BIGRD/journal.jsonl"
+BIGN=200; i=0
+while [ "$i" -lt "$BIGN" ]; do
+  printf '{"type":"started","key":"k%s","id":"lane-%s","model":"sonnet"}\n' "$i" "$i" >> "$BIGRD/journal.jsonl"
+  printf '{"type":"result","key":"k%s","id":"lane-%s","rc":0,"artifact":"lane-%s.result.json"}\n' "$i" "$i" "$i" >> "$BIGRD/journal.jsonl"
+  i=$((i+1))
+done
+BIGOUT="$(bash "$S/ff-status.sh" --run big --repo "$BIGREPO" 2>"$TMP/big.err")"; BIGRC=$?
+[ "$BIGRC" = 0 ] && ok "status: ${BIGN}-lane run exits 0" \
+  || bad "status: ${BIGN}-lane run exited $BIGRC ($(tail -1 "$TMP/big.err" 2>/dev/null))"
+printf '%s' "$BIGOUT" | jq -e --argjson n "$BIGN" '.lanes|length == $n' >/dev/null 2>&1 \
+  && ok "status: ${BIGN}-lane run emits every lane (argv budget holds)" \
+  || bad "status: ${BIGN}-lane run emitted $(printf '%s' "$BIGOUT" | jq -r '.lanes|length' 2>/dev/null || echo 'NOTHING')/$BIGN lanes"
+grep -qi "argument list too long" "$TMP/big.err" \
+  && bad "status: argv overflows again at $BIGN lanes (per-lane accumulation is back)" \
+  || ok "status: no argv overflow at $BIGN lanes"
+# emit must never report success while producing nothing - the failure mode that
+# let the argv bug reach the dashboard silently in the first place.
+printf '%s' "$BIGOUT" | grep -q . \
+  && ok "status: exit 0 always carries a JSON body" \
+  || bad "status: exited 0 with EMPTY stdout (silent-success regression)"
 
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's

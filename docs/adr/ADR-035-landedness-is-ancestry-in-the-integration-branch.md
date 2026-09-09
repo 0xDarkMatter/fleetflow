@@ -122,6 +122,29 @@ everything, so the failure mode stays fail-closed.
   ordering, and tracked/untracked split are untouched).
 - No new flags anywhere.
 
+## Addendum — 2026-09-09
+
+The resolution order above assumes the manifest base, when it names a live
+branch, is a branch that *tracks the integration tip*. On godaddy-build it was
+not: a late wave was re-planned from a lane branch (`perf-groups-a`), that lane
+then landed, and its branch was left behind as a frozen ancestor of `main` —
+95 commits behind it by the time anyone looked. Measured against that ref,
+every one of the run's 93 landed lanes read "95 unmerged commits": ff-clean
+would have kept all of them forever, and the new `landed` field on the status
+feed (this date) reported `false` across the board.
+
+**Amendment:** after the resolution order picks a ref, if `main` exists and
+contains that ref (`merge-base --is-ancestor <ref> main`), the integration ref
+is `main`. An integration ref that has itself been integrated is no longer the
+integration ref.
+
+This is the safe direction for a reclaim tool, and it is monotone by
+construction: HEAD ⊂ base implies HEAD ⊂ main, so a lane can only *gain* a
+landed verdict that is true, never lose one. The bare-HEAD and sha-base
+protections above are untouched. Both `ff-clean` and `ff-status` carry the
+rule and a shared fixture pins it (`tests/run.sh`, "landed lane-branch base
+promotes to main").
+
 ## See also
 
 - [ADR-020](ADR-020-sweep-reclaims-only-archived-and-landed.md) — the decision

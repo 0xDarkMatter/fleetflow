@@ -26,6 +26,7 @@ import argparse
 import concurrent.futures as futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -249,6 +250,32 @@ def roll_up(status: dict) -> dict:
     # running/stalled counts only, so abandonment stops the poll burn as designed.
     silent = inflight or [l for l in lanes if l.get("state") == "abandoned"]
     idle = min((l.get("last_activity_s") or 0) for l in silent) if silent else None
+
+    # A run's elapsed is its WALL-CLOCK SPAN - first lane start to most recent
+    # activity anywhere in the run - NOT max(lane elapsed). The two coincide only
+    # when every lane starts in one simultaneous wave. A run that fans out in
+    # successive waves diverges badly: godaddy-build ran 123 lanes in waves across
+    # a night and reported its longest SINGLE lane, 1h53m, on a card whose
+    # `started` was 17h52m old - two different clocks side by side (2026-09-09).
+    # It is not only cosmetic: the dashboard ends a run at `started + elapsed_s`
+    # for its time-window filter (ff-dashboard.html), so an under-reported span
+    # drops a still-live run out of "last N hours".
+    # Deliberately NOT floored at max(lane elapsed), and NOT the union of the lane
+    # intervals (max(start+elapsed) - min(start)). Both are corrupted by a lane
+    # that dies without writing a result envelope: its elapsed accrues to `now`
+    # forever, so one dead lane drags the whole run's elapsed with it. Measured
+    # against the run directories' own mtime spans on 2026-09-09:
+    #   run           on disk   activity-span   union     max-lane (old)
+    #   godaddy       18h16m    18h18m  OK      18h18m    1h53m   WRONG
+    #   newbook-v1    34h06m    32h55m  OK      128h59m   121h34m WRONG
+    # Only the activity span tracks reality on both, so it is the definition.
+    # Silence AFTER the last activity is carried by `idle_s`, not folded in here.
+    first_start = min(started) if started else 0
+    if first_start:
+        quietest = min((l.get("last_activity_s") or 0) for l in lanes)
+        span = max(((status.get("generated_at") or 0) - quietest) - first_start, 0)
+    else:
+        span = 0
     return {
         "state": state,
         "counts": counts,
@@ -261,8 +288,8 @@ def roll_up(status: dict) -> dict:
         "cost_usd": round(sum(l["cost_usd"] for l in costed), 4) if costed else None,
         "cost_lanes": len(costed),
         "cost_partial": len(costed) < len(lanes),
-        "started": min(started) if started else 0,
-        "elapsed_s": max((l.get("elapsed_s") or 0) for l in lanes) if lanes else 0,
+        "started": first_start,
+        "elapsed_s": span,
         # `models` = spawnable aliases (was `brains` pre-rename);
         # `model_ids` = exact resolved ids (was `models`).
         "models": sorted({l.get("model") or l.get("brain") or "?" for l in lanes}),
@@ -281,6 +308,31 @@ def refresh_interval(summary: dict, live_ttl: int) -> int:
     if not idle or idle < live_ttl * 4:
         return live_ttl
     return max(live_ttl, min(idle // 4, REFRESH_CAP))
+
+
+# A failing CLI's LAST stderr line is reliably its LEAST informative one: tools
+# that print a usage dump end with boilerplate, and a cascade's final line is the
+# fallout, not the cause. Taking `tail[-1]` put this on the dashboard for three
+# runs on 2026-09-09: "or see the jq manpage, or online docs at https://jqlang.org"
+# - while the actual fault, "Argument list too long", was line ONE. So: drop the
+# boilerplate, prefer the FIRST error-shaped line (the cause), and fall back to
+# the last surviving line only when nothing looks like an error at all.
+_ERR_BOILERPLATE = re.compile(r"^(use\s+\S+\s+--help|or see the .*\bmanpage|usage:)", re.I)
+_ERR_SHAPED = re.compile(
+    r"\b(error|fatal|cannot|can't|unable|denied|refused|no such|too long|invalid|"
+    r"failed|not found|timed out|permission|traceback|exception)\b", re.I)
+
+
+def error_line(stderr: str, fallback: str, cap: int = 300) -> str:
+    """Pick the most diagnostic single line out of a tool's stderr."""
+    lines = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
+    lines = [ln for ln in lines if not _ERR_BOILERPLATE.match(ln)]
+    if not lines:
+        return fallback
+    for ln in lines:
+        if _ERR_SHAPED.search(ln):
+            return ln[:cap]
+    return lines[-1][:cap]
 
 
 def read_run(entry: dict, bash: str, timeout: int) -> dict:
@@ -304,8 +356,8 @@ def read_run(entry: dict, bash: str, timeout: int) -> dict:
         return {**entry, "error": f"cannot run ff-status: {e}", "lanes": []}
     out = p.stdout or ""
     if p.returncode not in (0, 14) or not out.strip():
-        tail = (p.stderr or "").strip().splitlines()
-        return {**entry, "error": (tail[-1] if tail else f"ff-status exit {p.returncode}"),
+        return {**entry,
+                "error": error_line(p.stderr or "", f"ff-status exit {p.returncode}"),
                 "lanes": []}
     try:
         status = json.loads(out)

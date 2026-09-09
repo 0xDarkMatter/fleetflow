@@ -135,7 +135,7 @@ var ffRunCard, FF_RUNCARD_CSS;
        stall styling, so a long-dead run stops reading as live risk. */
     if (state === "abandoned") return '<span class="ffrc-tag">abandoned ' + fmt(idle) + ' silent</span>';
     if (state === "failed") return '<span class="ffrc-tag ffrc-tag-fail">failed</span>';
-    if (state === "done") return '<span class="ffrc-tag">done</span>';
+    if (state === "done") return '<span class="ffrc-tag ffrc-tag-done">done</span>';
     return "";
   }
 
@@ -302,6 +302,9 @@ var ffRunCard, FF_RUNCARD_CSS;
     ".ffrc-tag-run{background:var(--ffc-bg-success);color:var(--ffc-text-success);border:0;font-weight:600;}" +
     ".ffrc-tag-stall{background:var(--ffc-bg-warn);color:var(--ffc-warn);border:0;font-weight:600;}" +
     ".ffrc-tag-fail{background:var(--ffc-bg-bad);color:var(--ffc-bad);border:0;font-weight:600;}" +
+    /* done is SOLID green where running is pale green: the two must not read
+       as the same state at a glance across a 123-card wall. */
+    ".ffrc-tag-done{background:var(--ffc-text-success);color:var(--ffc-on-solid,#fff);border:0;font-weight:600;}" +
     ".ffrc-sq-row{display:flex;gap:3px;flex-wrap:wrap;}" +
     ".ffrc-sq{width:8px;height:8px;border-radius:1.5px;background:var(--ffc-idle);flex:none;display:inline-block;}" +
     ".ffrc-sq.running{background:var(--ffc-run);animation:ffrcPulse 1.1s ease-in-out infinite;}" +

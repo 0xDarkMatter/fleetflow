@@ -252,6 +252,19 @@ for cand in "$BASE" main master; do
   if git -C "$REPO" show-ref --verify --quiet "refs/heads/$cand"; then INTEG="$cand"; break; fi
 done
 [ -n "$INTEG" ] || INTEG="HEAD"
+# An integration ref that has ITSELF been integrated is no longer the
+# integration ref (ADR-035, amendment 2026-09-09). A wave re-planned from a
+# lane branch leaves the manifest base naming that lane; once it lands, the
+# branch is a frozen ancestor of main (godaddy-build: base perf-groups-a sat
+# 95 commits BEHIND main) and every landed lane reads "95 unmerged commits" -
+# kept forever, never reclaimed. If main contains the chosen ref, main is the
+# ref. This is the SAFE direction for a reclaim tool: HEAD ⊂ base implies
+# HEAD ⊂ main, so a lane can only gain a landed verdict that is true, never
+# lose one. Mirrored in ff-status; the two must move together.
+if [ "$INTEG" != "main" ] && git -C "$REPO" show-ref --verify --quiet refs/heads/main \
+   && git -C "$REPO" merge-base --is-ancestor "$INTEG" main 2>/dev/null; then
+  INTEG="main"
+fi
 # Resolve INTEG to a SHA in the MAIN repo before it reaches a lane-side
 # rev-list - never hand rev-list a symbolic name like "HEAD", which would
 # resolve inside each LANE worktree as a self-compare (HEAD..HEAD = 0),

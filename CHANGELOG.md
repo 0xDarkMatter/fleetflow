@@ -8,6 +8,26 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- Lane cards report OUTCOME, not only effort. `ff-status` lifts the
+  builder-role final-reply contract into the lane record — `verdict`
+  (`STATUS:`), `tests`, `files_changed`, `deferred` — from `<id>.last.txt`
+  (codex) or `result.json` `.result` (claude-family, bold-markdown accepted),
+  inside the jq passes it already runs; plus `stop_reason` and
+  `permission_denials` from the envelope. The dashboard draws them as chips
+  (`✓ 77/0 tests`, `15 files`, `cut off`, `N denied`; a reviewer's `n/a (…)`
+  answer draws a muted chip and `a/a` is read as passed/total), shows the worker's own
+  verdict as a tag beside the state (22 of godaddy-build's 123 "done" lanes
+  were `partial`, hidden in truncated prose), puts DEFERRED in its tooltip,
+  and prints the cache share on the token chip (median lane: 97% cache reads).
+- `landed` / `commits_authored` on the status feed. `commits` now counts
+  UNMERGED work against the integration ref exactly as ff-clean resolves it
+  (ADR-035) instead of a hardcoded `main..HEAD`; `landed` is its zero case made
+  explicit; `commits_authored` counts a lane's own commits against a frozen-sha
+  base and is null for a branch base. The card says `⎇ landed` where it used to
+  say `0 commits` on 122 of 123 lanes.
+- `tests/run.sh`: a 200-lane resource-budget fixture (the pre-fix ff-status
+  emits 0 bytes on it), contract-parse fixtures for both reply shapes, and a
+  landedness fixture with a merged lane, an unmerged lane, and a branch base.
 - Model-routing docs name the verified wildcard routes and the seat each one
   earns by RATE rather than novelty: `gemini-3.8-flash` ($0.75/$3.75) as a
   build lane, `meta/muse-spark-1.3` ($1.25/$4.25) for build or dissent. All
@@ -41,6 +61,29 @@ shipped, the ADRs own WHY.
   failure ADR-016 named for UI, relocated into code).
 
 ### Changed
+- A run's `elapsed_s` is its wall-clock span (first lane start → most recent
+  activity), no longer `max(lane elapsed)`. The two coincide only for a single
+  simultaneous wave; godaddy-build ran 123 lanes in waves across a night and
+  the card paired a 17h52m-old `started` with a 1h53m elapsed. Measured
+  against run-directory mtime spans: godaddy 18h16m on disk → 18h18m,
+  newbook-v1 34h06m → 32h55m (the old value was 121h34m — a lane that died
+  without a result envelope accrues elapsed forever, which is also why the
+  span is NOT floored at max-lane). The dashboard's time-window filter ends a
+  run at `started + elapsed_s`, so long runs stop falling out of "last N hours"
+  while still live.
+- Lane cards: `done` is a solid green tag (running stays pale green); the
+  artifact basename line is gone (it was `<lane id>.<ext>` on 122/122 lanes —
+  one bit, twenty-two characters); `agent_message: STATUS: x SUMMARY:` is
+  stripped from the activity line (~40 of ~85 visible characters); the red
+  stderr line is now an amber `recovered` / red `error` chip drawn only when it
+  changes the verdict, with the tail in its tooltip — it had been red on 68 of
+  117 done lanes, and only 10 of 73 tails were error-shaped (one was a line of
+  TypeScript). The card face shows the reply's full `SUMMARY:` block (clamped to
+  two lines) rather than the activity tail cut at 70 characters, with the whole
+  summary and DEFERRED in its tooltip; the elapsed chip's tooltip carries the
+  lane's absolute start → end. Review lanes (`verify` phase) no longer wear the
+  amber "no worktree lane" warning — they are spawned without a worktree by
+  design, and 24 of godaddy-build's 30 no-worktree lanes were reviewers.
 - `ff-plan lint`'s `adr-constraints` check now calls adr-ops's
   `adr-touching.py` ONCE per packet, passing every owned path, and reads the
   per-path verdict from the tool's new `queries[]` envelope (adr-ops batched
@@ -58,6 +101,22 @@ shipped, the ADRs own WHY.
   2 batched, 4 via the legacy fallback.
 
 ### Fixed
+- `ff-status` emitted NOTHING — and exited 0 — for any run past ~37 lanes,
+  so the machine-wide dashboard rendered its three largest runs
+  (godaddy-build at 123 lanes, newbook-v1, tess-v1) as empty "could not read
+  this run" cards while every small run looked fine. The lane accumulator
+  folded every record into a growing `$L + [...]` array passed BACK through
+  jq's argv once per lane — quadratic in argv bytes — until Windows refused
+  with "Argument list too long"; `$(...)` then collapsed the accumulator to
+  "", every remaining lane failed `--argjson`, and the final assembly died.
+  Records now append to an NDJSON temp file slurped on stdin, so argv carries
+  one lane's fields whatever the count; a failed emit propagates a non-zero
+  exit instead of the script's unconditional `exit 0`.
+- `ff-aggregate` / `ff-serve` reported a failing tool's LAST stderr line,
+  which for a usage dump is boilerplate: the dashboard showed "or see the jq
+  manpage, or online docs at https://jqlang.org" while the cause — "Argument
+  list too long" — was line one. `error_line()` now drops boilerplate and
+  prefers the first error-shaped line.
 - `ff-plan lint`'s `adr-constraints` check silently reported `disarmed` on
   every packet: it passed all of a packet's `owns:` paths to adr-ops's
   `adr-touching.py` in one call, but that script takes exactly one positional

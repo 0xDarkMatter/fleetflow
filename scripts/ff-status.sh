@@ -172,8 +172,10 @@ scan_transcript() {
 }
 
 emit() {
-  local now lanes id model state started finished elapsed art commits last_c tools activity tokens etail rc
+  local now lanefile id model state started finished elapsed art commits last_c tools activity tokens etail rc
   local T enc f m last_act idle stalled live
+  local landed authored verdict tests fchg deferred stop_reason denials summary
+  local base_ref integ integ_sha base_sha cand fra
   # NOT local: --exit-stalled reads it after emit returns, and in --watch mode it
   # must reset every tick so a lane that resumes writing clears the verdict.
   STALL_ANY=0
@@ -187,8 +189,61 @@ emit() {
   [ -f "$RUNDIR/manifest.json" ] && WT_INTENT="|$(jq -r '
     (.packets // [])[] | select(.worktree == true) | .id' "$RUNDIR/manifest.json" 2>/dev/null \
     | tr -d '\r' | tr '\n' '|')"
+  # --- landedness, resolved ONCE per emit (ADR-035) ---------------------------
+  # Mirrors ff-clean's rule exactly: the integration ref is the manifest base
+  # when that names a live branch, else main, else master, else the MAIN repo's
+  # HEAD - resolved to a sha HERE, in the main repo, before any lane-side git
+  # sees it. A symbolic "HEAD" handed to a worktree resolves to the worktree's
+  # own HEAD and every lane reads as a self-compare (ff-clean lost a 2-commit
+  # lane to exactly that on 2026-08-25). Until 2026-09-09 this script counted
+  # against a hardcoded "main..HEAD", which is wrong whenever a wave re-plans
+  # from a lane branch (godaddy-build's base is fleetflow/godaddy-build/perf-groups-a).
+  base_ref="$(jq -r '.base // ""' "$RUNDIR/manifest.json" 2>/dev/null | tr -d '\r')"
+  integ=""
+  for cand in "$base_ref" main master; do
+    [ -n "$cand" ] || continue
+    if git -C "$REPO" show-ref --verify --quiet "refs/heads/$cand"; then integ="$cand"; break; fi
+  done
+  [ -n "$integ" ] || integ="HEAD"
+  # An integration ref that has ITSELF been integrated is no longer the
+  # integration ref. A wave re-planned from a lane branch leaves the manifest
+  # base naming that lane; once it lands, the branch is a frozen ancestor of
+  # main (godaddy-build: base perf-groups-a sat 95 commits BEHIND main) and
+  # measuring against it read all 93 landed lanes as unmerged. If main contains
+  # the chosen ref, main is the ref. Monotone by construction - HEAD ⊂ base
+  # implies HEAD ⊂ main - so this only ever ADDS landed verdicts that are true.
+  # Mirrored in ff-clean; the two must move together (ADR-035, amendment).
+  if [ "$integ" != "main" ] && git -C "$REPO" show-ref --verify --quiet refs/heads/main \
+     && git -C "$REPO" merge-base --is-ancestor "$integ" main 2>/dev/null; then
+    integ="main"
+  fi
+  integ_sha="$(git -C "$REPO" rev-parse --verify --quiet "$integ^{commit}" 2>/dev/null | tr -d '\r')"
+  # A lane's OWN commit count survives landing only when the base is a FROZEN
+  # sha (ff-plan records `rev-parse HEAD` at authoring time). Against a branch
+  # base the range collapses to 0 the moment the lane lands, which is the very
+  # ambiguity `landed` exists to remove - so a branch base yields no count.
+  base_sha=""
+  case "$base_ref" in
+    *[!0-9a-fA-F]*|"") ;;
+    *) [ "${#base_ref}" -ge 7 ] && base_sha="$(git -C "$REPO" rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null | tr -d '\r')" ;;
+  esac
   now=$(date +%s)
-  lanes="[]"
+  # Lane records accumulate in a FILE, one JSON object per line - NEVER in a shell
+  # variable. Folding each lane into a growing `$L + [...]` array reads better and
+  # is exactly what this replaced: that form passed the whole accumulated array
+  # back through jq's argv once per lane, so argv bytes were QUADRATIC in lane
+  # count. Past ~37 lanes it exceeded the Windows command-line limit, jq died with
+  # "Argument list too long", `$(...)` collapsed the accumulator to the empty
+  # string, and every remaining lane then failed `--argjson L ""`. emit produced
+  # nothing at all, so the machine-wide dashboard rendered its three LARGEST runs
+  # (godaddy-build at 123 lanes, newbook-v1, tess-v1) as empty "could not read
+  # this run" cards while every small run looked fine (2026-09-09).
+  # argv now carries exactly one lane's fields regardless of lane count, and the
+  # array is assembled by slurping this file on stdin - a redirection bash
+  # performs, so no temp path is ever handed to jq (jq here is a native Windows
+  # binary that would not resolve an MSYS /tmp path).
+  # Do NOT "simplify" this back into a variable.
+  lanefile="$(mktemp)" || { err "cannot create temp file for lane records"; return 1; }
   # ONE jq pass over the journal for every lane's identity and state, not six per
   # lane. Semantics are unchanged, field for field (see each line below); this is
   # purely about process count. Windows spawns cost ~150ms, so a 23-lane run was
@@ -207,17 +262,32 @@ emit() {
     if [ "$finished" -gt 0 ]; then elapsed=$((finished - started)); else elapsed=$((now - started)); fi
     [ "$elapsed" -ge 0 ] || elapsed=0
 
-    commits=0; last_c=""; wt=""; branch=""; wtstate="none"
+    commits=0; last_c=""; wt=""; branch=""; wtstate="none"; landed=null; authored=null
     case "$WT_INTENT" in *"|$id|"*) wtstate="reclaimed" ;; esac
     if [ -d "$RUNDIR/wt-$id" ]; then
       wt="$RUNDIR/wt-$id"; branch="fleetflow/$RUN/$id"; wtstate="present"
-      # ONE git invocation for both the count and the newest subject: `git log`
-      # already walks the range, so asking rev-list for the count separately was
-      # paying a second process to redo the same walk.
-      gitlog="$(git -C "$wt" log --format=%s "main..HEAD" -- 2>/dev/null)"
-      if [ -n "$gitlog" ]; then
-        commits="$(printf '%s\n' "$gitlog" | wc -l | tr -d ' ')"
-        last_c="$(printf '%s\n' "$gitlog" | head -1 | head -c 90)"
+      # `commits` is the UNMERGED count against the integration ref - the same
+      # number ff-clean's reclaim decision uses - and `landed` is its zero case
+      # made explicit. Both are needed: a bare 0 meant either "landed" or "never
+      # committed", and on a fully landed run every card read `0 commits`
+      # (godaddy-build, 122 of 123 lanes, 2026-09-09). is-ancestor is an exit
+      # code; the range walk (count + newest subject in one `git log`) only runs
+      # for lanes that are NOT landed.
+      if [ -n "$integ_sha" ]; then
+        if git -C "$wt" merge-base --is-ancestor HEAD "$integ_sha" 2>/dev/null; then
+          landed=true
+        else
+          landed=false
+          gitlog="$(git -C "$wt" log --format=%s "$integ_sha..HEAD" -- 2>/dev/null)"
+          if [ -n "$gitlog" ]; then
+            commits="$(printf '%s\n' "$gitlog" | wc -l | tr -d ' ')"
+            last_c="$(printf '%s\n' "$gitlog" | head -1 | head -c 90)"
+          fi
+        fi
+      fi
+      if [ -n "$base_sha" ]; then
+        authored="$(git -C "$wt" rev-list --count "$base_sha..HEAD" 2>/dev/null | tr -d '\r')"
+        [ -n "$authored" ] || authored=null
       fi
     fi
 
@@ -233,6 +303,17 @@ emit() {
     # fabricated dollar figure is worse than an absent one.
     tools=0; activity=""; tokens=0; T=""
     tin=0; tcache=0; tout=0; ttotal=0; cost=null; dens="[]"; dbasis=null
+    # --- final-reply contract -----------------------------------------------------
+    # The builder role card (assets/roles/builder.role.md) REQUIRES the worker's
+    # final reply to carry STATUS / TESTS: <passed>/<failed> / FILES_CHANGED: <n>,
+    # and DEFERRED when partial; 115 of godaddy-build's 123 artifacts honour it.
+    # Those are the lane's OUTCOME, where everything else here is effort, so the
+    # card wants them. They are parsed INSIDE the two jq passes below (rawfile /
+    # .result) - never as a third process per lane: ff-status already spends
+    # ~360ms/lane on Windows spawns and a 123-lane run takes 88s of the
+    # aggregator's 180s budget. Empty means "not in the reply" - the dashboard
+    # shows nothing rather than a placeholder.
+    verdict=""; tests=""; fchg=""; deferred=""; stop_reason=""; denials=0; summary=""
     # Journalled launch model_id is the FLOOR; a worker that reports what it
     # actually ran (modelUsage, transcript) overrides it below, because an
     # alias like "glm" is less true than the resolved "GLM-5.2".
@@ -246,8 +327,27 @@ emit() {
       # reason the field exists: codex's --json stream carries NO timestamps, so
       # these buckets are item ordinals, not wall-clock. Labelling them a time
       # series would be a lie the chart cannot disown.
-      eval "$(jq -sr --argjson N 20 '
-        [.[] | select(.type=="item.completed")] as $items
+      # codex writes its final reply to <id>.last.txt; ride it in as a rawfile so
+      # the contract parse costs no extra process. $ARGS.named keeps the program
+      # valid when the file is absent (a lane still running has none).
+      fra=(); [ -f "$RUNDIR/$id.last.txt" ] && fra=(--rawfile fr "$RUNDIR/$id.last.txt")
+      eval "$(jq -sr --argjson N 20 "${fra[@]}" '
+        def fldl($t; $k; $n):
+          ($t | gsub("\r"; "") | split("\n")) as $ls
+          | ([range($ls | length) | select($ls[.] | test("^\\s*\\**" + $k + "\\**\\s*:"; "i"))] | first) as $i
+          | if $i == null then "" else
+              ($ls[$i] | sub("^\\s*\\**" + $k + "\\**\\s*:\\**\\s*"; ""; "i")) as $head
+              | (reduce $ls[($i + 1):][] as $l ({acc: [], stop: false};
+                  if .stop then .
+                  elif ($l | test("^\\s*\\**[A-Z_]{3,}\\**\\s*:")) then .stop = true
+                  elif ($l | test("^\\s*$")) then (if ((.acc | length) > 0 or ($head | length) > 0) then .stop = true else . end)
+                  else .acc += [$l] end)).acc as $rest
+              | ([$head] + $rest | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0)) | join(" "))
+              | sub("\\s*\\**\\s*$"; "") | .[0:$n]
+            end;
+        def fld($t; $k): fldl($t; $k; 400);
+        (($ARGS.named.fr // "") | tostring) as $fr
+        | [.[] | select(.type=="item.completed")] as $items
         | ([.[] | select(.usage != null) | .usage] | last // {}) as $u
         | ($items | length) as $n
         | (if $n == 0 then [range($N)|0]
@@ -261,7 +361,10 @@ emit() {
           "ttotal=\(($u.input_tokens // 0) + ($u.output_tokens // 0)) " +
           "dens=\($d | tojson | @sh) dbasis=\("\"sequence\"" | @sh) " +
           "activity=\(($items | last | .item
-              | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))) // "" | @sh)"
+              | (.type + ": " + ((.command // .text // "") | gsub("\n";" ") | .[0:70]))) // "" | @sh) " +
+          "verdict=\(fld($fr; "STATUS") | ascii_downcase | .[0:24] | @sh) tests=\(fld($fr; "TESTS") | @sh) " +
+          "fchg=\(fld($fr; "FILES_CHANGED") | @sh) deferred=\(fld($fr; "DEFERRED") | @sh) " +
+          "summary=\(fldl($fr; "SUMMARY"; 1500) | @sh)"
         ' "$RUNDIR/$id.events.jsonl" 2>/dev/null)"
     elif [ "$state" != "running" ] && [ -f "$RUNDIR/$id.result.json" ]; then
       # ONE jq over the result envelope. `model_id` comes from modelUsage, which is
@@ -269,7 +372,23 @@ emit() {
       # (e.g. "GLM-5.2", not the "glm" alias it was launched with). Picked by
       # output tokens so a run that briefly touched a small model_id still reports the
       # model_id that did the work.
-      eval "$(jq -r '.usage as $u
+      eval "$(jq -r '
+        def fldl($t; $k; $n):
+          ($t | gsub("\r"; "") | split("\n")) as $ls
+          | ([range($ls | length) | select($ls[.] | test("^\\s*\\**" + $k + "\\**\\s*:"; "i"))] | first) as $i
+          | if $i == null then "" else
+              ($ls[$i] | sub("^\\s*\\**" + $k + "\\**\\s*:\\**\\s*"; ""; "i")) as $head
+              | (reduce $ls[($i + 1):][] as $l ({acc: [], stop: false};
+                  if .stop then .
+                  elif ($l | test("^\\s*\\**[A-Z_]{3,}\\**\\s*:")) then .stop = true
+                  elif ($l | test("^\\s*$")) then (if ((.acc | length) > 0 or ($head | length) > 0) then .stop = true else . end)
+                  else .acc += [$l] end)).acc as $rest
+              | ([$head] + $rest | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0)) | join(" "))
+              | sub("\\s*\\**\\s*$"; "") | .[0:$n]
+            end;
+        def fld($t; $k): fldl($t; $k; 400);
+        ((.result // .text // "") | if type == "string" then . else tojson end) as $fr
+        | .usage as $u
         | "tokens=\($u.output_tokens // 0) tools=\(.num_turns // 0) " +
           "tin=\($u.input_tokens // 0) " +
           "tcache=\(($u.cache_read_input_tokens // 0) + ($u.cache_creation_input_tokens // 0)) " +
@@ -278,7 +397,14 @@ emit() {
           # claude -p prices its own turn; for GLM this is the CLI Anthropic-rate
           # estimate, not the z.ai invoice - a magnitude, not an amount owed.
           "cost=\(.total_cost_usd // "null") " +
-          "model_id=\((.modelUsage // {} | to_entries | sort_by(-.value.outputTokens) | .[0].key) // "" | @sh)"
+          "model_id=\((.modelUsage // {} | to_entries | sort_by(-.value.outputTokens) | .[0].key) // "" | @sh) " +
+          # stop_reason and permission_denials are the two envelope fields that
+          # change a verdict: max_tokens means the worker was CUT OFF mid-reply,
+          # and a denial means it asked for something the harness refused.
+          "stop_reason=\(.stop_reason // "" | @sh) denials=\((.permission_denials // []) | length) " +
+          "verdict=\(fld($fr; "STATUS") | ascii_downcase | .[0:24] | @sh) tests=\(fld($fr; "TESTS") | @sh) " +
+          "fchg=\(fld($fr; "FILES_CHANGED") | @sh) deferred=\(fld($fr; "DEFERRED") | @sh) " +
+          "summary=\(fldl($fr; "SUMMARY"; 1500) | @sh)"
         ' "$RUNDIR/$id.result.json" 2>/dev/null | head -1)"
       [ -n "${cost:-}" ] || cost=null
     elif [ "$state" = "running" ]; then
@@ -392,7 +518,10 @@ emit() {
       state="abandoned"; stalled=false; STALL_ANY=1
     fi
 
-    lanes="$(jq -nc --argjson L "$lanes" \
+    # `-n` (null input) is load-bearing, not habit: this runs inside a
+    # `while read` whose stdin is the journal process substitution, and a jq that
+    # read stdin would swallow the remaining lanes.
+    jq -nc \
       --arg id "$id" --arg model "$model" --arg state "$state" --arg activity "$activity" \
       --arg last_c "$last_c" --arg etail "$etail" --arg art "${art:-}" --arg phase "${phase:-build}" \
       --argjson started "$started" --argjson elapsed "$elapsed" \
@@ -403,17 +532,28 @@ emit() {
       --argjson dens "${dens:-[]}" --argjson dbasis "${dbasis:-null}" \
       --arg model_id "${model_id:-}" --arg wt "${wt:-}" --arg branch "${branch:-}" \
       --arg wtstate "${wtstate:-none}" \
-      '$L + [{id:$id,model:$model,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
-              last_activity_s:$idle,stalled:$stalled,live_signal:$live,
-              commits:$commits,tools:$tools,tokens:$tokens,
-              tokens_in:$tin,tokens_cached:$tcache,tokens_out:$tout,tokens_total:$ttotal,
-              cost_usd:$cost,density:$dens,density_basis:$dbasis,
-              model_id:(if $model_id=="" then null else $model_id end),
-              worktree:(if $wt=="" then null else $wt end),
-              worktree_state:$wtstate,
-              branch:(if $branch=="" then null else $branch end),
-              activity:$activity,
-              last_commit:$last_c,artifact:$art,err_tail:$etail}]')"
+      --arg verdict "${verdict:-}" --arg tests "${tests:-}" --arg fchg "${fchg:-}" \
+      --arg deferred "${deferred:-}" --arg stop_reason "${stop_reason:-}" --arg summary "${summary:-}" \
+      --argjson denials "${denials:-0}" --argjson landed "${landed:-null}" --argjson authored "${authored:-null}" \
+      '{id:$id,model:$model,phase:$phase,state:$state,started:$started,elapsed_s:$elapsed,
+        last_activity_s:$idle,stalled:$stalled,live_signal:$live,
+        commits:$commits,tools:$tools,tokens:$tokens,
+        tokens_in:$tin,tokens_cached:$tcache,tokens_out:$tout,tokens_total:$ttotal,
+        cost_usd:$cost,density:$dens,density_basis:$dbasis,
+        model_id:(if $model_id=="" then null else $model_id end),
+        worktree:(if $wt=="" then null else $wt end),
+        worktree_state:$wtstate,
+        branch:(if $branch=="" then null else $branch end),
+        activity:$activity,
+        last_commit:$last_c,artifact:$art,err_tail:$etail,
+        verdict:(if $verdict=="" then null else $verdict end),
+        tests:(if $tests=="" then null else $tests end),
+        files_changed:(if $fchg=="" then null else $fchg end),
+        deferred:(if $deferred=="" then null else $deferred end),
+        summary:(if $summary=="" then null else $summary end),
+        stop_reason:(if $stop_reason=="" then null else $stop_reason end),
+        permission_denials:$denials,landed:$landed,commits_authored:$authored}' >> "$lanefile" \
+      || { err "lane $id: failed to serialise status record"; rm -f "$lanefile"; return 1; }
   done < <(jq -sr '
       . as $all
       # lane ids: every id that has a "started" record, in first-appearance order
@@ -461,11 +601,20 @@ emit() {
   orch="$(jq -r 'select(.type=="started" and .orchestrator != null) | .orchestrator' \
           "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r' | tail -1)"
   [ -n "$orch" ] || orch="$(jq -r '.orchestrator // ""' "$RUNDIR/manifest.json" 2>/dev/null | tr -d '\r')"
-  jq -nc --arg run "$RUN" --arg repo "$REPO" --argjson now "$now" --argjson lanes "$lanes" --arg orch "$orch" \
+  # `-s` slurps the per-lane NDJSON on STDIN into the lanes array. The `<` is a
+  # bash redirection, so jq never receives $lanefile as an argument - see the
+  # accumulator comment above for why that matters. An empty file slurps to `[]`,
+  # which is the correct answer for a run with no lanes.
+  if ! jq -sc --arg run "$RUN" --arg repo "$REPO" --argjson now "$now" --arg orch "$orch" \
     --argjson manifest "${manifest:-null}" --argjson stall "$STALL_S" --argjson abandon "$ABANDON_S" \
     '{run:$run,repo:$repo,generated_at:$now,stall_seconds:$stall,abandon_seconds:$abandon,
       orchestrator:(if $orch=="" then null else $orch end),
-      lanes:$lanes,manifest:$manifest}'
+      lanes:.,manifest:$manifest}' < "$lanefile"; then
+    err "failed to assemble status JSON"
+    rm -f "$lanefile"
+    return 1
+  fi
+  rm -f "$lanefile"
 }
 
 STALL_ANY=0
@@ -481,9 +630,14 @@ if [ -n "$WATCH" ]; then
     sleep "$WATCH"
   done
 elif [ -n "$OUT" ]; then
-  emit > "$OUT"
+  # emit's status is PROPAGATED, never swallowed. This script used to end in an
+  # unconditional `exit 0`, so a failed emit exited 0 with empty stdout and the
+  # only thing standing between that and a silently blank dashboard was
+  # ff-aggregate's `not out.strip()` guard. A reader that asks for status and is
+  # told "success, here is nothing" is worse than one that is told it failed.
+  emit > "$OUT" || exit 1
 else
-  emit
+  emit || exit 1
 fi
 [ "$EXIT_STALLED" = 1 ] && [ "$STALL_ANY" = 1 ] && { err "stalled lane(s) detected"; exit 14; }
 exit 0
