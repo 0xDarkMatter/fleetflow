@@ -220,3 +220,79 @@ ff_lanes_journalled() {
 # ff_lanes_root_in_use -> 0 when lanes are being placed outside the repo.
 # Creators use it to decide whether to journal the path; readers must not.
 ff_lanes_root_in_use() { [ -n "${FLEETFLOW_LANES_ROOT:-}" ]; }
+
+# --- machine headroom (ADR-041) ------------------------------------------------
+# ff_commit_headroom -> "free_mb<TAB>total_mb<TAB>source", exit 3 when the
+# platform cannot be measured (callers must read that as "not applicable",
+# never as "plenty").
+#
+# COMMIT, NOT RAM, and the distinction is the whole point. Windows dies of
+# commit exhaustion with RAM still free: on 2026-09-10 this box wedged at
+# 0.2 GB commit free with 28 GB of RAM idle, and a "free RAM" reading would
+# have said healthy every single time. Measured minutes apart on the same box:
+# commit free 61.6 GB vs RAM free 33.1 GB - two different numbers, and only
+# one of them is the one that kills the machine. Linux gets the analogous
+# figure (MemAvailable + SwapFree), which is what its own overcommit accounting
+# spends.
+ff_commit_headroom() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      command -v powershell.exe >/dev/null 2>&1 || return 3
+      # FreeVirtualMemory/TotalVirtualMemorySize are KB and are the COMMIT
+      # figures (page file + physical), not the working set.
+      MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command \
+        '$o = Get-CimInstance Win32_OperatingSystem; "{0} {1}" -f $o.FreeVirtualMemory, $o.TotalVirtualMemorySize' \
+        2>/dev/null | tr -d '\r' \
+        | awk 'NF==2 && $1+0>0 { printf "%d\t%d\twin32_operatingsystem\n", $1/1024, $2/1024; f=1 } END { exit !f }' \
+        || return 3
+      ;;
+    Linux)
+      [ -r /proc/meminfo ] || return 3
+      awk '/^MemAvailable:/{a=$2} /^SwapFree:/{s=$2} /^MemTotal:/{mt=$2} /^SwapTotal:/{st=$2}
+           END { if (a=="") exit 1; printf "%d\t%d\tproc_meminfo\n", (a+s)/1024, (mt+st)/1024 }' \
+        /proc/meminfo || return 3
+      ;;
+    Darwin)
+      command -v vm_stat >/dev/null 2>&1 || return 3
+      # free + inactive pages are what a new process can actually get; swap is
+      # dynamic on macOS, so this is an approximation and says so in `source`.
+      _ffch_ps="$(vm_stat 2>/dev/null | awk -F'[ .]+' '/page size of/{print $8}')"
+      [ -n "$_ffch_ps" ] || _ffch_ps=4096
+      vm_stat 2>/dev/null | awk -F'[:.]+' -v ps="$_ffch_ps" -v tot="$(sysctl -n hw.memsize 2>/dev/null)" '
+        /Pages free/{f=$2} /Pages inactive/{i=$2}
+        END { if (tot=="") exit 1; printf "%d\t%d\tvm_stat_approx\n", (f+i)*ps/1048576, tot/1048576 }' || return 3
+      ;;
+    *) return 3 ;;
+  esac
+}
+
+# ff_lane_capacity -> "lanes<TAB>free_mb<TAB>reserve_mb<TAB>per_lane_mb<TAB>source"
+# How many CONCURRENT lanes this machine's headroom supports right now:
+#   floor((free - reserve) / per_lane), clamped to [1, FLEETFLOW_MAX_CONCURRENT].
+# Exit 3 (and no output) where headroom cannot be measured.
+#
+# Deliberately NOT calibrated from the running process table, though that was
+# the obvious idea. Measured here 2026-09-10: 90 node processes averaging
+# 262 MB with a single dev server at 11,943 MB, and 53 claude processes
+# averaging 335 MB most of which are idle session hosts, not lane workers. A
+# mean over that distribution is meaningless and a max is absurd. Honest
+# calibration needs a per-lane peak the JOURNAL records (ff-spawn sampling its
+# worker), which does not exist yet - see the ADR. Until it does, the estimate
+# is a documented constant the operator can tune, not a fabricated measurement.
+ff_lane_capacity() {
+  _fflc_hr="$(ff_commit_headroom)" || return 3
+  _fflc_free="${_fflc_hr%%	*}"
+  _fflc_src="${_fflc_hr##*	}"
+  _fflc_per="${FLEETFLOW_LANE_MEMORY_MB:-1500}"
+  _fflc_res="${FLEETFLOW_MEMORY_RESERVE_MB:-16384}"
+  _fflc_max="${FLEETFLOW_MAX_CONCURRENT:-16}"
+  case "$_fflc_per$_fflc_res$_fflc_max" in *[!0-9]*) return 3 ;; esac
+  [ "$_fflc_per" -gt 0 ] || return 3
+  _fflc_n=$(( (_fflc_free - _fflc_res) / _fflc_per ))
+  # Floor of 1, never 0: "spawn nothing" is not a verdict this may reach on its
+  # own. A box with no headroom gets ONE lane and a loud row, because refusing
+  # outright is what gets a check disabled (the ADR-038 reasoning).
+  [ "$_fflc_n" -ge 1 ] || _fflc_n=1
+  [ "$_fflc_n" -le "$_fflc_max" ] || _fflc_n="$_fflc_max"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$_fflc_n" "$_fflc_free" "$_fflc_res" "$_fflc_per" "$_fflc_src"
+}

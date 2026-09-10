@@ -139,6 +139,9 @@ FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permi
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_FLEET_RULES	agentic-quality	comma-separated ~/.claude/rules names every provider must see; each needs a [fleet-rule: NAME] tag in assets/guard-preamble.txt (ff-doctor, ff-plan lint, ADR-037)
 FLEETFLOW_HOST_SERVICES	X:/00_Orchestration/compose-portless/process-compose.yaml	Process Compose services file; registered watchers serving a repo with lanes must ignore .fleetflow (ff-doctor, ff-plan lint, ADR-038); absent = not applicable
+FLEETFLOW_LANE_MEMORY_MB	1500	commit budgeted per CONCURRENT lane when sizing a wave (ff-doctor lane-capacity, ADR-041); a documented estimate, not a measurement
+FLEETFLOW_MEMORY_RESERVE_MB	16384	commit held back for the desktop and host services before lanes are budgeted (ff-doctor lane-capacity, ADR-041)
+FLEETFLOW_MAX_CONCURRENT	16	ceiling on the concurrent-lane figure however much headroom exists (ff-doctor lane-capacity, ADR-041)
 FLEETFLOW_LANES_ROOT	(unset = lanes in-repo)	opt-in: place lane worktrees OUTSIDE the host repo at <root>/<repo-slug>/<run>/wt-<id>, beyond any dev server's watch scope; run artifacts stay in <repo>/.fleetflow; the journal records each lane's path and readers trust it, never this var (ff-spawn, ff-chip, ADR-040)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
@@ -258,6 +261,29 @@ else
   else
     say "host-watchers" advisory "registered watcher(s) serving a repo with lanes and NO .fleetflow ignore:$_hw_bad - add server.watch.ignored ['**/.fleetflow/**'] or expect commit exhaustion (ADR-038)"
   fi
+fi
+
+# --- lane capacity (ADR-041) ---------------------------------------------------
+# How many CONCURRENT lanes the machine's COMMIT headroom supports right now.
+# The fan-out doctrine in SKILL.md sized waves from cores and endpoint quota
+# and never from memory, which is the axis this box actually dies on. Advisory
+# always: it informs the orchestrator's wave size, it does not gate a spawn -
+# a hard refuse here gets --force'd into habit exactly like ADR-038's warn.
+if _lc="$(ff_lane_capacity)"; then
+  IFS="$(printf '\t')" read -r _lc_n _lc_free _lc_res _lc_per _lc_src <<EOF
+$_lc
+EOF
+  _lc_hdr="$(( _lc_free - _lc_res ))"
+  # ceiling-bound is healthy news; headroom-bound is the number to act on
+  if [ "$_lc_n" -ge "${FLEETFLOW_MAX_CONCURRENT:-16}" ]; then
+    say "lane-capacity" ok "commit headroom supports $_lc_n concurrent lanes (at the FLEETFLOW_MAX_CONCURRENT ceiling; ${_lc_free}MB free - ${_lc_res}MB reserve = ${_lc_hdr}MB usable at ${_lc_per}MB/lane, $_lc_src)"
+  elif [ "$_lc_n" -le 2 ]; then
+    say "lane-capacity" advisory "commit headroom supports only $_lc_n concurrent lane(s) (${_lc_free}MB free - ${_lc_res}MB reserve = ${_lc_hdr}MB usable at ${_lc_per}MB/lane, $_lc_src) - shrink the wave, not the plan; check host-watchers above (ADR-041)"
+  else
+    say "lane-capacity" ok "commit headroom supports $_lc_n concurrent lanes (${_lc_free}MB free - ${_lc_res}MB reserve = ${_lc_hdr}MB usable at ${_lc_per}MB/lane, $_lc_src)"
+  fi
+else
+  say "lane-capacity" ok "commit headroom not measurable on this platform - size waves by the SKILL.md defaults (not applicable, ADR-041)"
 fi
 
 # --- lane placement (ADR-040) --------------------------------------------------

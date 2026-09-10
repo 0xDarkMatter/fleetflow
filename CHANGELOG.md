@@ -8,6 +8,20 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- `lane-capacity` in `ff-doctor --offline` (ADR-041): how many CONCURRENT
+  lanes the machine's **commit** headroom supports right now —
+  `floor((commit_free − FLEETFLOW_MEMORY_RESERVE_MB) /
+  FLEETFLOW_LANE_MEMORY_MB)`, clamped to `[1, FLEETFLOW_MAX_CONCURRENT]`
+  (defaults 16 GB, 1.5 GB, 16). Commit, not free RAM: this box wedged at
+  0.2 GB commit free with 28 GB of RAM idle, and a RAM reading calls that
+  healthy. One helper in `_env.sh` (`ff_commit_headroom` →
+  `ff_lane_capacity`) covers Windows, Linux and macOS and exits 3 —
+  "not applicable" — anywhere else. Advisory in every branch: it sizes the
+  orchestrator's wave, it never gates a spawn. SKILL.md's fan-out doctrine
+  gains memory as its third constraint beside cores and endpoint quota, and
+  says to re-read between waves (process count drifted 614 → 792 over one
+  build) and to check `host-watchers` in the same breath, since an unguarded
+  dev server grows *with* lane count.
 - A fast iteration lane for `tests/run.sh`, without a second gate. `bash
   tests/run.sh` with no flags is unchanged — same sections, same order, same
   assertions — and stays the only thing that lands. New: `--only <regex>`

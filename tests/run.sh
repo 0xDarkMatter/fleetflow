@@ -99,6 +99,7 @@ usage-validation:
 spawn-config-dir:usage-validation
 doctor-fleet-rules:
 doctor-host-watchers:
+doctor-lane-capacity:
 spawn-codex-sandbox:
 spawn-dry-run-lifecycle:spawn-config-dir
 spawn-prompt-aliasing:spawn-dry-run-lifecycle
@@ -448,6 +449,54 @@ env FLEETFLOW_HOST_SERVICES="$HWYAML" bash "$S/ff-doctor.sh" --offline 2>/dev/nu
 env FLEETFLOW_HOST_SERVICES="$TMP/no-such-services.yaml" bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^host-watchers	ok	no registered-services file" \
   && ok "doctor: host-watchers reads not-applicable without a services file" \
   || bad "doctor: host-watchers wrong without a services file"
+
+fi
+if __sec doctor-lane-capacity; then
+# --- lane capacity (ADR-041): waves are sized from COMMIT headroom ---------------
+# The row is advisory in every branch - it informs the orchestrator's wave size
+# and never gates a spawn (ADR-038's reasoning: a hard refuse gets --force'd).
+# The arithmetic is pinned against injected headroom rather than the live box,
+# whose free commit changes between two consecutive reads.
+. "$S/_env.sh"
+if ff_commit_headroom >/dev/null 2>&1; then
+  HR="$(ff_commit_headroom)"
+  printf '%s' "$HR" | grep -qE '^[0-9]+	[0-9]+	[a-z0-9_]+$' \
+    && ok "env: ff_commit_headroom emits free<TAB>total<TAB>source" \
+    || bad "env: ff_commit_headroom shape wrong ($HR)"
+  HRFREE="${HR%%	*}"
+  # the whole point of the ADR: commit, not RAM. A total below physical RAM
+  # would mean we picked the working-set figure by mistake.
+  [ "${HR#*	}" != "$HR" ] && [ "$(printf '%s' "$HR" | cut -f2)" -ge "$HRFREE" ] \
+    && ok "env: headroom total >= free" || bad "env: headroom total < free"
+  # clamped to the ceiling when headroom is ample
+  CAPHI="$(FLEETFLOW_MEMORY_RESERVE_MB=0 FLEETFLOW_LANE_MEMORY_MB=1 FLEETFLOW_MAX_CONCURRENT=7 ff_lane_capacity | cut -f1)"
+  [ "$CAPHI" = "7" ] && ok "env: ff_lane_capacity clamps to FLEETFLOW_MAX_CONCURRENT" \
+    || bad "env: capacity ignored the ceiling (got $CAPHI, want 7)"
+  # floor of 1: an exhausted box gets one lane and a loud row, never zero
+  CAPLO="$(FLEETFLOW_MEMORY_RESERVE_MB=999999999 ff_lane_capacity | cut -f1)"
+  [ "$CAPLO" = "1" ] && ok "env: ff_lane_capacity floors at 1 (never 'spawn nothing')" \
+    || bad "env: capacity floor wrong (got $CAPLO, want 1)"
+  FLEETFLOW_MEMORY_RESERVE_MB=999999999 bash "$S/ff-doctor.sh" --offline 2>/dev/null \
+    | grep -qE "^lane-capacity	advisory	commit headroom supports only 1 concurrent lane" \
+    && ok "doctor: lane-capacity turns advisory when headroom is exhausted" \
+    || bad "doctor: no advisory row under an exhausted-headroom reserve"
+  bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^lane-capacity	(ok|advisory)	.*MB/lane" \
+    && ok "doctor: lane-capacity states the per-lane constant it used" \
+    || bad "doctor: lane-capacity row missing or omits its assumptions"
+else
+  echo "  SKIP  lane-capacity (commit headroom not measurable on this platform)"
+fi
+# a non-numeric tunable must degrade to not-applicable, never to a wrong number
+FLEETFLOW_LANE_MEMORY_MB=abc bash "$S/ff-doctor.sh" --offline 2>/dev/null \
+  | grep -qE "^lane-capacity	ok	commit headroom not measurable" \
+  && ok "doctor: a malformed tunable reads not-applicable, not a fabricated count" \
+  || bad "doctor: malformed FLEETFLOW_LANE_MEMORY_MB produced a number"
+# advisory in every branch: lane-capacity may never fail the preflight
+for RSV in 0 999999999; do
+  FLEETFLOW_MEMORY_RESERVE_MB=$RSV bash "$S/ff-doctor.sh" --offline >/dev/null 2>&1
+  [ $? -ne 10 ] || { bad "doctor: lane-capacity gated the preflight at reserve=$RSV"; break; }
+done
+[ $? -ne 10 ] && ok "doctor: lane-capacity never gates the preflight (advisory by contract)"
 
 fi
 if __sec spawn-codex-sandbox; then

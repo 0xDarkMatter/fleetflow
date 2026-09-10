@@ -27,6 +27,9 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_FLEET_WORKER` | `$HOME/.claude/skills/fleet-worker/scripts/fleet-worker` | glm launcher path (ff-spawn hard-requires it for --model glm) |
 | `FLEETFLOW_FLEET_RULES` | `agentic-quality` | comma-separated `~/.claude/rules` names every provider must see; each needs a `[fleet-rule: NAME]` tag in `assets/guard-preamble.txt` (ff-doctor, ff-plan lint, ADR-037) |
 | `FLEETFLOW_HOST_SERVICES` | `X:/00_Orchestration/compose-portless/process-compose.yaml` | Process Compose services file; registered watchers serving a repo with lanes must ignore `.fleetflow` (ff-doctor, ff-plan lint, ADR-038); absent = not applicable |
+| `FLEETFLOW_LANE_MEMORY_MB` | `1500` | commit budgeted per CONCURRENT lane when sizing a wave (ff-doctor `lane-capacity`, ADR-041); a documented estimate, not a measurement |
+| `FLEETFLOW_MEMORY_RESERVE_MB` | `16384` | commit held back for the desktop and host services before lanes are budgeted (ff-doctor `lane-capacity`, ADR-041) |
+| `FLEETFLOW_MAX_CONCURRENT` | `16` | ceiling on the concurrent-lane figure however much headroom exists (ff-doctor `lane-capacity`, ADR-041) |
 | `FLEETFLOW_LANES_ROOT` | `(unset = lanes in-repo)` | opt-in: place lane worktrees **outside** the host repo at `<root>/<repo-slug>/<run>/wt-<id>`, beyond any dev server's watch scope; run artifacts stay in `<repo>/.fleetflow`; the journal records each lane's path and every reader trusts it, never this variable (ff-spawn, ff-chip, ADR-040) |
 | `FLEETFLOW_CODEX_MODEL` | `(harness default)` | codex -m override for codex lanes |
 | `FLEETFLOW_CODEX_WINDOWS_SANDBOX` | `unelevated` | Windows codex sandbox pin (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful) |

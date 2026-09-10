@@ -499,6 +499,22 @@ default the script-author follows, not an option — and real runs routinely hit
   but the machine-global sandbox-provisioning helper — lanes provisioning at
   once race each other into the elevation trap (see Safety). Bound each lane
   (`--max-turns`), never the ambition.
+- **Memory is the third constraint, and the one the box actually dies of.**
+  Cores and endpoint quota above; **commit** headroom here.
+  `ff doctor --offline`'s `lane-capacity` row states how many concurrent lanes
+  the machine's headroom supports right now —
+  `floor((commit_free − reserve) / per_lane)`, defaults 16 GB reserve and
+  1.5 GB per lane. **Read it before a wave and again between waves**, because
+  headroom drifts down as a run proceeds: host watchers and MCP hosts
+  accumulate (process count 614 → 792 over one build, 2026-09-10). Measure
+  commit, never free RAM — this box wedged at 0.2 GB commit free with 28 GB of
+  RAM idle, and a RAM reading calls that healthy. When headroom is short,
+  **shrink the wave, not the plan** — the same throttle as above, on a
+  different axis. And check `host-watchers` in the same breath: an unguarded
+  dev server grows *with* lane count, so a wave sized only on worker cost
+  still walks into exhaustion
+  ([ADR-041](docs/adr/ADR-041-lane-concurrency-is-sized-from-commit-headroom.md),
+  [ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md)).
 - **No silent caps** (native rule, verbatim): if you sample, top-N, or skip,
   say so in the run summary.
 
