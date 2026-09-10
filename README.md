@@ -340,42 +340,46 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
 
 ## Recent Updates
 
-### Unreleased
+### v0.5.0 · 2026-09-10
 
-- 🔑 **One expired token no longer kills every Anthropic lane.** Claude-family
-  lanes inherit the host auth store by design, so a single expired session took
-  out an entire tier mid-run — a 33-lane fleet lost every sonnet and opus lane
-  at once. `ff spawn --config-dir <dir>` now routes a lane to another store,
-  and `ff doctor --live` names healthy profiles when the host probe fails.
-  fleetflow points; it never picks — auto-switching the account a fan-out bills
-  to is not a decision a script should make
+- ⚡ **Lane status reads in parallel** — 140 lanes in 10s against 63s
+  serial, with the JSON, its lane order and its exit codes identical at every
+  worker count (`FLEETFLOW_STATUS_WORKERS`, default `nproc` capped at 8)
+  ([ADR-039](docs/adr/ADR-039-status-reads-lanes-in-parallel-order-is-journal-order.md)).
+- 🧠 **Waves are sized from memory, not just cores.** `ff doctor` reports
+  how many concurrent lanes the machine's **commit** headroom supports —
+  commit, not free RAM, because a box can wedge with 28 GB of RAM idle.
+  Advisory: it sizes the next wave, it never gates a spawn
+  ([ADR-041](docs/adr/ADR-041-lane-concurrency-is-sized-from-commit-headroom.md)).
+- 🏠 **Lane worktrees can live outside the host repo.** Lanes sit inside
+  it by default, so any dev server serving that repo crawls every one of them.
+  `ff doctor` and `ff plan lint` now warn when a registered watcher has no
+  `.fleetflow` ignore, and `FLEETFLOW_LANES_ROOT` removes the hazard outright
+  ([ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md),
+  [ADR-040](docs/adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)).
+- 📏 **Fleet-wide rules reach every provider.** `claude -p` lanes load
+  `~/.claude/rules/*.md` implicitly and no other harness does, so identical
+  packets produced very different code. Rules named in `FLEETFLOW_FLEET_RULES`
+  now ride the guard preamble, and the doctor fails when one is missing
+  ([ADR-037](docs/adr/ADR-037-fleet-wide-rules-are-carried-in-the-preamble.md)).
+- 🗂️ **Lane cards report outcome, not just effort.** Each card lifts
+  the worker's own final reply: tests passed/failed, files touched, `landed`
+  against unmerged commits, cache share, and a `partial` verdict beside a green
+  `done`. A run's elapsed is now its wall-clock span, not its longest lane.
+- 🔑 **One expired token no longer kills every Anthropic lane.**
+  Claude-family lanes share the host auth store, so one expired session took out
+  a whole tier mid-run. `ff spawn --config-dir <dir>` routes a lane elsewhere and
+  `ff doctor --live` names healthy profiles — it points, it never picks
   ([ADR-036](docs/adr/ADR-036-lane-auth-is-a-config-dir-fleetflow-never-picks-the-profile.md)).
-- ⚡ **The plan lint's ADR gate makes one call per packet, not one per
-  path.** adr-ops's `adr-touching` now takes many paths at once and answers
-  each inside a single envelope, so on the live `tess-v1` plan (41 packets,
-  251 owned paths) the lint spawns it 33 times instead of 251 — that phase
-  drops 42.0s to 6.4s on identical verdicts. It is not the lint's
-  bottleneck: an O(n²) scope matrix still dominates, and on a plan that size
-  the lint does not finish. An older single-path `adr-touching` keeps
-  working — the lint notices the usage error and falls back to one call per
-  path, naming the fallback in the check's reason instead of quietly
-  disarming
-  ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)).
-- 🚨 **The plan lint's ADR gate stopped skipping itself**: `ff plan
-  lint` handed every one of a packet's owned paths to `adr-touching` in
-  one call, but that tool takes a single query and exits 2 on more —
-  which the lint read as "tool missing" and reported `disarmed`.
-  Governing ADR BLUFs went unverified on every packet, quietly. The
-  check now queries one path at a time, against the target repo's own
-  `docs/adr`, so `disarmed` again means the tool is genuinely absent
-  ([ADR-030](docs/adr/ADR-030-plan-lint-gates-the-spawn-and-reports-armed-status.md)).
-- 🚨 **Wave triage's ADR escalation was disarmed the same way**: it called
-  `adr-touching --repo`, a flag that does not exist, and swallowed the
-  usage error, so a finding on an ADR-governed path was auto-queued for
-  fix instead of escalated to a human. Triage now makes one batched call
-  per finding against the target repo's `docs/adr`, names the governed
-  paths on stderr, and fails closed - an unanswered query escalates
-  rather than passes.
+- 🧪 **A fast lane for the test suite.** `--only`, `--skip`, `--quick`
+  and `--list` cut the edit-run loop from ~11 minutes to seconds, over a
+  dependency map derived from the file rather than hand-written. The no-flag run
+  is unchanged and stays the only thing that lands.
+- 🐛 **Three checks that reported success while doing nothing.**
+  `ff-status` overflowed `jq`'s command line past ~37 lanes and emitted nothing
+  while exiting 0, so the dashboard drew its largest runs as empty cards. The
+  plan lint's ADR gate and wave triage's escalation both read a usage error as
+  "tool missing" and reported `disarmed`. All three now fail loudly.
 
 ### v0.4.0 · 2026-09-04
 
@@ -410,77 +414,6 @@ readiness probe on `/api/health`; roots live in `~/.fleetflow/roots.txt`
   `--approve-for-me` plus `-s workspace-write` pair fleetflow had passed
   since 0.144 — every codex lane died at spawn with rc=2. The launch line
   now passes `--approve-for-me` alone, which implies the same sandbox.
-
-### v0.3.0 · 2026-08-24
-
-- 📦 **Requirements + Install + a Quickstart that runs verbatim** from a fresh
-  clone: plan → lint → spawn → collect → clean, with the hard and per-model
-  tool sets stated instead of discovered by failure.
-- 🚦 **`ff` dispatcher + tab-completion**: `ff plan lint`, `ff watch RUN`
-  (terminal live view), `ff logs RUN ID`, `ff open`, `ff env` — sugar over the
-  scripts, never a layer.
-- 🧭 **Drift-gated tunables registry**: `ff-doctor --env` documents all 27
-  `FLEETFLOW_*` variables; tests pin registry ↔ scripts ↔
-  [docs/REFERENCE.md](docs/REFERENCE.md) both ways, alongside the semantic
-  exit-code table and a sixteen-term glossary.
-- 🩹 **Portability**: SHA-256 falls back to `shasum`/`openssl` (an absent
-  hasher silently collapsed every lane onto one cache key), the Python probe
-  executes candidates rather than trusting PATH, and the dashboard origin is
-  configurable (`FLEETFLOW_DASHBOARD_URL`) instead of hardcoded.
-- 🗺️ **Docs restructure**: ARCHITECTURE + SECURITY into `docs/`, five diagrams
-  embedded in ARCHITECTURE.md including the new run-state stores map;
-  machine-conditional AGENTS.md landmines now state their preconditions.
-- ✅ Suite grown to 521 hermetic assertions.
-
-### v0.2.0 · 2026-08-20
-
-- 📐 **`ff-plan` — runs are planned before they spawn**: `draft` authors the
-  plan doc, packets, and manifest up front; `lint` gates the spawn (scope
-  conflicts, dependency cycles, missing ADR constraints, routing sanity —
-  every check reporting armed/disarmed); `refute` sends a cross-provider
-  Adversary to attack the decomposition before a build token is spent;
-  `estimate` prices lanes honestly ([ADR-026..030](docs/adr/)).
-- 🎭 **Twelve role cards** — Architect through Warden: versioned behavioural
-  contracts (mandate, stance rules, bounds, reply shape) prepended into
-  packets, replacing per-run folklore
-  ([ADR-031](docs/adr/ADR-031-role-cards-persona-register.md)).
-- 🧾 **Packet frontmatter**: `owns`/`modifies`/`registries` make
-  file-disjointness machine-checkable; shared registries get single-writer
-  enforcement.
-- 🏭 **Generator registry**: factory-backed work (Forma CLI+MCP stamping)
-  plans as `expand`-able sub-fleets; first entry registered, arming pending.
-- 🪦 **Abandoned-lane state**: runs walked away from stop rendering as live —
-  hours-scale silence demotes to a final `abandoned` state; the dashboard
-  stops animating and re-polling them
-  ([ADR-025](docs/adr/ADR-025-abandonment-demotes-silent-inflight-lanes.md)).
-- 🗓️ **Time-window lens**: this/last week · month · quarter, custom range, or
-  all time — scoping every dashboard view and roll-up.
-- ✅ Suite grown to 442 hermetic assertions; the ff-plan build itself ran as
-  a codex+glm fleet with tested-posture QA (findings ledger: 8 fixed, 1
-  waived, 0 open).
-
-### v0.1.0 · 2026-08-14
-
-- 🚀 **Extracted to a standalone repo** from the claude-mods skills tree with
-  full history (subtree split). Everything below landed here since.
-- 🧹 **`ff-sweep` machine-wide housekeeping**: verdicts for every leftover
-  run dir, safe-only reclaim, and a 16× faster machine-wide sweep (measured
-  717s → 44-84s; the classification is computed live, never cached:
-  [ADR-024](docs/adr/ADR-024-sweep-caches-bytes-never-verdicts.md)).
-- 🧩 **Chips are lanes**: manually spawned Claude Code chips get a real lane
-  (worktree, journal, live telemetry, teardown) via `ff-chip open|close`
-  ([ADR-021](docs/adr/ADR-021-chips-are-lanes-not-a-second-worker-class.md)).
-- 📡 **Opt-in raven-bus telemetry + steerable ACP lanes**: one uniform live
-  feed across providers, and claude lanes that accept mid-run steering and
-  graceful wind-down ([ADR-022](docs/adr/ADR-022-raven-bus-optin-telemetry.md),
-  [ADR-023](docs/adr/ADR-023-acp-lanes-packet-trusted-verdict-from-telemetry.md)).
-- 🧠 **GLM default is GLM-5.3**, with the 5.3 reasoning levels
-  (`low|high|max`) documented in the worker contract.
-- 📋 **Post-build wave pipeline + findings ledger**: posture-selected finder
-  waves, mechanical triage, fix loops, cross-provider re-verify
-  ([ADR-018](docs/adr/ADR-018-post-build-waves-posture-selects-depth-gate-selects-attendance.md)).
-- 📊 **One run-card renderer** shared byte-identically by the dashboard and
-  the chat widget ([ADR-019](docs/adr/ADR-019-one-run-card-renderer-two-embedded-copies.md)).
 
 [View full changelog →](CHANGELOG.md)
 

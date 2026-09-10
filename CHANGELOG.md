@@ -7,6 +7,8 @@ shipped, the ADRs own WHY.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-10
+
 ### Added
 - `lane-capacity` in `ff-doctor --offline` (ADR-041): how many CONCURRENT
   lanes the machine's **commit** headroom supports right now —
@@ -142,6 +144,18 @@ shipped, the ADRs own WHY.
   failure ADR-016 named for UI, relocated into code).
 
 ### Changed
+- **Journal/record schema `FF_VERSION` 1.2.0 → 1.3.0.** A `started` record can
+  now carry a `worktree` field (the lane's absolute path, written only when
+  `FLEETFLOW_LANES_ROOT` places it outside the repo — ADR-040), which 1.2.0
+  never had. The change is additive and optional and nothing branches on `v`,
+  so no reader breaks; the stamp moves because `v` exists so a later reader of
+  `history.jsonl` can trust the shape. `ff-aggregate` mixes `FF_VERSION` into
+  its cache key, so the first aggregate after upgrading re-reads every run.
+  The version-skew test now covers the two Python scripts as well as the ten
+  shell ones — they were outside it, and drifted. A second test hardcoded the
+  version inside `ff-sweep`'s size-cache producer stamp and failed the bump
+  from a section unrelated to versioning; it derives the prefix from the
+  script now.
 - `ff-status` reads lanes in parallel (ADR-039). The per-lane loop body is
   now `lane_record`, run inside worker subshells over round-robin chunks of
   the journal rows; each lane writes its own record file and stall marker,

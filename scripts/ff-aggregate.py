@@ -33,7 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-FF_VERSION = "1.2.0"
+FF_VERSION = "1.3.0"
 HOME = Path(os.environ.get("USERPROFILE") or Path.home())
 FF_HOME = Path(os.environ.get("FLEETFLOW_HOME") or (HOME / ".fleetflow"))
 SCRIPT_DIR = Path(__file__).resolve().parent

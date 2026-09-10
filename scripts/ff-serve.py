@@ -60,7 +60,7 @@ def _load_aggregator():
 
 
 agg = _load_aggregator()
-FF_VERSION = "1.2.0"
+FF_VERSION = "1.3.0"
 
 
 def err(msg: str) -> None:

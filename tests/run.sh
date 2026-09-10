@@ -1033,14 +1033,22 @@ bash "$S/ff-status.sh" --run rlegacy --repo "$REPO" 2>/dev/null \
 fi
 if __sec journal-ff-version; then
 # --- FF_VERSION in journal (feature 4) -----------------------------------------
-grep -q '"v":"1.2.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.2.0" || bad "journal missing FF_VERSION"
+grep -q '"v":"1.3.0"' "$REPO/.fleetflow/r1/journal.jsonl" && ok "journal records FF_VERSION 1.3.0" || bad "journal missing FF_VERSION"
 # every operational script pins the same version (version-skew spine)
 VS=0
 for s in ff-spawn.sh ff-collect.sh ff-status.sh ff-doctor.sh ff-run.sh ff-clean.sh \
          ff-import.sh ff-archive.sh ff-sweep.sh ff-chip.sh; do
-  grep -q '^FF_VERSION="1.2.0"$' "$S/$s" || VS=1
+  grep -q '^FF_VERSION="1.3.0"$' "$S/$s" || VS=1
 done
-[ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.2.0" || bad "version skew across scripts"
+# The dashboard pair carries the SAME version in Python syntax, and was outside
+# this loop until 2026-09-10 - so the two halves could drift silently, which is
+# exactly what happened while bumping to 1.3.0. ff-aggregate stamps it into the
+# aggregate document AND mixes it into the cache key, so a stale constant there
+# serves cached rows from a reader that no longer exists.
+for s in ff-aggregate.py ff-serve.py; do
+  grep -q '^FF_VERSION = "1.3.0"$' "$S/$s" || VS=1
+done
+[ "$VS" = "0" ] && ok "all scripts pin FF_VERSION=1.3.0 (shell + python)" || bad "version skew across scripts"
 # NTFS transient-lock retry in ff-clean (rookery's load-bearing worktree-remove retry)
 grep -q 'retrying in 1s' "$S/ff-clean.sh" \
   && ok "clean: worktree-remove NTFS retry present" || bad "clean: NTFS retry loop missing"
@@ -2522,12 +2530,17 @@ SCF="$FLEETFLOW_HOME/cache/sweep-sizes.json"
 [ -s "$SCF" ] \
   && ok "ff-sweep: sized sweep writes \$FLEETFLOW_HOME/cache/sweep-sizes.json" \
   || bad "ff-sweep: size cache not written"
-jq -e 'type=="object" and (to_entries|length>0) and all(to_entries[];
+# The producer stamp is "<FF_VERSION>:<mtime>:<size>" of ff-sweep itself, so
+# the expected prefix is DERIVED from the script rather than written here: a
+# literal made the 1.2.0 -> 1.3.0 bump fail this assertion for no reason, in a
+# section that has nothing to do with versioning (2026-09-10).
+SWEEPV="$(grep -m1 '^FF_VERSION=' "$S/ff-sweep.sh" | sed 's/^FF_VERSION="//; s/"$//')"
+jq -e --arg v "$SWEEPV" 'type=="object" and (to_entries|length>0) and all(to_entries[];
          (.key|type)=="string"
          and ((.key | sub("^[A-Za-z]:"; "") | ascii_downcase) == (.key | sub("^[A-Za-z]:"; "")))
          and (.value.fp|type=="array") and (.value.fp|length)==2
          and (.value.fp[0]|type)=="number" and (.value.fp[1]|type)=="string"
-         and (.value.by|type)=="string" and (.value.by|startswith("1.2.0:"))
+         and (.value.by|type)=="string" and (.value.by|startswith($v + ":"))
          and (.value.bytes|type)=="number" and (.value.bytes>=0)
          and (.value.at|type)=="number")' "$SCF" >/dev/null \
   && ok "ff-sweep: size cache value shape is §1 (fp=[n,mtime-string], by=producer stamp)" \
