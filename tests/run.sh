@@ -752,6 +752,25 @@ grep -q 'data-size="s"' "$HERE/../assets/ff-monitor.html" \
 grep -q '"stalled", "running", "failed", "abandoned", "done", "unknown"' "$S/ff-aggregate.py" \
   && ok "aggregate: STATE_RANK carries abandoned between failed and done" \
   || bad "aggregate: STATE_RANK missing abandoned"
+# the header's `archived` count must not include runs still on disk, and the
+# comparison must survive the two slash forms the two producers write
+if ff_have_python; then
+  AGGDD="$(ff_python - "$S/ff-aggregate.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("agg", sys.argv[1])
+m = importlib.util.module_from_spec(spec); sys.modules["agg"] = m; spec.loader.exec_module(m)
+runs = [{"repo": "X:\\Forge\\fleetflow", "run": "ffplan"}]
+hist = [{"repo": "X:/Forge/fleetflow", "run": "ffplan"},
+        {"repo": "X:/Forge/fleetflow", "run": "waves"},
+        {"repo": "x:/forge/FLEETFLOW/", "run": "ffplan"}]
+print(len(m.archived_only(hist, runs)))
+PY
+)"
+  [ "$AGGDD" = "1" ] && ok "aggregate: archived count drops runs still on disk across slash/case forms" \
+    || bad "aggregate: archived_only wrong (got '$AGGDD', want 1)"
+else
+  echo "  SKIP  aggregate: archived_only (no python)"
+fi
 grep -q '"stalled","running","failed","abandoned","done"' "$S/ff-widget.sh" \
   && ok "widget: jq rank carries abandoned" || bad "widget: jq rank missing abandoned"
 grep -q '\.sq\.abandoned' "$HERE/../assets/ff-monitor.html" \

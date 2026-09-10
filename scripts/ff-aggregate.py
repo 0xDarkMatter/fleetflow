@@ -369,6 +369,24 @@ def read_run(entry: dict, bash: str, timeout: int) -> dict:
 # --------------------------------------------------------------------------
 # history
 # --------------------------------------------------------------------------
+def run_id_key(repo: str, run: str) -> str:
+    """One key for a run-vs-history comparison. Live runs carry the repo as the
+    discovery walk found it (X:\\Forge\\fleetflow); history rows carry it as
+    ff-archive wrote it (X:/Forge/fleetflow). The dashboard folds slashes and
+    case the same way (runIdKey) - keep the two in step."""
+    return (repo or "").replace("\\", "/").rstrip("/").lower() + "|" + (run or "")
+
+
+def archived_only(history: list[dict], runs: list[dict]) -> list[dict]:
+    """History rows whose run is NOT still on disk. A run can be archived and
+    still present (ADR-011: archive-before-remove, with the remove refused or
+    ff-archive called directly); it is then in both lists and the on-disk
+    record wins - the history row is its index, not a second run. Until
+    2026-09-10 the header's `archived` count included these duplicates."""
+    live = {run_id_key(r.get("repo", ""), r.get("run", "")) for r in runs}
+    return [h for h in history if run_id_key(h.get("repo", ""), h.get("run", "")) not in live]
+
+
 def load_history(limit: int) -> tuple[list[dict], list[dict]]:
     """Read ~/.fleetflow/history.jsonl (append-only; see ff-archive.sh).
 
@@ -520,7 +538,7 @@ def aggregate(
             "repos": len({r["repo"].lower() for r in runs}),
             "lanes": sum(r.get("summary", {}).get("lane_count", 0) for r in runs),
             "tokens_total": sum(r.get("summary", {}).get("tokens_total", 0) for r in runs),
-            "history_runs": len(history),
+            "history_runs": len(archived_only(history, runs)),
         },
         "runs": runs,
         "history": history,
