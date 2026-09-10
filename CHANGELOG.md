@@ -8,6 +8,26 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- A fast iteration lane for `tests/run.sh`, without a second gate. `bash
+  tests/run.sh` with no flags is unchanged — same sections, same order, same
+  594 assertions — and stays the only thing that lands. New: `--only <regex>`
+  runs sections matching the regex plus everything they depend on, `--skip
+  <regex>` runs the complement, `--quick` is a curated preset (131s and 249
+  assertions against ~11min and 594), `--list` prints the section slugs and
+  `--check-deps` verifies the dependency table. Every subset run tags its
+  count `(quick lane - not a landing gate)`. Measured lanes on the author's
+  box: dashboard 5s, waves 39s, ff-plan 51s, spawn+collect 71s, status 121s.
+- Sections in `tests/run.sh` now carry a stable slug (`if __sec <slug>; then`)
+  and a generated prerequisite map. Sections share fixtures built earlier in
+  the file, so a subset is only sound if it also runs what built what it reads;
+  `tests/section-deps.py` derives that map from the file (writes/reads of shell
+  vars, functions and run dirs) and `--check` fails when the embedded copy is
+  stale. Subset runs re-verify it first and refuse to run against a stale
+  table, so a rotten map can never turn `--only` into a false green.
+- `FLEETFLOW_TEST_TIMING=1` prints per-section wall time (ms) to stderr in any
+  mode. Absolute times swing with machine load (two full runs the same
+  afternoon: 452s and 658s), but the shape is stable — `sweep-perf` and
+  `doctor-live-probe-scoping` are ~35% of the run on their own.
 - `FLEETFLOW_STATUS_WORKERS` (default `nproc`, capped at 8): the number of
   worker subshells `ff-status` reads lanes with; `1` is the serial path.
   Registered in `ff-doctor --env` and `docs/REFERENCE.md`.
