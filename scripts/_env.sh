@@ -126,3 +126,97 @@ ff_host_watchers() {
     printf '%s\t%s\t%s\n' "$_ffhw_n" "$_ffhw_c" "$_ffhw_ign"
   done
 }
+
+# --- lane placement (ADR-040) --------------------------------------------------
+# THE ONE PLACE a lane worktree's path is decided. Before this section, ten
+# scripts built `$REPO/.fleetflow/$RUN/wt-$ID` by hand at 27 sites, which is
+# what made "put lanes somewhere a dev server cannot crawl" (ADR-038's
+# non-goal) untouchable. Two resolvers, and the split between them is the
+# safety property - do not merge them:
+#
+#   ff_lane_dir REPO RUN ID    CREATION resolver. Consults FLEETFLOW_LANES_ROOT.
+#                              Unset (default): <repo>/.fleetflow/<run>/wt-<id>,
+#                              byte-for-byte the path every script built before.
+#                              Set: <root>/<repo-slug>/<run>/wt-<id> - outside
+#                              the host repo, so no watcher serving it can
+#                              ever see the lane. ONLY ff-spawn and ff-chip
+#                              (the two lane creators) may call this.
+#   ff_lane_path REPO RUN ID   READER resolver. NEVER consults the env var: the
+#                              lane is wherever the journal's `started` record
+#                              says it is (`worktree` field, written only when
+#                              a lanes root was in use), else the in-repo path.
+#                              A reader that consulted the env var would probe
+#                              or RECLAIM a guessed location whenever the
+#                              variable differed from spawn time - which is why
+#                              ff-status/clean/sweep/collect/chip-close all go
+#                              through here. An outside path that the journal
+#                              does not name is not fleetflow's to touch.
+#
+# Run artifacts (journal, prompts, results, events, manifest) NEVER move: the
+# run dir is always <repo>/.fleetflow/<run> (ff_run_dir), which is what keeps
+# discovery (ff-sweep, ff-aggregate) and the info/exclude mechanism unchanged.
+ff_run_dir() { printf '%s/.fleetflow/%s\n' "${1%/}" "$2"; }
+
+# ff_repo_slug REPO -> <basename>-<8 hex>: readable AND collision-free. The
+# hash is over the canonical path (absolute, forward slashes, no trailing
+# slash, lowercased - NTFS is case-insensitive and Git Bash hands the same
+# directory over as /x/forge/f, X:/Forge/f or X:\Forge\f depending on who
+# asked). The claude-projects encoding ([:\/.] -> "-") was rejected for this
+# job: `X:/a.b` and `X:/a-b` collide under it, and a collision here would
+# make two repos' runs share one lane directory. Falls back to that encoding
+# only when no sha256 implementation exists at all (ff_sha256 - never on a
+# host that can run ff-spawn, which already hard-requires one).
+ff_repo_slug() {
+  _ffrs_abs="$(cd "$1" 2>/dev/null && { pwd -W 2>/dev/null || pwd -P; })" || _ffrs_abs="$1"
+  _ffrs_key="$(printf '%s' "$_ffrs_abs" | tr '\\' '/' | sed 's:/*$::' | tr 'A-Z' 'a-z')"
+  _ffrs_base="${_ffrs_key##*/}"; [ -n "$_ffrs_base" ] || _ffrs_base="repo"
+  if ff_have_sha256; then
+    printf '%s-%s\n' "$_ffrs_base" "$(printf '%s' "$_ffrs_key" | ff_sha256 | cut -c1-8)"
+  else
+    printf '%s\n' "$_ffrs_key" | sed 's#[:\\/.]#-#g'
+  fi
+}
+
+ff_lane_dir() {
+  if [ -n "${FLEETFLOW_LANES_ROOT:-}" ]; then
+    # Canonicalised the same way ff-spawn canonicalises REPO (`pwd -W`, the
+    # drive-letter flavour): the path lands in the journal and in the claude
+    # transcript encoding (ADR-021), and a /c/Users POSIX spelling would
+    # encode a project slug claude never writes. Only an existing root can be
+    # canonicalised; the creators mkdir it first, readers never need to.
+    _ffld_root="${FLEETFLOW_LANES_ROOT%/}"
+    [ -d "$_ffld_root" ] && _ffld_root="$(cd "$_ffld_root" && { pwd -W 2>/dev/null || pwd -P; })"
+    printf '%s/%s/%s/wt-%s\n' "$_ffld_root" "$(ff_repo_slug "$1")" "$2" "$3"
+  else
+    printf '%s/.fleetflow/%s/wt-%s\n' "${1%/}" "$2" "$3"
+  fi
+}
+
+# ff_lane_journalled RUNDIR ID -> the `worktree` field of the LAST started
+# record for ID, or nothing. Last wins because a --force respawn appends a
+# fresh started record and the lane may have moved between them.
+ff_lane_journalled() {
+  [ -f "$1/journal.jsonl" ] || return 0
+  jq -r --arg id "$2" 'select(.type=="started" and .id==$id) | .worktree // empty' \
+    "$1/journal.jsonl" 2>/dev/null | tr -d '\r' | tail -1
+}
+
+ff_lane_path() {
+  _fflp="$(ff_lane_journalled "$(ff_run_dir "$1" "$2")" "$3")"
+  [ -n "$_fflp" ] && printf '%s\n' "$_fflp" || printf '%s/.fleetflow/%s/wt-%s\n' "${1%/}" "$2" "$3"
+}
+
+# ff_lanes_journalled RUNDIR -> every lane dir the journal names, one per
+# line (id<TAB>path, last started record per id wins). The list ff-clean and
+# ff-sweep add to their in-repo wt-* walk: an outside lane exists for them
+# ONLY through this list (ADR-040 widens ADR-020's boundary by exactly this).
+ff_lanes_journalled() {
+  [ -f "$1/journal.jsonl" ] || return 0
+  jq -sr '[.[] | select(.type=="started" and (.worktree // "") != "")]
+          | group_by(.id) | map(last) | .[] | [.id, .worktree] | @tsv' \
+    "$1/journal.jsonl" 2>/dev/null | tr -d '\r'
+}
+
+# ff_lanes_root_in_use -> 0 when lanes are being placed outside the repo.
+# Creators use it to decide whether to journal the path; readers must not.
+ff_lanes_root_in_use() { [ -n "${FLEETFLOW_LANES_ROOT:-}" ]; }

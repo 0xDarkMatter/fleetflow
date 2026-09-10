@@ -91,7 +91,7 @@ command -v jq >/dev/null || { err "jq required"; exit 2; }
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 [ -f "$RUNDIR/journal.jsonl" ] || { err "no journal at $RUNDIR - nothing to archive"; exit 3; }
 
 FF_HOME="${FLEETFLOW_HOME:-$HOME/.fleetflow}"

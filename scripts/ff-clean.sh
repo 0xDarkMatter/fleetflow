@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # ff-clean.sh - reclaim a fleetflow run's lanes, branches, and cache dirs.
 #
-# Per lane (worktree lane under <run>/wt-<id>), where "commits" means commits
-# UNREACHABLE from the integration branch (unmerged work - see ADR-035):
+# Per lane (worktree lane under <run>/wt-<id>, or wherever the journal's
+# `started` record says it is - FLEETFLOW_LANES_ROOT lanes, ADR-040), where
+# "commits" means commits UNREACHABLE from the integration branch (unmerged
+# work - see ADR-035):
 #   zero commits + clean      -> git worktree remove + branch -D   ("removed")
 #   zero commits + dirty      -> "kept" unless --force              (--force removes)
 #   N>0 commits               -> "kept (N unmerged commits)"        (never auto-remove)
@@ -87,7 +89,7 @@ command -v git >/dev/null || { err "git required"; exit 2; }
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 MANIFEST="$RUNDIR/manifest.json"
 [ -d "$RUNDIR" ] || { err "no such run: $RUNDIR"; exit 2; }
 
@@ -95,7 +97,9 @@ CACHE_ROOT="${FLEETFLOW_CACHE_ROOT:-$HOME/.fleet-worker/cache}"
 BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"; [ -n "$BASE" ] || BASE="main"
 
 # enumerate lane ids: manifest packets (authoritative) + any wt-* dirs left on
-# disk (e.g. manifest pruned but lanes remain) + journal started ids (fallback).
+# disk (e.g. manifest pruned but lanes remain) + lanes the JOURNAL places
+# outside the repo (ADR-040 - those never appear in the wt-* walk) + journal
+# started ids (fallback).
 list_lane_ids() {
   local ids=""
   [ -f "$MANIFEST" ] && ids="$(jq -r '.packets[].id' "$MANIFEST" 2>/dev/null)"
@@ -105,11 +109,18 @@ list_lane_ids() {
     ids="$ids
 $(basename "$d" | sed 's/^wt-//')"
   done
-  if [ -z "$ids" ] && [ -f "$RUNDIR/journal.jsonl" ]; then
+  ids="$ids
+$(ff_lanes_journalled "$RUNDIR" | cut -f1)"
+  if [ -z "$(printf '%s' "$ids" | tr -d '[:space:]')" ] && [ -f "$RUNDIR/journal.jsonl" ]; then
     ids="$(jq -r 'select(.type=="started") | .id' "$RUNDIR/journal.jsonl" 2>/dev/null)"
   fi
   printf '%s\n' "$ids" | awk 'NF && !seen[$0]++'
 }
+
+# lane_dir <id>: journal-first, in-repo fallback - NEVER the env var (ADR-040).
+# A reclaim tool that guessed a lane's location from the CURRENT value of
+# FLEETFLOW_LANES_ROOT would `worktree remove` whatever sat at the guess.
+lane_dir() { ff_lane_path "$REPO" "$RUN" "$1"; }
 
 # remove_lane <id> <force>: worktree remove (+ branch -D on success). Reports
 # "locked" if the OS refuses to delete (codex AppContainer-ACL litter).
@@ -118,7 +129,8 @@ $(basename "$d" | sed 's/^wt-//')"
 # second - rookery's GitWorktreeLifecycle carries the same load-bearing retry.
 # Only a lock that survives all attempts is a real "locked" (needs elevation).
 remove_lane() {
-  local id="$1" f="$2" wt="$RUNDIR/wt-$id" br="fleetflow/$RUN/$id" wflag="" try
+  local id="$1" f="$2" wt br="fleetflow/$RUN/$id" wflag="" try
+  wt="$(lane_dir "$id")"
   [ "$f" = 1 ] && wflag="--force"
   for try in 1 2 3; do
     if git -C "$REPO" worktree remove $wflag "$wt" 2>>"$RUNDIR/$id.clean.err"; then
@@ -277,7 +289,7 @@ err "landedness measured against: $INTEG (${INTEG_SHA:-unresolvable})"
 
 while read -r id; do
   [ -n "$id" ] || continue
-  wt="$RUNDIR/wt-$id"
+  wt="$(lane_dir "$id")"
   if [ -d "$wt" ]; then
     if [ -z "$INTEG_SHA" ]; then
       # No resolvable integration ref (unborn HEAD?) - we cannot PROVE any
@@ -306,5 +318,18 @@ while read -r id; do
   fi
   clean_cache "$id"
 done < <(list_lane_ids)
+
+# Outside lanes (ADR-040) leave <root>/<slug>/<run>/ behind once every wt-* in
+# it is gone. Prune with rmdir - never rm -rf - so a directory that still
+# holds anything (a kept lane, litter, someone else's file) stays exactly as
+# it is, and only fleetflow-shaped emptiness is removed. Both levels: the run
+# dir, then the repo-slug dir above it when that is empty too.
+while IFS="$(printf '\t')" read -r _lid _lpath; do
+  [ -n "$_lpath" ] || continue
+  case "$_lpath" in "$RUNDIR"/*) continue ;; esac   # in-repo: nothing to prune
+  _lrun="$(dirname "$_lpath")"
+  [ -d "$_lrun" ] && rmdir "$_lrun" 2>/dev/null && err "pruned empty lanes dir: $_lrun" \
+    && rmdir "$(dirname "$_lrun")" 2>/dev/null || true
+done < <(ff_lanes_journalled "$RUNDIR")
 
 exit 0

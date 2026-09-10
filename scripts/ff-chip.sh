@@ -110,7 +110,7 @@ echo "$RUN" | grep -qE '^[a-z0-9-]+$' || { err "invalid --run '$RUN' ([a-z0-9-]+
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 JOURNAL="$RUNDIR/journal.jsonl"
 MANIFEST="$RUNDIR/manifest.json"
 
@@ -187,8 +187,20 @@ EOF
   # "HEAD" into a fresh manifest (garbage for every later reader). See ADR-035.
   git -C "$REPO" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null 2>&1 || BASE="HEAD"
 
-  WORKDIR="$RUNDIR/wt-$ID"
+  # Placement decided in ONE place (ff_lane_dir, ADR-040) - in-repo, or under
+  # FLEETFLOW_LANES_ROOT. Same creator-side contract as ff-spawn: mkdir the
+  # root first so the resolver can canonicalise it, journal the path ONLY
+  # when the lane is outside the repo. Chips are the lane class where this
+  # matters most: ff-status attributes a chip's transcript by encoding the
+  # lane cwd (ADR-021), so the journalled path IS the attribution key.
+  LANE_JOURNALLED=""
+  if ff_lanes_root_in_use; then
+    mkdir -p "$FLEETFLOW_LANES_ROOT" || { err "cannot create FLEETFLOW_LANES_ROOT=$FLEETFLOW_LANES_ROOT"; exit 2; }
+  fi
+  WORKDIR="$(ff_lane_dir "$REPO" "$RUN" "$ID")"
+  ff_lanes_root_in_use && LANE_JOURNALLED="$WORKDIR"
   if [ ! -d "$WORKDIR" ]; then
+    mkdir -p "$(dirname "$WORKDIR")"
     git -C "$REPO" worktree add -q -b "fleetflow/$RUN/$ID" "$WORKDIR" "$BASE" \
       || { err "worktree add failed for $ID"; exit 10; }
     err "lane created: $WORKDIR (branch fleetflow/$RUN/$ID off $BASE)"
@@ -235,9 +247,11 @@ EOF
        '[.[] | objects | select(.type=="started" and .id==$id and .key==$k)] | length > 0' \
        "$JOURNAL" >/dev/null 2>&1; then
     jq -nc --arg k "$KEY" --arg id "$ID" --arg p "$PHASE" --arg v "$FF_VERSION" --arg o "$ORCH" \
+      --arg wt "$LANE_JOURNALLED" \
       '{type:"started",key:$k,id:$id,model:"chip",phase:$p,v:$v,round:0,
         model_id:null,
-        orchestrator:(if $o=="" then null else $o end)}' >> "$JOURNAL"
+        orchestrator:(if $o=="" then null else $o end)}
+       + (if $wt=="" then {} else {worktree:$wt} end)' >> "$JOURNAL"
   fi
 
   # The seed prompt. The lane path is ABSOLUTE here on purpose: the guard's
@@ -292,7 +306,9 @@ KEY="$(jq -r --arg id "$ID" 'select(.type=="started" and .model=="chip" and .id=
        "$JOURNAL" 2>/dev/null | tr -d '\r' | tail -1)"
 [ -n "$KEY" ] || { err "no open chip lane '$ID' in run '$RUN' (was it opened with ff-chip open?)"; exit 3; }
 
-WORKDIR="$RUNDIR/wt-$ID"
+# Journal-first, in-repo fallback - never the env var (ADR-040): close must
+# measure the lane where open PUT it, whatever FLEETFLOW_LANES_ROOT says now.
+WORKDIR="$(ff_lane_path "$REPO" "$RUN" "$ID")"
 BASE="$(jq -r '.base // "main"' "$MANIFEST" 2>/dev/null | tr -d '\r')"
 [ -n "$BASE" ] && [ "$BASE" != "null" ] || BASE="main"
 # BASE may be a branch name OR a sha (ff-plan records the sha at authoring).

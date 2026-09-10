@@ -19,12 +19,16 @@
 # are original work that no merge contains; no sweep may delete them.
 # See docs/adr/ADR-020-sweep-reclaims-only-archived-and-landed.md.
 #
-# BOUNDARY - this script owns `<repo>/.fleetflow/` and NOTHING ELSE. It never
-# touches `.claude/worktrees/`: those are Claude Code session state, they are
-# not fleetflow's to reap, and one that looks abandoned may be a live session.
+# BOUNDARY - this script owns `<repo>/.fleetflow/` plus exactly the lane dirs
+# a run's JOURNAL names, and NOTHING ELSE. It never touches
+# `.claude/worktrees/`: those are Claude Code session state, they are not
+# fleetflow's to reap, and one that looks abandoned may be a live session.
 # The discovery walk descends THROUGH .claude/worktrees to find runs hosted
 # inside a session's worktree, but only ever acts on the .fleetflow dir it finds
-# there.
+# there. Lanes placed under FLEETFLOW_LANES_ROOT (ADR-040) exist for this
+# script ONLY through the journal's `worktree` field: an outside directory the
+# journal does not name is invisible here - never classified, never reclaimed
+# - and the env var is never consulted to guess one.
 #
 # Teardown itself is NOT reimplemented here: reclaiming shells out to
 # ff-clean.sh, which owns the NTFS retry, cache-dir removal, the archive step,
@@ -301,6 +305,19 @@ write_size_cache() {
 # rev-list, status --porcelain). Deliberately NOT a second implementation of
 # ff-status: this asks a narrower question ("is the work in the base yet?") that
 # ff-status does not answer at all.
+#
+# lane_dirs RUNDIR -> every lane dir this run has ON DISK, one per line: the
+# in-repo wt-* walk, then every path the journal names (ADR-040 - a lane under
+# FLEETFLOW_LANES_ROOT is outside the walk and exists here only because its
+# `started` record says where it is). Missing dirs are dropped; duplicates
+# collapsed. The same list gates the post-teardown survivor check, so a kept
+# outside lane pins its run dir open exactly as an in-repo one does.
+lane_dirs() {
+  { local d; for d in "$1"/wt-*; do [ -d "$d" ] && printf '%s\n' "$d"; done
+    ff_lanes_journalled "$1" | cut -f2- ; } \
+  | awk 'NF && !seen[$0]++' | while IFS= read -r d; do [ -d "$d" ] && printf '%s\n' "$d"; done
+  return 0
+}
 declare -A BASE_REFS=()
 classify() {
   local rundir="$1" repo="$2" run="$3"
@@ -343,8 +360,8 @@ classify() {
   # occasionally is - so it gets its own verdict and its paths are always
   # printed, never silently swept.
   local untracked=0 upaths="" tracked untr oid line path
-  for wt in "$rundir"/wt-*; do
-    [ -d "$wt" ] || continue
+  while IFS= read -r wt; do
+    [ -n "$wt" ] && [ -d "$wt" ] || continue
     lanes=$((lanes+1))
     id="${wt##*/}"; id="${id#wt-}"
     tracked=0; untr=0; oid=""; path=""
@@ -369,7 +386,7 @@ classify() {
         untracked=$((untracked+untr))
       fi
     fi
-  done
+  done < <(lane_dirs "$rundir")
   [ "$lanes" = 0 ] && gone=1
 
   # Verdict describes the WORK only. "Is it archived yet?" is a separate,
@@ -517,7 +534,9 @@ if [ "$MODE" = reclaim ]; then
     cflags="--no-archive"
     [ "$UNTRACKED_OK" = 1 ] && cflags="$cflags --force"
     bash "$HERE/ff-clean.sh" --run "$run" --repo "$repo" $cflags >/dev/null 2>&1
-    if ls -d "$rundir"/wt-* >/dev/null 2>&1; then
+    # survivor check covers journalled outside lanes too (ADR-040): a kept
+    # outside lane must pin the run dir open exactly like an in-repo one.
+    if [ -n "$(lane_dirs "$rundir")" ]; then
       err "kept $rundir (a lane survived teardown - inspect before retrying)"
     elif rm -rf "$rundir" 2>/dev/null; then
       err "removed $rundir"

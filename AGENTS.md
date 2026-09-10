@@ -13,7 +13,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| **Full behavioural suite (594 assertions) — the one gate** | `bash tests/run.sh` |
+| **Full behavioural suite (642 assertions) — the one gate** | `bash tests/run.sh` |
 | One area while iterating — **not a gate** | `bash tests/run.sh --only '^dashboard-'` |
 | Broad fast subset — **not a gate** | `bash tests/run.sh --quick` |
 | Full run minus one slow section — **not a gate** | `bash tests/run.sh --skip '^sweep-perf$'` |
@@ -60,19 +60,34 @@ the skill junction and the supervised dashboard service are this author's setup.
 Each such landmine states its precondition - check it holds before obeying it. On
 a plain clone with neither, the git rules relax to ordinary practice.
 
-- **Lane worktrees live INSIDE the host repo — inside the watch scope of any
-  dev server serving it.** `.fleetflow/<run>/wt-<id>` is under the repo root
-  by design (chip cwd attribution, `.git/info/exclude`, the sweep boundary all
-  assume it). A Vite/webpack/next/nodemon/`--watch` process serving that repo
-  crawls every new lane, `node_modules` included, and never releases the
-  module graph: on 2026-09-10 the `mapforge` service held **87.9 GB of
-  private commit** with 0.2 GB free machine-wide, and a restart freed it.
-  Exclude `**/.fleetflow/**` in the watcher config (Vite:
-  `server.watch.ignored`) **before** spawning lanes into a served repo.
+- **Lane worktrees live INSIDE the host repo by default — inside the watch
+  scope of any dev server serving it.** `.fleetflow/<run>/wt-<id>` is under
+  the repo root unless `FLEETFLOW_LANES_ROOT` is set. A
+  Vite/webpack/next/nodemon/`--watch` process serving that repo crawls every
+  new lane, `node_modules` included, and never releases the module graph: on
+  2026-09-10 the `mapforge` service held **87.9 GB of private commit** with
+  0.2 GB free machine-wide, and a restart freed it. Two fixes, pick one:
+  exclude `**/.fleetflow/**` in the watcher config (Vite:
+  `server.watch.ignored`) **before** spawning into a served repo, or set
+  `FLEETFLOW_LANES_ROOT` so lanes land at `<root>/<repo-slug>/<run>/wt-<id>`
+  outside the repo altogether — the structural fix
+  ([ADR-040](docs/adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)).
   `ff-doctor --offline` (`host-watchers`) and `ff-plan lint` (`host-watchers`)
   warn when a registered service serves a repo with lanes and no ignore —
-  advisory only; the fix belongs to the host repo. See
+  advisory only; `lanes-root` states which mode is active. See
   [ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md).
+- **A lane's path is decided in ONE place and READ from the journal — never
+  rebuild `$REPO/.fleetflow/$RUN/wt-$ID` by hand, and never let a reader
+  consult `FLEETFLOW_LANES_ROOT`.** `ff_lane_dir` (`_env.sh`) is the creation
+  resolver, called only by ff-spawn and ff-chip; it journals the absolute path
+  in the `started` record when a root is in use. `ff_lane_path` is the reader
+  resolver: journalled path, else in-repo — a reader that guessed from the
+  current environment would `git worktree remove` at the wrong place the
+  moment the variable differed from spawn time. ff-sweep/ff-clean act on an
+  outside dir ONLY when the journal names it; with the variable unset, paths,
+  journals and `ff-status` output are byte-identical to before (a test pins
+  it). The 27 hand-built sites this replaced are the reason it took an ADR.
+  ([ADR-040](docs/adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)).
 - **If this repo is mounted as a skill (README -> Install), that mount is a
   junction/symlink INTO this checkout** - on the author's box,
   `C:\Users\Mack\.claude\skills\fleetflow`. Where that holds, edits

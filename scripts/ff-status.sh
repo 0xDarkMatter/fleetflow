@@ -82,7 +82,7 @@ done
 command -v jq >/dev/null || { err "jq required"; exit 2; }
 [ -z "$WATCH" ] || [ -n "$OUT" ] || { err "--watch requires --out"; exit 2; }
 [ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || true
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 [ -f "$RUNDIR/journal.jsonl" ] || { err "no journal at $RUNDIR"; exit 2; }
 STALL_S="${FLEETFLOW_STALL_SECONDS:-600}"
 echo "$STALL_S" | grep -qE '^[0-9]+$' || { err "FLEETFLOW_STALL_SECONDS must be an integer"; exit 2; }
@@ -226,14 +226,14 @@ scan_transcript() {
 # state. The MT cache is read-only here; a miss falls back to a real stat.
 #
 # Inputs are the journal row's fields, already split by the caller's `read`:
-#   idx  id  model  phase  last_type  rc  art  jmodel  jpid  jwinpid
+#   idx  id  model  phase  last_type  rc  art  jmodel  jpid  jwinpid  jwt
 # stdout: NOTHING - data reaches stdout only through emit's final assembly.
 # Returns 1 when the record cannot be serialised; the worker stops there.
 lane_record() {
   local state finished started elapsed commits last_c wt branch wtstate landed authored gitlog
   local tools activity tokens T tin tcache tout ttotal cost dens dbasis
   local verdict tests fchg deferred stop_reason denials summary eerr model_id
-  local enc f m last_act idle stalled live etail fra _t
+  local enc f m last_act idle stalled live etail fra _t wtdir
   STALL_ANY=0
 
   if [ "$last_type" = "started" ]; then state="running"; finished=0
@@ -244,10 +244,16 @@ lane_record() {
   if [ "$finished" -gt 0 ]; then elapsed=$((finished - started)); else elapsed=$((now - started)); fi
   [ "$elapsed" -ge 0 ] || elapsed=0
 
+  # Where the lane IS: the journalled path when the creator wrote one (a lane
+  # placed under FLEETFLOW_LANES_ROOT, ADR-040), else the in-repo path. The
+  # env var is deliberately NOT consulted here - a reader that did would
+  # attribute transcripts and count commits at a GUESSED location whenever it
+  # differed from spawn time. In-repo runs resolve exactly as before.
+  wtdir="${jwt:-$RUNDIR/wt-$id}"
   commits=0; last_c=""; wt=""; branch=""; wtstate="none"; landed=null; authored=null
   case "$WT_INTENT" in *"|$id|"*) wtstate="reclaimed" ;; esac
-  if [ -d "$RUNDIR/wt-$id" ]; then
-    wt="$RUNDIR/wt-$id"; branch="fleetflow/$RUN/$id"; wtstate="present"
+  if [ -d "$wtdir" ]; then
+    wt="$wtdir"; branch="fleetflow/$RUN/$id"; wtstate="present"
     # `commits` is the UNMERGED count against the integration ref - the same
     # number ff-clean's reclaim decision uses - and `landed` is its zero case
     # made explicit. Both are needed: a bare 0 meant either "landed" or "never
@@ -405,14 +411,16 @@ lane_record() {
     # (fleet-worker), so theirs is easy to find; Anthropic-model workers use
     # host auth, so theirs lands under ~/.claude/projects/<encoded-workdir>/.
     T="$(ls -t "${FLEETFLOW_CFG_BASE:-$HOME/.fleet-worker}/cfg-ff-$id/projects"/*/*.jsonl 2>/dev/null | head -1)"
-    if [ -z "$T" ] && [ -d "$RUNDIR/wt-$id" ]; then
+    if [ -z "$T" ] && [ -d "$wtdir" ]; then
       # Worktree lanes ONLY. Their workdir is unique to the lane, so the newest
       # transcript in its project dir is unambiguously this lane's. A
       # non-worktree lane shares the repo dir with its siblings AND with the
       # orchestrator's own session - guessing there would attribute someone
       # else's activity to this lane, which is worse than reporting none.
       # Encoding is ff-spawn's archive_transcript() rule: [:\/.] -> "-" per char.
-      enc="$(printf '%s' "$RUNDIR/wt-$id" | sed 's#[:\\/.]#-#g')"
+      # Encoded from the RESOLVED lane path: an outside lane (ADR-040) is
+      # attributed by the path claude actually ran in, not the in-repo one.
+      enc="$(printf '%s' "$wtdir" | sed 's#[:\\/.]#-#g')"
       T="$(ls -t "$HOME/.claude/projects/$enc"/*.jsonl 2>/dev/null | head -1)"
     fi
     if [ -n "$T" ]; then
@@ -440,8 +448,8 @@ lane_record() {
   done
   # heartbeat fallback: for running lanes with no introspectable stream
   # (grok), the worker's own last heartbeat line is the best activity we have
-  if [ "$state" = "running" ] && [ -z "$activity" ] && [ -s "$RUNDIR/wt-$id/.ff-heartbeat" ]; then
-    activity="hb: $(tail -1 "$RUNDIR/wt-$id/.ff-heartbeat" 2>/dev/null | head -c 70)"
+  if [ "$state" = "running" ] && [ -z "$activity" ] && [ -s "$wtdir/.ff-heartbeat" ]; then
+    activity="hb: $(tail -1 "$wtdir/.ff-heartbeat" 2>/dev/null | head -c 70)"
   fi
   [ -n "$activity" ] || activity="${last_c:-working}"
   etail="$(awk '{
@@ -483,7 +491,7 @@ lane_record() {
   # and its mtime is real work - this is what covers grok worktree lanes
   # without touching grok's buffered result envelope.
   last_act=0; live=false
-  for f in "$RUNDIR/$id.events.jsonl" "$T" "$RUNDIR/wt-$id/.ff-heartbeat"; do
+  for f in "$RUNDIR/$id.events.jsonl" "$T" "$wtdir/.ff-heartbeat"; do
     [ -n "$f" ] && [ -f "$f" ] || continue
     live=true
     m="$(mtime "$f")"; [ "$m" -gt "$last_act" ] && last_act="$m"
@@ -694,7 +702,10 @@ emit() {
           # one): the MSYS pid and, on Windows, the global winpid. A dead spawner
           # can never journal a result - the loop probes it (ADR-025 addendum).
           ((($recs | map(select(.type=="proc")) | last | .pid) // "") | tostring),
-          ((($recs | map(select(.type=="proc")) | last | .winpid) // "") | tostring)
+          ((($recs | map(select(.type=="proc")) | last | .winpid) // "") | tostring),
+          # journalled lane path (ADR-040): present only on lanes placed under
+          # FLEETFLOW_LANES_ROOT; empty means "the in-repo path", as always.
+          ((($recs | map(select(.type=="started")) | last | .worktree) // "") | tostring)
         ] | join("")' "$RUNDIR/journal.jsonl" 2>/dev/null | tr -d '\r' > "$lanedir/rows"
 # tr -d '\r' is load-bearing, not tidiness: journals are written with CRLF line
 # endings on Windows and jq's stdout carries the CR through. The per-lane
@@ -732,7 +743,7 @@ emit() {
   for ((w = 0; w < STATUS_WORKERS; w++)); do
     [ -f "$lanedir/chunk-$w" ] || continue
     (
-      while IFS=$'\037' read -r idx id model phase last_type rc art jmodel jpid jwinpid; do
+      while IFS=$'\037' read -r idx id model phase last_type rc art jmodel jpid jwinpid jwt; do
         [ -n "$id" ] || continue
         lane_record || exit 1
       done < "$lanedir/chunk-$w"

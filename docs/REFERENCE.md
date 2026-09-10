@@ -27,6 +27,7 @@ table. Add a variable, its registry row, and its row here in one commit.
 | `FLEETFLOW_FLEET_WORKER` | `$HOME/.claude/skills/fleet-worker/scripts/fleet-worker` | glm launcher path (ff-spawn hard-requires it for --model glm) |
 | `FLEETFLOW_FLEET_RULES` | `agentic-quality` | comma-separated `~/.claude/rules` names every provider must see; each needs a `[fleet-rule: NAME]` tag in `assets/guard-preamble.txt` (ff-doctor, ff-plan lint, ADR-037) |
 | `FLEETFLOW_HOST_SERVICES` | `X:/00_Orchestration/compose-portless/process-compose.yaml` | Process Compose services file; registered watchers serving a repo with lanes must ignore `.fleetflow` (ff-doctor, ff-plan lint, ADR-038); absent = not applicable |
+| `FLEETFLOW_LANES_ROOT` | `(unset = lanes in-repo)` | opt-in: place lane worktrees **outside** the host repo at `<root>/<repo-slug>/<run>/wt-<id>`, beyond any dev server's watch scope; run artifacts stay in `<repo>/.fleetflow`; the journal records each lane's path and every reader trusts it, never this variable (ff-spawn, ff-chip, ADR-040) |
 | `FLEETFLOW_CODEX_MODEL` | `(harness default)` | codex -m override for codex lanes |
 | `FLEETFLOW_CODEX_WINDOWS_SANDBOX` | `unelevated` | Windows codex sandbox pin (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful) |
 | `FLEETFLOW_CLAUDE_BIN` | `claude` | claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence |

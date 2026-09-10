@@ -177,7 +177,7 @@ jqr() { jq -r "$@" | tr -d '\r'; }
 [ -f "$CATALOGUE" ] || { err "wave catalogue not found: $CATALOGUE (assets/wave-catalogue.json not landed yet)"; exit 2; }
 jq empty "$CATALOGUE" 2>/dev/null || { err "wave catalogue is not valid JSON: $CATALOGUE"; exit 2; }
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 mkdir -p "$RUNDIR/packets"
 MANIFEST="$RUNDIR/manifest.json"
 if [ ! -f "$MANIFEST" ]; then
@@ -953,7 +953,7 @@ if [ "$MODE" = "status" ]; then
   exec bash "$HERE/ff-status.sh" --run "$RUN"
 fi
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 MANIFEST="$RUNDIR/manifest.json"
 [ -f "$MANIFEST" ] || { err "no manifest at $MANIFEST (run ff-spawn first)"; exit 2; }
 

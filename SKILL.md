@@ -227,7 +227,12 @@ ff-plan (draft → lint → refute) → ff-doctor → ff-spawn (×N, background)
    --prompt-file <f> --worktree` from the orchestrator's Bash tool with
    `run_in_background: true`, one call per lane. ff-spawn creates the worktree
    lane (`fleetflow/<run>/<id>` at `.fleetflow/<run>/wt-<id>`, repo top — never
-   under `.claude/`), injects the guard preamble
+   under `.claude/`; or, with `FLEETFLOW_LANES_ROOT` set, at
+   `<root>/<repo-slug>/<run>/wt-<id>` outside the repo entirely, beyond any
+   dev server's watch scope — the run's artifacts stay in `.fleetflow/<run>/`
+   either way and the journal records where each lane is,
+   [ADR-040](docs/adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)),
+   injects the guard preamble
    ([assets/guard-preamble.txt](assets/guard-preamble.txt)), journals a
    `started` record, runs the worker to completion, journals the `result`.
    **The preamble is the only channel a fleet-wide rule has to non-Claude
@@ -605,16 +610,25 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   tell*, never *healthy* — one more reason to spawn mutating workers with
   `--worktree`. Boundaries, false-positive history, and the grok deferral:
   [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
-- **Lane worktrees are inside the host repo's watch scope.** Any dev server
-  serving the host repo — Vite, webpack, next, nodemon, anything `--watch` —
-  crawls every lane under `.fleetflow/<run>/wt-<id>`, `node_modules` included,
-  and never lets the module graph go: 87.9 GB of commit on one Vite service,
-  2026-09-10. Exclude `**/.fleetflow/**` in the watcher config before spawning
-  into a served repo. `ff-doctor --offline` and `ff-plan lint` both carry a
+- **Lane worktrees are inside the host repo's watch scope by default.** Any
+  dev server serving the host repo — Vite, webpack, next, nodemon, anything
+  `--watch` — crawls every lane under `.fleetflow/<run>/wt-<id>`,
+  `node_modules` included, and never lets the module graph go: 87.9 GB of
+  commit on one Vite service, 2026-09-10. Two fixes. The advisory one:
+  exclude `**/.fleetflow/**` in the watcher config before spawning into a
+  served repo — `ff-doctor --offline` and `ff-plan lint` both carry a
   `host-watchers` check that warns (never blocks) when a registered service
   serves a repo with lanes and no ignore; on machines without a Process
-  Compose services file the check reads "not applicable"
+  Compose services file it reads "not applicable"
   ([ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md)).
+  The structural one: set `FLEETFLOW_LANES_ROOT` (e.g. `~/.fleetflow/lanes`)
+  and every new lane lands at `<root>/<repo-slug>/<run>/wt-<id>`, outside
+  the repo, where no watcher can reach it. Run artifacts stay in-repo; the
+  journal records each lane's path and every reader trusts the journal, never
+  the variable — so cleaning a run from a shell without it set still finds
+  the lanes, and an outside dir the journal does not name is never touched.
+  `ff-doctor --offline` (`lanes-root`) states which mode is active
+  ([ADR-040](docs/adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)).
 - **A dead spawner is a verdict at any timescale.** The `result` record is
   journaled by ff-spawn after its worker exits, so if ff-spawn is gone (session
   died, reboot) the lane can never finish. ff-status probes the `proc` record's
