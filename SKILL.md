@@ -605,6 +605,16 @@ Per-wave cost roll-ups aggregate from `ff-status`, visible in the run summary
   tell*, never *healthy* — one more reason to spawn mutating workers with
   `--worktree`. Boundaries, false-positive history, and the grok deferral:
   [docs/adr/ADR-008](docs/adr/ADR-008-stall-detection-trusts-activity-not-state.md).
+- **Lane worktrees are inside the host repo's watch scope.** Any dev server
+  serving the host repo — Vite, webpack, next, nodemon, anything `--watch` —
+  crawls every lane under `.fleetflow/<run>/wt-<id>`, `node_modules` included,
+  and never lets the module graph go: 87.9 GB of commit on one Vite service,
+  2026-09-10. Exclude `**/.fleetflow/**` in the watcher config before spawning
+  into a served repo. `ff-doctor --offline` and `ff-plan lint` both carry a
+  `host-watchers` check that warns (never blocks) when a registered service
+  serves a repo with lanes and no ignore; on machines without a Process
+  Compose services file the check reads "not applicable"
+  ([ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md)).
 - **A dead spawner is a verdict at any timescale.** The `result` record is
   journaled by ff-spawn after its worker exits, so if ff-spawn is gone (session
   died, reboot) the lane can never finish. ff-status probes the `proc` record's

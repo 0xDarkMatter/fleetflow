@@ -8,6 +8,16 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- `host-watchers` in `ff-doctor --offline` and `ff-plan lint` (ADR-038): lane
+  worktrees live inside the host repo, so a registered dev server serving it
+  crawls every lane — the `mapforge` Vite service reached 87.9 GB of private
+  commit on 2026-09-10. One detector in `_env.sh` (`ff_host_watchers`) reads
+  the Process Compose services file (`FLEETFLOW_HOST_SERVICES`), finds
+  watcher-shaped services whose `working_dir` is the repo, and reports whether
+  the watcher config ignores `.fleetflow`. Advisory / warn only; the fix is
+  one line in the host repo (`server.watch.ignored: ['**/.fleetflow/**']`).
+  Without a services file both read "not applicable". Landmine added to
+  AGENTS.md and SKILL.md.
 - Fleet-wide rules are carried in the guard preamble (ADR-037). `claude -p`
   lanes inherit `~/.claude/rules/*.md` implicitly; codex/grok/pi lanes see
   only the packet, the preamble and the repo `AGENTS.md` — on godaddy-build

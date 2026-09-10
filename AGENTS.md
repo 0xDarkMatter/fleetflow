@@ -49,6 +49,19 @@ the skill junction and the supervised dashboard service are this author's setup.
 Each such landmine states its precondition - check it holds before obeying it. On
 a plain clone with neither, the git rules relax to ordinary practice.
 
+- **Lane worktrees live INSIDE the host repo — inside the watch scope of any
+  dev server serving it.** `.fleetflow/<run>/wt-<id>` is under the repo root
+  by design (chip cwd attribution, `.git/info/exclude`, the sweep boundary all
+  assume it). A Vite/webpack/next/nodemon/`--watch` process serving that repo
+  crawls every new lane, `node_modules` included, and never releases the
+  module graph: on 2026-09-10 the `mapforge` service held **87.9 GB of
+  private commit** with 0.2 GB free machine-wide, and a restart freed it.
+  Exclude `**/.fleetflow/**` in the watcher config (Vite:
+  `server.watch.ignored`) **before** spawning lanes into a served repo.
+  `ff-doctor --offline` (`host-watchers`) and `ff-plan lint` (`host-watchers`)
+  warn when a registered service serves a repo with lanes and no ignore —
+  advisory only; the fix belongs to the host repo. See
+  [ADR-038](docs/adr/ADR-038-lanes-are-inside-the-host-watch-scope.md).
 - **If this repo is mounted as a skill (README -> Install), that mount is a
   junction/symlink INTO this checkout** - on the author's box,
   `C:\Users\Mack\.claude\skills\fleetflow`. Where that holds, edits

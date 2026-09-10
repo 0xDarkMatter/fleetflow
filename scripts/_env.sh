@@ -77,3 +77,52 @@ ff_fw_has_claude_bin_override() {
             timeout 15 bash "$1" --capabilities 2>/dev/null)" || return 1
   printf '%s\n' "$_ffcap" | tr -d '\r' | grep -qx "claude-bin-override"
 }
+
+# ff_host_watchers REPO -> one line per registered Process Compose service whose
+# working_dir IS this repo and whose command looks like a file watcher:
+#     name<TAB>command<TAB>ignored        ignored: yes | no | unknown
+# `ignored` says whether the repo's bundler/watcher config mentions `.fleetflow`
+# (unknown = no recognised config file found). Exit 3 when the services file
+# is absent - that is the normal case on any machine but this author's stack,
+# and callers must treat it as "not applicable", never as "clean".
+# ONE implementation consumed by ff-doctor (machine-wide row) and ff-plan lint
+# (per-repo finding) so the two never disagree about what a watcher is.
+# WHY THIS EXISTS (2026-09-10, ADR-038): lane worktrees live INSIDE the host
+# repo under .fleetflow/<run>/wt-<id>, so any dev server watching that repo
+# crawls every new lane, node_modules included, and never releases the module
+# graph. A Vite service reached 87.9 GB of private commit and 0.2 GB free
+# machine-wide before anyone looked; a restart freed it instantly. The fix in
+# the victim is one line (server.watch.ignored: ['**/.fleetflow/**']); this
+# helper is how fleetflow says so BEFORE the next victim.
+ff_host_watchers() {
+  _ffhw_repo="$1"
+  _ffhw_yaml="${FLEETFLOW_HOST_SERVICES:-X:/00_Orchestration/compose-portless/process-compose.yaml}"
+  [ -f "$_ffhw_yaml" ] || return 3
+  _ffhw_want="$(printf '%s' "$_ffhw_repo" | tr '\\' '/' | sed 's:/*$::' | tr 'A-Z' 'a-z')"
+  # services are 2-space keys; command/working_dir are their 4-space children.
+  # Quoted or bare values both occur in the file.
+  awk -v want="$_ffhw_want" '
+    function strip(s) { gsub(/^[ \t]*["'"'"']?|["'"'"']?[ \t]*$/, "", s); return s }
+    function norm(s)  { s = strip(s); gsub(/\\/, "/", s); sub(/\/+$/, "", s); return tolower(s) }
+    function flush() {
+      if (name != "" && wd == want &&
+          cmd ~ /(vite|webpack|next|nuxt|astro|remix|parcel|turbo|nodemon|tsx watch|--watch|--reload)/)
+        print name "\t" cmd
+      name = ""; wd = ""; cmd = ""
+    }
+    /^  [A-Za-z0-9_.-]+:[ \t]*$/ { flush(); name = $1; sub(/:$/, "", name); next }
+    /^    command:/     { sub(/^    command:/, "");     cmd = strip($0); next }
+    /^    working_dir:/ { sub(/^    working_dir:/, ""); wd  = norm($0);  next }
+    END { flush() }
+  ' "$_ffhw_yaml" | tr -d '\r' | while IFS="$(printf '\t')" read -r _ffhw_n _ffhw_c; do
+    [ -n "$_ffhw_n" ] || continue
+    _ffhw_ign=unknown
+    for _ffhw_f in "$_ffhw_repo"/vite.config.* "$_ffhw_repo"/webpack.config.* \
+                   "$_ffhw_repo"/next.config.* "$_ffhw_repo"/nuxt.config.* \
+                   "$_ffhw_repo"/astro.config.* "$_ffhw_repo"/nodemon.json; do
+      [ -f "$_ffhw_f" ] || continue
+      if grep -q '\.fleetflow' "$_ffhw_f"; then _ffhw_ign=yes; break; else _ffhw_ign=no; fi
+    done
+    printf '%s\t%s\t%s\n' "$_ffhw_n" "$_ffhw_c" "$_ffhw_ign"
+  done
+}

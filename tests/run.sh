@@ -128,6 +128,42 @@ grep -q "Shape lens" "$HERE/../assets/roles/adversary.role.md" \
   && ok "adversary card carries the shape lens with the gate's thresholds" \
   || bad "adversary card: shape lens missing or thresholds drifted from the gate (40/30/400/800)"
 
+# --- host watchers (ADR-038) -------------------------------------------------------
+# A registered dev server serving a repo with lanes crawls every worktree
+# (mapforge: 87.9 GB of commit). The detector is one implementation shared by
+# doctor and lint; absent services file must read "not applicable", never clean.
+HWREPO="$TMP/hwrepo"; mkdir -p "$HWREPO/.fleetflow/x" "$HWREPO/api"
+HWYAML="$TMP/pc.yaml"
+HWREPO_YAML="$(printf '%s' "$HWREPO" | sed 's:^/\([a-zA-Z]\)/:\1\:/:')"   # msys /x/... -> X:/... as the stack writes it
+cat > "$HWYAML" <<EOF
+version: "0.5"
+processes:
+  hwvite:
+    command: 'node node_modules/vite/bin/vite.js --port 8199'
+    working_dir: "$HWREPO_YAML"
+  hwapi:
+    command: "python -m uvicorn app:app"
+    working_dir: "$HWREPO_YAML/api"
+  other:
+    command: 'node node_modules/vite/bin/vite.js'
+    working_dir: "$TMP/elsewhere"
+EOF
+printf 'export default { server: {} }\n' > "$HWREPO/vite.config.ts"
+HWDOC="$(env FLEETFLOW_HOST_SERVICES="$HWYAML" bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep '^host-watchers')"
+printf '%s' "$HWDOC" | grep -qE "^host-watchers	advisory	.*hwvite@.*ignore:no" \
+  && ok "doctor: host-watchers flags a registered watcher serving a repo with lanes and no ignore" \
+  || bad "doctor: host-watchers row wrong: $(printf '%s' "$HWDOC" | cut -c1-140)"
+printf '%s' "$HWDOC" | grep -q "hwapi" \
+  && bad "doctor: host-watchers flagged a non-watcher (uvicorn without --reload)" \
+  || ok "doctor: host-watchers ignores non-watcher services"
+printf 'export default { server: { watch: { ignored: ["**/.fleetflow/**"] } } }\n' > "$HWREPO/vite.config.ts"
+env FLEETFLOW_HOST_SERVICES="$HWYAML" bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^host-watchers	ok	1 registered" \
+  && ok "doctor: host-watchers ok once the watcher ignores .fleetflow" \
+  || bad "doctor: host-watchers still advisory with the ignore present"
+env FLEETFLOW_HOST_SERVICES="$TMP/no-such-services.yaml" bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^host-watchers	ok	no registered-services file" \
+  && ok "doctor: host-watchers reads not-applicable without a services file" \
+  || bad "doctor: host-watchers wrong without a services file"
+
 # --- codex windows.sandbox override (2026-07-27 elevation-hang guard) ------------
 # the flag itself can't be exercised offline (no codex binary), so gate the two
 # things that CAN rot: the value validation, and the wiring into `codex exec`.
@@ -2442,6 +2478,23 @@ FRJ2="$(bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true
 printf '%s' "$FRJ2" | jq -e '(any(.findings[]; .check=="fleet-rules")|not) and any(.checks[]; .name=="fleet-rules" and (.reason|test("AGENTS.md pointer: yes")))' >/dev/null \
   && ok "ff-plan: lint fleet-rules is clean once AGENTS.md points at the doctrine" \
   || bad "ff-plan: fleet-rules still finding with a pointer present: $(printf '%s' "$FRJ2" | jq -c '[.findings[]|select(.check=="fleet-rules")]' 2>/dev/null)"
+# --- host-watchers lint (ADR-038): the per-repo warning -----------------------------
+PREPO_YAML="$(printf '%s' "$PREPO" | sed 's:^/\([a-zA-Z]\)/:\1\:/:')"
+printf 'version: "0.5"\nprocesses:\n  pvite:\n    command: "node node_modules/vite/bin/vite.js"\n    working_dir: "%s"\n' "$PREPO_YAML" > "$TMP/pc-lint.yaml"
+rm -f "$PREPO"/vite.config.*
+HWJ="$(env FLEETFLOW_HOST_SERVICES="$TMP/pc-lint.yaml" bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true)"
+printf '%s' "$HWJ" | jq -e 'any(.findings[]; .check=="host-watchers" and .severity=="warn" and (.detail|test("pvite")) and (.detail|test("could not be found")))' >/dev/null \
+  && ok "ff-plan: lint warns on a registered watcher with no verifiable ignore" \
+  || bad "ff-plan: host-watchers warn missing: $(printf '%s' "$HWJ" | jq -c '[.findings[]|select(.check=="host-watchers")]' 2>/dev/null)"
+printf 'export default { server: { watch: { ignored: ["**/.fleetflow/**"] } } }\n' > "$PREPO/vite.config.ts"
+HWJ2="$(env FLEETFLOW_HOST_SERVICES="$TMP/pc-lint.yaml" bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true)"
+printf '%s' "$HWJ2" | jq -e '(any(.findings[]; .check=="host-watchers")|not) and any(.checks[]; .name=="host-watchers" and .armed==true)' >/dev/null \
+  && ok "ff-plan: lint host-watchers is clean once the ignore is present" \
+  || bad "ff-plan: host-watchers still finding with ignore: $(printf '%s' "$HWJ2" | jq -c '[.findings[]|select(.check=="host-watchers")]' 2>/dev/null)"
+HWJ3="$(env FLEETFLOW_HOST_SERVICES="$TMP/no-such.yaml" bash "$PLAN" lint --run pconf --repo "$PREPO" --json 2>/dev/null || true)"
+printf '%s' "$HWJ3" | jq -e 'any(.checks[]; .name=="host-watchers" and .armed==false)' >/dev/null \
+  && ok "ff-plan: lint host-watchers is disarmed without a services file" \
+  || bad "ff-plan: host-watchers not disarmed without a services file"
 
 check "ff-plan: lint conflicting owns exits 10" 10 \
   bash "$PLAN" lint --run pconf --repo "$PREPO" --json

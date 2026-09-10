@@ -520,6 +520,25 @@ lint_cmd() {
   fi
   add_check fleet-rules true "claude lanes: inherit ~/.claude/rules implicitly; codex/grok/pi lanes: preamble carries $fr_seen/$fr_total declared rule(s), AGENTS.md pointer: $fr_ptr"
 
+  # (d3) host watchers (ADR-038). Lane worktrees live INSIDE this repo under
+  # .fleetflow/<run>/wt-<id>; a registered dev server watching the repo crawls
+  # every lane (node_modules included) and never releases the module graph -
+  # 87.9 GB of commit on mapforge, 2026-09-10. warn, not hard: the fix is one
+  # line in the HOST repo's watcher config, and blocking the plan on it would
+  # get --force'd into habit. Disarmed where no services file exists.
+  local hw_n=0 hw_line hw_name hw_cmd hw_ign
+  if ff_host_watchers "$repo" > "$LINT_TMP/watchers.tsv"; then
+    while IFS="$(printf '\t')" read -r hw_name hw_cmd hw_ign; do
+      [ -n "$hw_name" ] || continue
+      hw_n=$((hw_n+1))
+      [ "$hw_ign" = yes ] && continue
+      add_finding host-watchers warn "" "-" "registered service '$hw_name' watches this repo ($hw_cmd) and its watcher config $(if [ "$hw_ign" = no ]; then echo "does not ignore .fleetflow"; else echo "could not be found to verify an ignore"; fi) - every lane worktree under .fleetflow/ will be crawled; add server.watch.ignored ['**/.fleetflow/**'] (or the bundler's equivalent) before spawning"
+    done < "$LINT_TMP/watchers.tsv"
+    add_check host-watchers true "$hw_n registered watcher(s) serve this repo"
+  else
+    add_check host-watchers false "no registered-services file (FLEETFLOW_HOST_SERVICES) - not applicable on this host"
+  fi
+
   # (e) routing sanity.
   for ((i=0;i<${#fm_files[@]};i++)); do
     file="${fm_files[$i]}"; id="${ids[$i]}"

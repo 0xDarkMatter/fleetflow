@@ -137,6 +137,7 @@ FLEETFLOW_ORCHESTRATOR	(unset)	declared orchestrator seat: consumed by ff-doctor
 FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permission mode for claude-family lanes; default differs by lane kind
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_FLEET_RULES	agentic-quality	comma-separated ~/.claude/rules names every provider must see; each needs a [fleet-rule: NAME] tag in assets/guard-preamble.txt (ff-doctor, ff-plan lint, ADR-037)
+FLEETFLOW_HOST_SERVICES	X:/00_Orchestration/compose-portless/process-compose.yaml	Process Compose services file; registered watchers serving a repo with lanes must ignore .fleetflow (ff-doctor, ff-plan lint, ADR-038); absent = not applicable
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
 FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence
@@ -231,6 +232,31 @@ else
 fi
 _ri_status=ok; [ "$_fr_ok" = "$_fr_total" ] || _ri_status=advisory
 say "rule-inheritance" "$_ri_status" "claude lanes inherit $_rules_n rule file(s) + CLAUDE.md implicitly; codex/grok/pi lanes see packet + preamble + repo AGENTS.md only - $_fr_ok/$_fr_total fleet rule(s) reach them via the preamble"
+
+# --- host watchers (ADR-038) ---------------------------------------------------
+# Lane worktrees live INSIDE the host repo, so a registered dev server watching
+# that repo crawls every lane. Machine-wide view: every registered working_dir
+# that has fleetflow lanes on disk, and whether its watcher ignores .fleetflow.
+# Advisory, never fail: the victim is the host repo's config, not fleetflow's.
+_hw_yaml="${FLEETFLOW_HOST_SERVICES:-X:/00_Orchestration/compose-portless/process-compose.yaml}"
+if [ ! -f "$_hw_yaml" ]; then
+  say "host-watchers" ok "no registered-services file at $_hw_yaml - not applicable on this host"
+else
+  _hw_bad=""; _hw_n=0
+  while IFS= read -r _hw_d; do
+    [ -n "$_hw_d" ] && [ -d "$_hw_d/.fleetflow" ] || continue
+    while IFS="$(printf '\t')" read -r _hw_name _hw_cmd _hw_ign; do
+      [ -n "$_hw_name" ] || continue
+      _hw_n=$((_hw_n+1))
+      [ "$_hw_ign" = yes ] || _hw_bad="$_hw_bad $_hw_name@$_hw_d(ignore:$_hw_ign)"
+    done < <(ff_host_watchers "$_hw_d")
+  done < <(awk '/^    working_dir:/{sub(/^    working_dir:[ \t]*/,""); gsub(/^["'"'"']|["'"'"']$/,""); print}' "$_hw_yaml" | tr -d '\r' | sort -u)
+  if [ -z "$_hw_bad" ]; then
+    say "host-watchers" ok "$_hw_n registered watcher(s) serve a repo with fleetflow lanes; all ignore .fleetflow"
+  else
+    say "host-watchers" advisory "registered watcher(s) serving a repo with lanes and NO .fleetflow ignore:$_hw_bad - add server.watch.ignored ['**/.fleetflow/**'] or expect commit exhaustion (ADR-038)"
+  fi
+fi
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"
 _fwok=0; [ -f "$FW" ] && _fwok=1
