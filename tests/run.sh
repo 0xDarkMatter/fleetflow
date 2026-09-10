@@ -894,6 +894,11 @@ grep -q 'const measuredCommits' "$DASH" \
 grep -q 'chip("git", nf(l.commits), "commits")' "$DASH" \
   && bad "dashboard: commits chip still renders a bare count (0 == landed ambiguity)" \
   || ok "dashboard: commits chip distinguishes landed from unmerged"
+# an archived run whose directory is still on disk (ADR-011) is in both the
+# runs and the history lists; every roll-up must drop the history copy
+grep -q 'const notOnDisk' "$DASH" && grep -q 'hist = notOnDisk(hist, runs)' "$DASH" \
+  && ok "dashboard: roll-ups drop archived runs that are still on disk (no double count)" \
+  || bad "dashboard: aggStats counts an archived-and-on-disk run twice"
 grep -q 'const PAGE_BUILD' "$DASH" && grep -q 'getElementById("build")' "$DASH" \
   && ok "dashboard: build marker rendered (stale-tab diagnosis)" \
   || bad "dashboard: no build marker"

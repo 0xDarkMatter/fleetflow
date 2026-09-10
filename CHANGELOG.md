@@ -123,6 +123,10 @@ shipped, the ADRs own WHY.
   2 batched, 4 via the legacy fallback.
 
 ### Fixed
+- Dashboard roll-ups counted a run that is archived AND still on disk twice
+  (lanes, tokens, runtime, cost, and a duplicate bar in the project token
+  chart): the fleetflow project card read 44 lanes for 36 real ones. The
+  on-disk record wins; the history row is its index.
 - A failed claude-family lane with an empty `.err` now says why: `err_tail`
   falls back to the envelope (`error_max_turns after 121 turn(s) - stop_reason
   tool_use`, `api_error_status`, the result text). `claude -p` reports failures

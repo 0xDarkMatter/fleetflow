@@ -1734,9 +1734,7 @@ function renderNav() {
   // HISTORY — a peer section in the same tree, not a separate screen: a run that
   // was live an hour ago and cleaned since should be one click away. Runs still
   // on disk are suppressed so nothing appears twice while both live and archived.
-  const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
-  const hist = (doc.history || []).filter(h =>
-    !onDisk.has((h.repo + "|" + h.run).toLowerCase()) &&
+  const hist = notOnDisk(doc.history || [], doc.runs).filter(h =>
     matches(h.run + " " + (h.repo_label || "") + " " + h.repo) &&
     (!stateFilter.size || stateFilter.has(h.state)));
   if (hist.length) {
@@ -2321,8 +2319,26 @@ function bindCardControls(r) {
 /* Shared roll-up across a mixed set of live runs + archived history records.
    Both carry the same token/elapsed field names (runs under .summary, history
    at top level), which is what makes one aggregator serve FLEET and PROJECT. */
+/* A run can be archived AND still on disk (ff-archive called directly, or
+   ff-clean's archive-before-remove with the remove refused - ADR-011). It is
+   then in BOTH lists, and counting it twice put the fleetflow project card at
+   44 lanes for 36 real ones (2026-09-10). The on-disk record wins: it is live
+   data; the history row is its index. */
+/* Live runs carry the repo as the discovery walk found it (X:\Forge\fleetflow);
+   history rows carry it as ff-archive wrote it (X:/Forge/fleetflow). Three
+   sites compared those two strings lowercased and never matched, so the
+   dedupe each of them intended silently never happened. ONE key, slashes
+   folded, for every run-vs-history comparison on this page. */
+const runIdKey = (repo, run) => ((repo || "").replace(/\\/g, "/").replace(/\/+$/, "") + "|" + (run || "")).toLowerCase();
+const liveKeys = runs => new Set(runs.map(r => runIdKey(r.repo, r.run)));
+const isOnDisk = (h, runs) => liveKeys(runs).has(runIdKey(h.repo, h.run));
+const notOnDisk = (hist, runs) => {
+  const live = liveKeys(runs);
+  return hist.filter(h => !live.has(runIdKey(h.repo, h.run)));
+};
 function aggStats(runs, hist) {
   const S = r => r.summary || {};
+  hist = notOnDisk(hist, runs);
   const lanes = runs.flatMap(r => r.lanes || []).concat(hist.flatMap(h => h.lanes || []));
   const sum = f => runs.reduce((a, r) => a + (f(S(r)) || 0), 0)
                  + hist.reduce((a, h) => a + (f(h) || 0), 0);
@@ -2384,10 +2400,7 @@ function overview() {
 /* PROJECT — one repo's runs + its archived history, rolled up. */
 function projectView(label) {
   const runs = sortRuns(doc.runs.filter(r => (r.repo_label || r.repo) === label));
-  const onDisk = new Set(doc.runs.map(r => runKey(r).toLowerCase()));
-  const hist = (doc.history || []).filter(h =>
-    (h.repo_label || h.repo) === label &&
-    !onDisk.has((h.repo + "|" + h.run).toLowerCase()));
+  const hist = notOnDisk((doc.history || []).filter(h => (h.repo_label || h.repo) === label), doc.runs);
   if (!runs.length && !hist.length)
     return `<div class="empty">no runs recorded for <span class="mono">${esc(label)}</span>
       — it may have been filtered out, renamed, or cleaned without archiving</div>`;
@@ -2739,7 +2752,7 @@ function historyCard(h) {
   // A run can be archived and STILL on disk (ff-archive called directly rather than
   // by ff-clean). Claiming its files are gone when they are not would send someone
   // hunting for a directory that is right there.
-  const onDisk = doc.runs.some(r => runKey(r).toLowerCase() === (h.repo + "|" + h.run).toLowerCase());
+  const onDisk = isOnDisk(h, doc.runs);
   const fate = onDisk
     ? `its run directory is still on disk — the live card has the full lane detail.`
     : `this run's directory has been cleaned up. Lane prompts, diffs, and transcripts
