@@ -139,6 +139,7 @@ FLEETFLOW_PERMISSION_MODE	acceptEdits (acp) / bypassPermissions (headless)	permi
 FLEETFLOW_FLEET_WORKER	$HOME/.claude/skills/fleet-worker/scripts/fleet-worker	glm launcher path (ff-spawn hard-requires it for --model glm)
 FLEETFLOW_FLEET_RULES	agentic-quality	comma-separated ~/.claude/rules names every provider must see; each needs a [fleet-rule: NAME] tag in assets/guard-preamble.txt (ff-doctor, ff-plan lint, ADR-037)
 FLEETFLOW_HOST_SERVICES	X:/00_Orchestration/compose-portless/process-compose.yaml	Process Compose services file; registered watchers serving a repo with lanes must ignore .fleetflow (ff-doctor, ff-plan lint, ADR-038); absent = not applicable
+FLEETFLOW_LANES_ROOT	(unset = lanes in-repo)	opt-in: place lane worktrees OUTSIDE the host repo at <root>/<repo-slug>/<run>/wt-<id>, beyond any dev server's watch scope; run artifacts stay in <repo>/.fleetflow; the journal records each lane's path and readers trust it, never this var (ff-spawn, ff-chip, ADR-040)
 FLEETFLOW_CODEX_MODEL	(harness default)	codex -m override for codex lanes
 FLEETFLOW_CODEX_WINDOWS_SANDBOX	unelevated	Windows sandbox-mode pin for codex lanes (ADR-007); set EMPTY to disarm the override (set-vs-unset is meaningful)
 FLEETFLOW_CLAUDE_BIN	claude	claude binary used by ff-doctor (checks + model probes) AND ff-spawn launches (claude-family directly; glm via the FLEET_WORKER_CLAUDE_BIN pass-through) - one override, no doctor/spawn divergence
@@ -257,6 +258,21 @@ else
   else
     say "host-watchers" advisory "registered watcher(s) serving a repo with lanes and NO .fleetflow ignore:$_hw_bad - add server.watch.ignored ['**/.fleetflow/**'] or expect commit exhaustion (ADR-038)"
   fi
+fi
+
+# --- lane placement (ADR-040) --------------------------------------------------
+# States the MODE, so an operator reading a doctor report knows whether the
+# next spawn lands inside the host repo (the watcher hazard above applies) or
+# under a lanes root (it cannot). Never fail: both placements are valid.
+if ff_lanes_root_in_use; then
+  _lr="${FLEETFLOW_LANES_ROOT%/}"
+  if [ -d "$_lr" ]; then
+    say "lanes-root" ok "lanes root: $_lr (exists) - new worktree lanes are placed at <root>/<repo-slug>/<run>/wt-<id>, outside every host repo's watch scope; run artifacts stay in <repo>/.fleetflow (ADR-040)"
+  else
+    say "lanes-root" ok "lanes root: $_lr (will be created on first spawn) - new worktree lanes are placed outside the host repo (ADR-040)"
+  fi
+else
+  say "lanes-root" ok "in-repo (default): worktree lanes at <repo>/.fleetflow/<run>/wt-<id> - inside the watch scope of any dev server serving the repo (ADR-038); set FLEETFLOW_LANES_ROOT to place them outside (ADR-040)"
 fi
 
 FW="${FLEETFLOW_FLEET_WORKER:-$HOME/.claude/skills/fleet-worker/scripts/fleet-worker}"

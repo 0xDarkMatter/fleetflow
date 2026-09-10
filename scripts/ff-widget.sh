@@ -147,7 +147,7 @@ case "$MAX_LANES" in ''|*[!0-9]*) err "--max-lanes must be a positive integer"; 
 [ -n "$REPO" ] && [ -d "$REPO" ] || { err "not in a git repo (or --repo invalid)"; exit 2; }
 [ -f "$RUNCARD_JS" ] || { err "run-card module not found: $RUNCARD_JS (assets/ff-runcard.js not landed yet - ADR-019)"; exit 2; }
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 [ -f "$RUNDIR/journal.jsonl" ] || { err "no run at $RUNDIR (run ff-spawn first)"; exit 3; }
 
 STATUS_JSON="$(bash "$STATUS_BIN" --run "$RUN" --repo "$REPO" 2>/dev/null)"

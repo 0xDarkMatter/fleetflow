@@ -82,6 +82,10 @@ ENV (pi model)
 
 ENV
   FLEETFLOW_ORCHESTRATOR           default for --orchestrator (set once per session)
+  FLEETFLOW_LANES_ROOT             opt-in: place --worktree lanes OUTSIDE the repo at
+                                   <root>/<repo-slug>/<run>/wt-<id> (beyond any dev
+                                   server's watch scope); the lane path is journalled
+                                   and readers trust the journal, not this var (ADR-040)
 
 ENV (--acp lanes)
   FLEETFLOW_ACP_AGENT_JS           path to claude-code-acp's dist/index.js
@@ -269,9 +273,11 @@ REPO="$(cd "$REPO" && { pwd -W 2>/dev/null || pwd -P; })" || { err "cannot resol
 # caller's cwd still resolves it ([ -f ] above proved the file exists).
 [ -z "$SCHEMA" ] || SCHEMA="$(abspath "$SCHEMA")"
 
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 mkdir -p "$RUNDIR"
-# keep the scratch tree out of git without touching the repo's .gitignore
+# keep the scratch tree out of git without touching the repo's .gitignore.
+# Still needed under FLEETFLOW_LANES_ROOT: the run dir (journal, prompts,
+# results) stays in-repo whatever happens to the worktrees (ADR-040).
 EXCL="$(git -C "$REPO" rev-parse --absolute-git-dir)/info/exclude"
 mkdir -p "$(dirname "$EXCL")"
 grep -qs '^\.fleetflow/$' "$EXCL" 2>/dev/null || echo ".fleetflow/" >> "$EXCL"
@@ -461,9 +467,25 @@ fi
 
 # --- worktree lane ------------------------------------------------------------
 WORKDIR="$REPO"
+LANE_JOURNALLED=""
 if [ "$WORKTREE" = 1 ]; then
-  WORKDIR="$RUNDIR/wt-$ID"
+  # Placement is decided in ONE place (ff_lane_dir, ADR-040): in-repo by
+  # default, or under FLEETFLOW_LANES_ROOT when set - outside the host repo,
+  # where no dev server serving it can crawl the lane (ADR-038's incident).
+  # The root is created BEFORE resolving so the resolver can canonicalise it
+  # (drive-letter form, the spelling claude encodes its project dir from).
+  if ff_lanes_root_in_use; then
+    mkdir -p "$FLEETFLOW_LANES_ROOT" || { err "cannot create FLEETFLOW_LANES_ROOT=$FLEETFLOW_LANES_ROOT"; exit 2; }
+  fi
+  WORKDIR="$(ff_lane_dir "$REPO" "$RUN" "$ID")"
+  # Journalled ONLY when the lane is outside the repo. Readers resolve a lane
+  # journal-first (ff_lane_path) and fall back to the in-repo path, so an
+  # in-repo run's journal stays byte-identical to what it was before this
+  # field existed, and an outside lane is never probed or reclaimed at a
+  # location anyone GUESSED from the current environment.
+  ff_lanes_root_in_use && LANE_JOURNALLED="$WORKDIR"
   if [ ! -d "$WORKDIR" ]; then
+    mkdir -p "$(dirname "$WORKDIR")"
     git -C "$REPO" show-ref --verify --quiet "refs/heads/$BASE" || BASE="HEAD"
     git -C "$REPO" worktree add -q -b "fleetflow/$RUN/$ID" "$WORKDIR" "$BASE" \
       || { err "worktree add failed"; exit 10; }
@@ -505,9 +527,11 @@ case "$MODEL" in
 esac
 jq -nc --arg k "$KEY" --arg id "$ID" --arg b "$MODEL" --arg p "$PHASE" --arg v "$FF_VERSION" \
   --arg m "$SPAWN_MODEL" --arg o "$ORCHESTRATOR" --argjson round "$ROUND" \
+  --arg wt "$LANE_JOURNALLED" \
   '{type:"started",key:$k,id:$id,model:$b,phase:$p,v:$v,round:$round,
     model_id:(if $m=="" then null else $m end),
-    orchestrator:(if $o=="" then null else $o end)}' >> "$JOURNAL"
+    orchestrator:(if $o=="" then null else $o end)}
+   + (if $wt=="" then {} else {worktree:$wt} end)' >> "$JOURNAL"
 
 # --- reap anchor (2026-07-27: TaskStop left 5 orphaned codex.exe alive) --------
 # Killing the wrapper does NOT kill the worker: `codex exec` spawns codex.exe and

@@ -28,6 +28,24 @@ shipped, the ADRs own WHY.
   mode. Absolute times swing with machine load (two full runs the same
   afternoon: 452s and 658s), but the shape is stable — `sweep-perf` and
   `doctor-live-probe-scoping` are ~35% of the run on their own.
+- `FLEETFLOW_LANES_ROOT` (ADR-040, opt-in): place lane worktrees **outside**
+  the host repo at `<root>/<repo-slug>/<run>/wt-<id>`, where no dev server
+  serving the repo can crawl them — the structural fix for ADR-038's 87.9 GB
+  Vite incident. Run artifacts stay in `<repo>/.fleetflow/<run>/`. One
+  creation resolver in `_env.sh` (`ff_lane_dir`, used by ff-spawn and
+  ff-chip) replaces 27 hand-built paths across 10 scripts; the `started`
+  journal record carries the lane's absolute path when a root is in use, and
+  every reader (ff-status, ff-clean, ff-sweep, ff-collect, ff-chip close)
+  resolves journal-first with the in-repo path as its only fallback — never
+  from the environment, so a lane is never probed or reclaimed at a guessed
+  location. ff-sweep/ff-clean's boundary widens by exactly the lane dirs a
+  journal names (an unjournalled outside dir is never touched); emptied
+  `<root>/<slug>/<run>` dirs are `rmdir`-pruned. Codex grants (ADR-034) and
+  chip transcript attribution (ADR-021) are unchanged and tested against an
+  outside lane. `ff-doctor --offline` gains a `lanes-root` row stating the
+  mode. Unset, nothing changes: the suite pins in-repo `ff-status` output
+  byte-identical with the variable unset vs set and the in-repo journal
+  gaining no field.
 - `FLEETFLOW_STATUS_WORKERS` (default `nproc`, capped at 8): the number of
   worker subshells `ff-status` reads lanes with; `1` is the serial path.
   Registered in `ff-doctor --env` and `docs/REFERENCE.md`.

@@ -91,7 +91,8 @@ strip_fences() { sed -E '/^[[:space:]]*```[[:alnum:]]*[[:space:]]*$/d'; }
 #      is the gate's product, the commit is a convenience (rookery's rule).
 # .ff-heartbeat never lands in these commits: ff-spawn git-excludes it.
 auto_commit_lane() {
-  local wt="$RUNDIR/wt-$ID"
+  # journal-first, in-repo fallback (ADR-040): commit where the lane IS
+  local wt; wt="$(ff_lane_path "$REPO" "$RUN" "$ID")"
   [ -d "$wt" ] || { err "auto-commit: no worktree lane at $wt (skipped)"; return 0; }
   [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || return 0
   if git -C "$wt" add -A >/dev/null 2>&1 \
@@ -194,7 +195,7 @@ fi
 
 # --- lane gate ------------------------------------------------------------
 [ -n "$RUN" ] && [ -n "$ID" ] || { err "--run and --id required"; usage >&2; exit 2; }
-RUNDIR="$REPO/.fleetflow/$RUN"
+RUNDIR="$(ff_run_dir "$REPO" "$RUN")"
 JOURNAL="$RUNDIR/journal.jsonl"
 
 

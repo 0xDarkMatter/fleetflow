@@ -553,6 +553,190 @@ RELRC=0
   || bad "spawn: relative --repo broke the launch cd (rc=$RELRC, see $REPO/.fleetflow/rrel/c1.err)"
 [ -s "$REPO/.fleetflow/rrel/c1.last.txt" ] && ok "spawn: relative --repo artifact written at the absolute run dir" \
   || bad "spawn: relative --repo artifact missing (worker never launched or -o misresolved)"
+# --- lanes root (ADR-040): worktrees OUTSIDE the host repo, opt-in --------------
+# FLEETFLOW_LANES_ROOT places lane worktrees at <root>/<repo-slug>/<run>/wt-<id>
+# so no dev server serving the repo can crawl them (ADR-038's incident). The
+# contract under test: creators consult the variable, journal the path;
+# readers resolve journal-first and NEVER consult the variable - so every
+# reader below runs with it UNSET on purpose. Unset at spawn, nothing changes:
+# the last block pins in-repo ff-status output byte-identical either way.
+LRR="$TMP/lrroot"; mkdir -p "$LRR"
+LRRW="$(cd "$LRR" && { pwd -W 2>/dev/null || pwd -P; })"   # the canonical form the resolver emits
+LRREPO="$TMP/lrrepo"
+mkdir -p "$LRREPO" && git -C "$LRREPO" init -q -b main
+git -C "$LRREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+lrspawn() { # run id [extra spawn args...]: sonnet dry-run worktree lane under the root
+  echo "lanes-root $1/$2 task. FINAL REPLY: $2" > "$TMP/lr-$1-$2.txt"
+  FLEETFLOW_LANES_ROOT="$LRR" bash "$S/ff-spawn.sh" --run "$1" --id "$2" --model sonnet \
+    --prompt-file "$TMP/lr-$1-$2.txt" --repo "$LRREPO" --worktree --dry-run "${@:3}" >/dev/null 2>&1
+}
+lrwt() { jq -r --arg id "$2" 'select(.type=="started" and .id==$id) | .worktree // empty' "$LRREPO/.fleetflow/$1/journal.jsonl" | tr -d '\r' | tail -1; }
+# a DISTINCT file per lane: two --allow-empty commits off one parent in the same second hash IDENTICALLY, so landing one lands the other
+lrcommit() { echo "$1" > "$1/$(basename "$1").txt"; git -C "$1" add -A; git -C "$1" -c user.email=t@t -c user.name=t commit -q -m "lane work: $(basename "$1")"; }
+
+# the slug: one repo, three spellings -> one slug; same basename elsewhere -> another
+LRSLUG="$(ff_repo_slug "$LRREPO")"
+mkdir -p "$TMP/elsewhere/lrrepo"
+{ [ "$LRSLUG" = "$(ff_repo_slug "$LRREPO/")" ] && [ "$LRSLUG" = "$(cd "$LRREPO" && ff_repo_slug .)" ]; } \
+  && ok "lanes-root: repo slug is stable across path spellings" \
+  || bad "lanes-root: slug drifts with spelling ($LRSLUG vs $(ff_repo_slug "$LRREPO/") vs $(cd "$LRREPO" && ff_repo_slug .))"
+printf '%s' "$LRSLUG" | grep -qE '^lrrepo-[0-9a-f]{8}$' \
+  && ok "lanes-root: slug is <basename>-<8 hex> (readable + collision-free)" || bad "lanes-root: slug shape wrong: $LRSLUG"
+[ "$LRSLUG" != "$(ff_repo_slug "$TMP/elsewhere/lrrepo")" ] \
+  && ok "lanes-root: two repos with one basename get distinct slugs" || bad "lanes-root: basename collision in slug"
+# the creation resolver: unset = the in-repo path verbatim; set = under the root
+[ "$(ff_lane_dir "$LRREPO" r x)" = "$LRREPO/.fleetflow/r/wt-x" ] \
+  && ok "lanes-root: ff_lane_dir unset -> in-repo path, verbatim" || bad "lanes-root: ff_lane_dir unset drifted: $(ff_lane_dir "$LRREPO" r x)"
+[ "$(FLEETFLOW_LANES_ROOT="$LRR" ff_lane_dir "$LRREPO" r x)" = "$LRRW/$LRSLUG/r/wt-x" ] \
+  && ok "lanes-root: ff_lane_dir set -> <root>/<slug>/<run>/wt-<id>, root canonicalised" \
+  || bad "lanes-root: ff_lane_dir set gave $(FLEETFLOW_LANES_ROOT="$LRR" ff_lane_dir "$LRREPO" r x)"
+
+# spawn: the worktree lands under the root, the branch name does not change,
+# the run artifacts stay in-repo, the started record carries the path
+lrspawn lr a
+LRA="$LRRW/$LRSLUG/lr/wt-a"
+[ -d "$LRA" ] && ok "lanes-root: spawn --worktree creates the lane under the root" || bad "lanes-root: no lane at $LRA"
+[ -d "$LRREPO/.fleetflow/lr/wt-a" ] && bad "lanes-root: lane ALSO created in-repo" || ok "lanes-root: nothing at the in-repo lane path"
+[ "$(git -C "$LRA" rev-parse --abbrev-ref HEAD 2>/dev/null | tr -d '\r')" = "fleetflow/lr/a" ] \
+  && ok "lanes-root: branch name unchanged (fleetflow/<run>/<id>)" || bad "lanes-root: branch name changed"
+[ "$(lrwt lr a)" = "$LRA" ] && ok "lanes-root: started record carries the absolute worktree path" || bad "lanes-root: journal worktree field is '$(lrwt lr a)'"
+[ -f "$LRREPO/.fleetflow/lr/a.result.json" ] && [ -f "$LRREPO/.fleetflow/lr/journal.jsonl" ] \
+  && ok "lanes-root: run artifacts stay in <repo>/.fleetflow/<run>" || bad "lanes-root: run artifacts moved"
+grep -qs '^\.fleetflow/$' "$LRREPO/.git/info/exclude" && ok "lanes-root: info/exclude still carries .fleetflow (run dir is still in-repo)" || bad "lanes-root: info/exclude not written"
+git -C "$LRREPO" worktree list 2>/dev/null | grep -q "fleetflow/lr/a" && ok "lanes-root: outside lane is a registered worktree of the main repo" || bad "lanes-root: worktree not registered"
+
+# ff-status (variable UNSET): finds the lane through the journal
+LRS="$(bash "$S/ff-status.sh" --run lr --repo "$LRREPO" 2>/dev/null)"
+printf '%s' "$LRS" | jq -e --arg wt "$LRA" '.lanes[]|select(.id=="a")|.worktree_state=="present" and .worktree==$wt and .branch=="fleetflow/lr/a"' >/dev/null \
+  && ok "lanes-root: ff-status (var unset) resolves the lane from the journal: worktree_state, worktree, branch" \
+  || bad "lanes-root: ff-status lost the outside lane: $(printf '%s' "$LRS" | jq -c '.lanes[]|select(.id=="a")|{worktree_state,worktree,branch}')"
+printf '%s' "$LRS" | jq -e '.lanes[]|select(.id=="a")|.commits==0 and .landed==true' >/dev/null \
+  && ok "lanes-root: fresh outside lane reads landed, 0 unmerged commits" || bad "lanes-root: fresh lane commit/landed wrong"
+lrcommit "$LRA"
+bash "$S/ff-status.sh" --run lr --repo "$LRREPO" 2>/dev/null | jq -e '.lanes[]|select(.id=="a")|.commits==1 and .landed==false' >/dev/null \
+  && ok "lanes-root: commits are counted in the outside lane" || bad "lanes-root: outside lane commit not counted"
+
+# transcript attribution (ADR-021 under ADR-040): the encoding must follow the
+# RESOLVED path. A synthetic running lane reusing lane a's path, a fake host
+# transcript at that path's encoding, and HOME redirected so the real one is
+# unreachable - var unset throughout.
+printf '{"type":"started","key":"v2:lrlive","id":"live","model":"sonnet","phase":"build","v":"1.2.0","worktree":"%s"}\n' "$LRA" >> "$LRREPO/.fleetflow/lr/journal.jsonl"
+: > "$LRREPO/.fleetflow/lr/live.prompt.txt"
+LRENC="$(printf '%s' "$LRA" | sed 's#[:\\/.]#-#g')"
+mkdir -p "$TMP/lrhome/.claude/projects/$LRENC"
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit"}]}}\n' > "$TMP/lrhome/.claude/projects/$LRENC/sess.jsonl"
+HOME="$TMP/lrhome" bash "$S/ff-status.sh" --run lr --repo "$LRREPO" 2>/dev/null \
+  | jq -e '.lanes[]|select(.id=="live")|.state=="running" and .live_signal==true and .activity=="live: Edit"' >/dev/null \
+  && ok "lanes-root: claude transcript attributed by the ENCODED OUTSIDE path" \
+  || bad "lanes-root: transcript attribution lost for an outside lane"
+LRENC_IN="$(printf '%s' "$LRREPO/.fleetflow/lr/wt-live" | sed 's#[:\\/.]#-#g')"
+[ -d "$TMP/lrhome/.claude/projects/$LRENC_IN" ] && bad "lanes-root: test fixture leaked the in-repo encoding" \
+  || ok "lanes-root: attribution did not need the in-repo encoding"
+
+# chips (ADR-021): open places the lane under the root and sends the chip
+# there; close (var UNSET) measures the lane where open put it
+LRCH="$(FLEETFLOW_LANES_ROOT="$LRR" bash "$S/ff-chip.sh" open --run lrchip --id c1 --repo "$LRREPO" --task "Do the thing." 2>/dev/null)"
+LRC1="$LRRW/$LRSLUG/lrchip/wt-c1"
+[ -d "$LRC1" ] && ok "lanes-root: ff-chip open creates the lane under the root" || bad "lanes-root: chip lane not at $LRC1"
+printf '%s' "$LRCH" | grep -qF "cd \"$LRC1\"" && ok "lanes-root: chip seed prompt cds into the OUTSIDE lane" || bad "lanes-root: seed prompt cd wrong"
+[ "$(lrwt lrchip c1)" = "$LRC1" ] && ok "lanes-root: chip started record carries the path" || bad "lanes-root: chip journal lacks the path"
+bash "$S/ff-status.sh" --run lrchip --repo "$LRREPO" 2>/dev/null | jq -e '.lanes[]|select(.id=="c1")|.state=="running" and .stalled==false and .live_signal==true' >/dev/null \
+  && ok "lanes-root: fresh chip lane reads running via the heartbeat seeded at the outside path" || bad "lanes-root: chip lane misreported"
+echo x > "$LRC1/x.txt"; git -C "$LRC1" add x.txt; lrcommit "$LRC1"
+bash "$S/ff-chip.sh" close --run lrchip --id c1 --repo "$LRREPO" --note "done" >/dev/null 2>&1
+jq -e '.chip.commits==1 and .is_error==false' "$LRREPO/.fleetflow/lrchip/c1.result.json" >/dev/null 2>&1 \
+  && ok "lanes-root: ff-chip close (var unset) measures commits in the outside lane" || bad "lanes-root: chip close measured $(jq -c .chip "$LRREPO/.fleetflow/lrchip/c1.result.json" 2>/dev/null)"
+
+# ff-clean (var UNSET): reclaims a landed outside lane, keeps an unmerged one,
+# and prunes only the emptied outside run dir
+lrspawn lrclean landed; lrspawn lrclean unmerged
+LRL="$LRRW/$LRSLUG/lrclean/wt-landed"; LRU="$LRRW/$LRSLUG/lrclean/wt-unmerged"
+lrcommit "$LRL"; git -C "$LRREPO" merge -q --no-ff -m "land" fleetflow/lrclean/landed
+lrcommit "$LRU"
+LRCL="$(bash "$S/ff-clean.sh" --run lrclean --repo "$LRREPO" --no-archive 2>/dev/null)"
+printf '%s' "$LRCL" | awk -F'\t' '$1=="landed"&&$2=="removed"{f=1} END{exit !f}' && ok "lanes-root: ff-clean removes a landed outside lane" || bad "lanes-root: landed outside lane not removed: $LRCL"
+printf '%s' "$LRCL" | awk -F'\t' '$1=="unmerged"&&$2=="kept"&&$3~/1 unmerged commits/{f=1} END{exit !f}' && ok "lanes-root: ff-clean keeps an unmerged outside lane" || bad "lanes-root: unmerged outside lane mishandled: $LRCL"
+[ -d "$LRL" ] && bad "lanes-root: landed lane dir survived" || ok "lanes-root: landed lane dir gone from the root"
+[ -d "$LRU" ] && ok "lanes-root: unmerged lane dir still on disk" || bad "lanes-root: unmerged lane dir DESTROYED"
+git -C "$LRREPO" show-ref --verify --quiet refs/heads/fleetflow/lrclean/unmerged && ok "lanes-root: unmerged branch preserved" || bad "lanes-root: unmerged branch deleted"
+git -C "$LRREPO" merge -q --no-ff -m "land2" fleetflow/lrclean/unmerged
+bash "$S/ff-clean.sh" --run lrclean --repo "$LRREPO" --no-archive >/dev/null 2>&1
+[ -e "$LRRW/$LRSLUG/lrclean" ] && bad "lanes-root: emptied outside run dir not pruned" || ok "lanes-root: emptied <root>/<slug>/<run> pruned after the last lane"
+[ -d "$LRREPO/.fleetflow/lrclean" ] && ok "lanes-root: in-repo run dir (artifacts) untouched by the prune" || bad "lanes-root: prune removed the run artifacts"
+
+# ff-sweep (var UNSET): sees outside lanes through the journal, and NEVER an
+# outside dir the journal does not name
+lrspawn lrsweep a; LRSA="$LRRW/$LRSLUG/lrsweep/wt-a"
+lrcommit "$LRSA"; git -C "$LRREPO" merge -q --no-ff -m "land3" fleetflow/lrsweep/a
+mkdir -p "$LRRW/$LRSLUG/lrsweep/wt-stray"; echo "not fleetflow's" > "$LRRW/$LRSLUG/lrsweep/wt-stray/keep.txt"
+lrspawn lrhold a; lrcommit "$LRRW/$LRSLUG/lrhold/wt-a"          # committed, unmerged -> must hold
+LRSW="$(bash "$S/ff-sweep.sh" --repo "$LRREPO" --json --no-size 2>/dev/null)"
+printf '%s' "$LRSW" | jq -e '.[]|select(.run=="lrsweep")|.verdict=="reclaimable" and .lanes==1 and .landed==1' >/dev/null \
+  && ok "lanes-root: ff-sweep classifies a landed outside lane reclaimable (stray dir not counted)" \
+  || bad "lanes-root: sweep verdict for lrsweep: $(printf '%s' "$LRSW" | jq -c '.[]|select(.run=="lrsweep")|{verdict,lanes,landed}')"
+printf '%s' "$LRSW" | jq -e '.[]|select(.run=="lrhold")|.verdict=="holds-work"' >/dev/null \
+  && ok "lanes-root: ff-sweep sees an unmerged outside lane as holds-work" \
+  || bad "lanes-root: sweep missed the outside lane's work: $(printf '%s' "$LRSW" | jq -c '.[]|select(.run=="lrhold")|{verdict,lanes}')"
+bash "$S/ff-sweep.sh" --repo "$LRREPO" --reclaim --no-size >/dev/null 2>&1
+[ -d "$LRREPO/.fleetflow/lrsweep" ] && bad "lanes-root: sweep --reclaim did not remove the landed run" || ok "lanes-root: sweep --reclaim removed the landed run dir"
+[ -d "$LRSA" ] && bad "lanes-root: sweep left the landed outside lane" || ok "lanes-root: sweep --reclaim removed the landed outside lane"
+[ -f "$LRRW/$LRSLUG/lrsweep/wt-stray/keep.txt" ] && ok "lanes-root: sweep never touched an outside dir the journal does not name" || bad "lanes-root: sweep DELETED an unjournalled outside dir"
+[ -d "$LRRW/$LRSLUG/lrhold/wt-a" ] && [ -d "$LRREPO/.fleetflow/lrhold" ] && ok "lanes-root: sweep kept the holds-work run and its outside lane" || bad "lanes-root: sweep destroyed unmerged outside work"
+rm -rf "$LRRW/$LRSLUG/lrsweep"   # the stray is test litter; clear it so later asserts on the root are exact
+
+# codex (ADR-034 under ADR-040): the four scoped grants are the same four
+# paths for an outside lane - the main .git was never under the lane anyway.
+# Stub codex records its argv; the launch is real (not --dry-run) so the
+# grants are computed.
+LRCX="$TMP/codex-stub-lr"; mkdir -p "$LRCX"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@" > "${CODEX_STUB_ARGS:?}"' 'out=""; while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done' 'cat > /dev/null; [ -z "$out" ] || printf "{\"stub\":true}\n" > "$out"' > "$LRCX/codex"
+chmod +x "$LRCX/codex"
+echo "codex outside lane. FINAL REPLY: ok" > "$TMP/lr-cx.txt"
+CODEX_STUB_ARGS="$TMP/lr-codex-args.txt" FLEETFLOW_LANES_ROOT="$LRR" PATH="$LRCX:$PATH" \
+  bash "$S/ff-spawn.sh" --run lrcodex --id cx --model codex --prompt-file "$TMP/lr-cx.txt" --repo "$LRREPO" --worktree >/dev/null 2>&1
+LRCXWT="$LRRW/$LRSLUG/lrcodex/wt-cx"
+[ -d "$LRCXWT" ] && ok "lanes-root: codex lane placed under the root" || bad "lanes-root: codex lane missing"
+LRMAINGIT="$(git -C "$LRREPO" rev-parse --absolute-git-dir | tr -d '\r')"
+LRWTGIT="$(git -C "$LRCXWT" rev-parse --git-dir 2>/dev/null | tr -d '\r')"
+grep -qxF -- "$LRWTGIT" "$TMP/lr-codex-args.txt" && grep -qxF -- "$LRMAINGIT/objects" "$TMP/lr-codex-args.txt" \
+  && grep -qxF -- "$LRMAINGIT/refs/heads/fleetflow/lrcodex" "$TMP/lr-codex-args.txt" \
+  && ok "lanes-root: codex grants = outside lane's worktree metadata + main objects + run ref dir (ADR-034 unchanged)" \
+  || bad "lanes-root: codex grants wrong for an outside lane (see $TMP/lr-codex-args.txt)"
+case "$LRWTGIT" in "$LRMAINGIT"/worktrees/*) ok "lanes-root: outside lane's metadata dir lives under the MAIN .git" ;; *) bad "lanes-root: worktree metadata resolved to $LRWTGIT" ;; esac
+[ -s "$LRREPO/.fleetflow/lrcodex/cx.last.txt" ] && ok "lanes-root: codex artifact lands in the in-repo run dir" || bad "lanes-root: codex artifact missing"
+
+# doctor states the mode; the env registry + REFERENCE gates cover the row
+bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^lanes-root	ok	in-repo" \
+  && ok "doctor: lanes-root row reads in-repo when unset" || bad "doctor: lanes-root row missing/wrong when unset"
+FLEETFLOW_LANES_ROOT="$LRR" bash "$S/ff-doctor.sh" --offline 2>/dev/null | grep -qE "^lanes-root	ok	lanes root: .*\(exists\)" \
+  && ok "doctor: lanes-root row names the root when set" || bad "doctor: lanes-root row wrong when set"
+grep -q 'l\.worktree' "$HERE/../assets/ff-dashboard.html" \
+  && ok "dashboard: lane card links the worktree field ff-status reports (outside paths need no dashboard change)" \
+  || bad "dashboard: worktreeLine no longer reads l.worktree"
+
+# IN-REPO IS BYTE-IDENTICAL. Same fixture, variable unset vs set in the
+# READER's environment: an in-repo run must resolve exactly as before because
+# readers never consult the variable. generated_at and last_activity_s are
+# the two clock-derived fields (now - x) and are the only exclusions.
+lrin() { echo "in-repo $1 task. FINAL REPLY: $1" > "$TMP/lr-in-$1.txt"
+  bash "$S/ff-spawn.sh" --run lrin --id "$1" --model sonnet --prompt-file "$TMP/lr-in-$1.txt" --repo "$LRREPO" --worktree --dry-run >/dev/null 2>&1; }
+lrin p; lrin q; lrcommit "$LRREPO/.fleetflow/lrin/wt-q"
+grep -q '"worktree"' "$LRREPO/.fleetflow/lrin/journal.jsonl" && bad "lanes-root: in-repo journal gained a worktree field" || ok "lanes-root: in-repo journal carries no worktree field (byte-identical records)"
+[ -d "$LRREPO/.fleetflow/lrin/wt-p" ] && ok "lanes-root: unset -> lanes still in-repo at .fleetflow/<run>/wt-<id>" || bad "lanes-root: unset moved the lane"
+LRJQ='del(.generated_at) | .lanes |= map(del(.last_activity_s))'
+bash "$S/ff-status.sh" --run lrin --repo "$LRREPO" 2>/dev/null | jq -S "$LRJQ" > "$TMP/lr-unset.json"
+FLEETFLOW_LANES_ROOT="$LRR" bash "$S/ff-status.sh" --run lrin --repo "$LRREPO" 2>/dev/null | jq -S "$LRJQ" > "$TMP/lr-set.json"
+[ -s "$TMP/lr-unset.json" ] && cmp -s "$TMP/lr-unset.json" "$TMP/lr-set.json" \
+  && ok "lanes-root: in-repo ff-status output byte-identical with the variable unset vs set" \
+  || bad "lanes-root: reader output depends on FLEETFLOW_LANES_ROOT ($(diff "$TMP/lr-unset.json" "$TMP/lr-set.json" 2>&1 | head -3))"
+jq -e --arg wt "$LRREPO/.fleetflow/lrin/wt-q" '.lanes[]|select(.id=="q")|.worktree==$wt and .commits==1' "$TMP/lr-set.json" >/dev/null \
+  && ok "lanes-root: in-repo lane still resolves to the in-repo path under a set variable" || bad "lanes-root: in-repo lane resolved elsewhere"
+LRCLIN="$(FLEETFLOW_LANES_ROOT="$LRR" bash "$S/ff-clean.sh" --run lrin --repo "$LRREPO" --no-archive 2>/dev/null)"
+printf '%s' "$LRCLIN" | awk -F'\t' '$1=="p"&&$2=="removed"{f=1} END{exit !f}' && [ -d "$LRREPO/.fleetflow/lrin/wt-q" ] \
+  && ok "lanes-root: ff-clean under a set variable still cleans an in-repo run in place (journal-first, never a guess)" \
+  || bad "lanes-root: ff-clean with the variable set mishandled an in-repo run: $LRCLIN"
+[ -e "$LRRW/$LRSLUG/lrin" ] && bad "lanes-root: a reader created/probed <root>/<slug>/lrin for an in-repo run" || ok "lanes-root: no reader touched the root for an in-repo run"
+
 
 fi
 if __sec spawn-heartbeat; then

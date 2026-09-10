@@ -51,7 +51,7 @@ works, and the two records the journal keeps:
 
 | Store | Path | Owner | Notes |
 |---|---|---|---|
-| Run dir | `<repo>/.fleetflow/<run>/` | scripts | packets, per-lane artifacts, worktree lanes (`wt-<id>`) |
+| Run dir | `<repo>/.fleetflow/<run>/` | scripts | packets, per-lane artifacts, worktree lanes (`wt-<id>`) — lanes move to `$FLEETFLOW_LANES_ROOT/<repo-slug>/<run>/wt-<id>` when that is set; the journal's `started.worktree` says where, and readers trust it over the environment ([ADR-040](adr/ADR-040-lane-worktrees-may-live-outside-the-host-repo.md)) |
 | Journal | `.fleetflow/<run>/journal.jsonl` | ff-spawn | `started`/`result` records keyed `sha256(model+prompt+opts)` — the resume cache ([ADR-012](adr/ADR-012-packet-cache-key-purity.md)) |
 | Manifest | `.fleetflow/<run>/manifest.json` | ff-plan authors, ff-spawn upserts run-state | `phases[]` strings are FROZEN; plan metadata is the sibling `plan` key ([ADR-026](adr/ADR-026-ff-plan-authors-the-manifest-spawn-consumes-it.md)) |
 | Findings ledger | `.fleetflow/<run>/findings.jsonl` | ff-findings | append-only, fingerprint-deduped; waivers in `docs/waivers.json` |
