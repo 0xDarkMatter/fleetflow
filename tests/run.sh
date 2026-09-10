@@ -88,7 +88,7 @@ USAGE
 # doctor-live-probe-scoping alone are ~35% of the run in both, and
 # plan-c2-c3-rules and doctor-for-scoping are the next two. Prerequisites are
 # still pulled in, so the set that actually runs is larger than this regex
-# selects (quick: 249 assertions in 131s against the gate's 594).
+# selects (quick: 249 assertions in 131s against the gate's 642).
 __QUICK_ONLY='^(dashboard-|serve-|plan-|doctor-|syntax-help$|usage-validation$|ff-dispatcher$|adr-conformance$|compat-brain-model$|import-workflow$|collect-run-summary$|collect-final-reply$|status-(landedness|dead-spawner|argv-budget|state-derivation|abandoned-surfaces)$|spawn-(relative-repo|codex-sandbox|effort|cache-redirect)$|clean-autoclean$|wave-(fixtures|catalogue|findings-ledger)$)'
 __QUICK_SKIP='^(doctor-live-probe-scoping|doctor-for-scoping|plan-c2-c3-rules)$'
 
@@ -103,6 +103,7 @@ spawn-codex-sandbox:
 spawn-dry-run-lifecycle:spawn-config-dir
 spawn-prompt-aliasing:spawn-dry-run-lifecycle
 spawn-relative-repo:
+lanes-root:
 spawn-heartbeat:spawn-prompt-aliasing
 collect-gating:spawn-heartbeat
 collect-auto-commit:collect-gating
@@ -553,6 +554,8 @@ RELRC=0
   || bad "spawn: relative --repo broke the launch cd (rc=$RELRC, see $REPO/.fleetflow/rrel/c1.err)"
 [ -s "$REPO/.fleetflow/rrel/c1.last.txt" ] && ok "spawn: relative --repo artifact written at the absolute run dir" \
   || bad "spawn: relative --repo artifact missing (worker never launched or -o misresolved)"
+fi
+if __sec lanes-root; then
 # --- lanes root (ADR-040): worktrees OUTSIDE the host repo, opt-in --------------
 # FLEETFLOW_LANES_ROOT places lane worktrees at <root>/<repo-slug>/<run>/wt-<id>
 # so no dev server serving the repo can crawl them (ADR-038's incident). The

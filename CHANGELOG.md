@@ -10,7 +10,7 @@ shipped, the ADRs own WHY.
 ### Added
 - A fast iteration lane for `tests/run.sh`, without a second gate. `bash
   tests/run.sh` with no flags is unchanged — same sections, same order, same
-  594 assertions — and stays the only thing that lands. New: `--only <regex>`
+  assertions — and stays the only thing that lands. New: `--only <regex>`
   runs sections matching the regex plus everything they depend on, `--skip
   <regex>` runs the complement, `--quick` is a curated preset (131s and 249
   assertions against ~11min and 594), `--list` prints the section slugs and

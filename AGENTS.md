@@ -13,7 +13,7 @@ operational playbook — read it first; this file only carries repo mechanics.
 
 | Task | Command |
 |---|---|
-| **Full behavioural suite (594 assertions) — the one gate** | `bash tests/run.sh` |
+| **Full behavioural suite (642 assertions) — the one gate** | `bash tests/run.sh` |
 | One area while iterating — **not a gate** | `bash tests/run.sh --only '^dashboard-'` |
 | Broad fast subset — **not a gate** | `bash tests/run.sh --quick` |
 | Full run minus one slow section — **not a gate** | `bash tests/run.sh --skip '^sweep-perf$'` |
