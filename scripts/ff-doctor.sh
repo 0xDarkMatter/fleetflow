@@ -129,6 +129,7 @@ FLEETFLOW_HOME	$HOME/.fleetflow	machine-level store root: history.jsonl, dashboa
 FLEETFLOW_ROOTS	(unset)	path-separator-joined roots for machine-wide discovery; overrides ~/.fleetflow/roots.txt (ff-serve, ff-aggregate, ff-sweep)
 FLEETFLOW_STALL_SECONDS	600	live-stream silence before a running lane reads stalled (ff-status, ADR-008)
 FLEETFLOW_ABANDON_SECONDS	21600	silence before a running/stalled lane is demoted to final abandoned (ff-status, ADR-025)
+FLEETFLOW_STATUS_WORKERS	nproc, cap 8	worker subshells ff-status reads lanes with; 1 = serial; output identical at any count (ADR-039)
 FLEETFLOW_CACHE_ROOT	$HOME/.fleet-worker/cache	per-lane tmp + uv cache root, redirected OUT of worktrees (ff-spawn, ff-clean)
 FLEETFLOW_CFG_BASE	$HOME/.fleet-worker	fleet-worker config-dir base ff-status scans for glm lane transcripts
 FLEETFLOW_DASHBOARD_URL	http://127.0.0.1:8161	dashboard origin for the widget anchor and the SKILL.md pane ritual

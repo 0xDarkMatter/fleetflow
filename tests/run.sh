@@ -644,6 +644,15 @@ if touch -d "@$NOWS" "$TMP/.touchprobe" 2>/dev/null; then
   SO="$(bash "$S/ff-status.sh" --run r6 --repo "$REPO" --exit-stalled 2>/dev/null)"
   printf '%s' "$SO" | jq -e '.lanes|length==2' >/dev/null \
     && ok "status: --exit-stalled still emits the full JSON" || bad "status: --exit-stalled ate the data"
+  # ADR-039: lanes are read in worker SUBSHELLS, whose STALL_ANY dies with the
+  # fork. The verdict must reach the exit code through the marker reduction -
+  # with 4 workers on 2 lanes the stalled lane and the live one sit in
+  # different subshells, so a verdict that "worked" in the serial path but
+  # never left its worker would exit 0 here.
+  check "status: --exit-stalled exits 14 with parallel workers (verdict reduced from markers)" 14 \
+    env FLEETFLOW_STATUS_WORKERS=4 bash "$S/ff-status.sh" --run r6 --repo "$REPO" --exit-stalled
+  check "status: --exit-stalled exits 14 on the serial path (1 worker)" 14 \
+    env FLEETFLOW_STATUS_WORKERS=1 bash "$S/ff-status.sh" --run r6 --repo "$REPO" --exit-stalled
 fi
 
 # --- abandonment (ADR-025): hours of total silence demote an in-flight lane ----
@@ -3277,7 +3286,9 @@ while [ "$i" -lt "$BIGN" ]; do
   printf '{"type":"result","key":"k%s","id":"lane-%s","rc":0,"artifact":"lane-%s.result.json"}\n' "$i" "$i" "$i" >> "$BIGRD/journal.jsonl"
   i=$((i+1))
 done
+BIG_T0=$(date +%s)
 BIGOUT="$(bash "$S/ff-status.sh" --run big --repo "$BIGREPO" 2>"$TMP/big.err")"; BIGRC=$?
+BIG_T=$(( $(date +%s) - BIG_T0 ))
 [ "$BIGRC" = 0 ] && ok "status: ${BIGN}-lane run exits 0" \
   || bad "status: ${BIGN}-lane run exited $BIGRC ($(tail -1 "$TMP/big.err" 2>/dev/null))"
 printf '%s' "$BIGOUT" | jq -e --argjson n "$BIGN" '.lanes|length == $n' >/dev/null 2>&1 \
@@ -3291,6 +3302,50 @@ grep -qi "argument list too long" "$TMP/big.err" \
 printf '%s' "$BIGOUT" | grep -q . \
   && ok "status: exit 0 always carries a JSON body" \
   || bad "status: exited 0 with EMPTY stdout (silent-success regression)"
+
+# --- resource budget: the 200-lane run must finish inside a wall-clock budget --
+# ff-status reads lanes with FLEETFLOW_STATUS_WORKERS forked subshells
+# (ADR-039). Measured 2026-09-10 on the author's box (32 cores, Windows/MSYS,
+# ~150ms per process spawn): this fixture took 69s serial (1 worker) and 11.8s
+# at the default 8 workers; the real 140-lane godaddy-build went 56s -> 12.8s.
+# The budget is ~2.5x the measured parallel figure, so a loaded box still
+# passes while a return to the serial cost - or any new per-lane process -
+# fails here rather than in ff-aggregate's 180s timeout. Slower machine:
+# raise FLEETFLOW_TEST_STATUS_BUDGET_S rather than deleting the assertion.
+BIG_BUDGET="${FLEETFLOW_TEST_STATUS_BUDGET_S:-30}"
+[ "$BIG_T" -lt "$BIG_BUDGET" ] \
+  && ok "status: ${BIGN}-lane run in ${BIG_T}s (budget ${BIG_BUDGET}s)" \
+  || bad "status: ${BIGN}-lane run took ${BIG_T}s, budget ${BIG_BUDGET}s (parallel read regressed?)"
+# Order is journal first-appearance order at ANY worker count: records are
+# concatenated by journal index, never by completion order or by a glob.
+printf '%s' "$BIGOUT" | jq -e --argjson n "$BIGN" '[.lanes[].id] == [range($n) | "lane-\(.)"]' >/dev/null 2>&1 \
+  && ok "status: ${BIGN} lanes emitted in journal first-appearance order" \
+  || bad "status: lane order differs from the journal (parallel workers reordered the output)"
+check "status: FLEETFLOW_STATUS_WORKERS must be a positive integer" 2 \
+  env FLEETFLOW_STATUS_WORKERS=abc bash "$S/ff-status.sh" --run big --repo "$BIGREPO"
+check "status: FLEETFLOW_STATUS_WORKERS=0 is rejected" 2 \
+  env FLEETFLOW_STATUS_WORKERS=0 bash "$S/ff-status.sh" --run big --repo "$BIGREPO"
+# The serial path (1 worker) is the reference the parallel path must match
+# record for record. A 40-lane slice, not the 200: serial costs ~350ms/lane
+# here and the comparison needs no scale, only both code paths. elapsed_s and
+# last_activity_s are clock-derived on this fixture (no prompt files) and are
+# excluded with generated_at; every other field must be byte-identical.
+MIDRD="$BIGREPO/.fleetflow/mid"; mkdir -p "$MIDRD"; : > "$MIDRD/journal.jsonl"
+MIDN=40; i=0
+while [ "$i" -lt "$MIDN" ]; do
+  printf '{"type":"started","key":"k%s","id":"lane-%s","model":"sonnet"}\n' "$i" "$i" >> "$MIDRD/journal.jsonl"
+  printf '{"type":"result","key":"k%s","id":"lane-%s","rc":0,"artifact":"lane-%s.result.json"}\n' "$i" "$i" "$i" >> "$MIDRD/journal.jsonl"
+  i=$((i+1))
+done
+MIDNORM='del(.generated_at) | .lanes |= map(del(.elapsed_s, .last_activity_s))'
+MID1="$(FLEETFLOW_STATUS_WORKERS=1 bash "$S/ff-status.sh" --run mid --repo "$BIGREPO" 2>/dev/null | jq -Sc "$MIDNORM")"
+MID8="$(FLEETFLOW_STATUS_WORKERS=8 bash "$S/ff-status.sh" --run mid --repo "$BIGREPO" 2>/dev/null | jq -Sc "$MIDNORM")"
+printf '%s' "$MID1" | jq -e --argjson n "$MIDN" '.lanes|length == $n' >/dev/null 2>&1 \
+  && ok "status: FLEETFLOW_STATUS_WORKERS=1 (serial path) emits every lane" \
+  || bad "status: serial path emitted $(printf '%s' "$MID1" | jq -r '.lanes|length' 2>/dev/null)/$MIDN lanes"
+[ -n "$MID1" ] && [ "$MID1" = "$MID8" ] \
+  && ok "status: serial and 8-worker records are identical (mod clock-derived fields)" \
+  || bad "status: serial and parallel records differ - a field is being set in a worker and lost"
 
 # --- the suite never touches the real machine-level store ----------------------
 # Guards the isolation exported at the top of this file. Without it, ff-clean's
