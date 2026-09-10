@@ -8,6 +8,13 @@ shipped, the ADRs own WHY.
 ## [Unreleased]
 
 ### Added
+- `FLEETFLOW_STATUS_WORKERS` (default `nproc`, capped at 8): the number of
+  worker subshells `ff-status` reads lanes with; `1` is the serial path.
+  Registered in `ff-doctor --env` and `docs/REFERENCE.md`.
+- `tests/run.sh` pins a wall-clock budget on the 200-lane fixture
+  (`FLEETFLOW_TEST_STATUS_BUDGET_S`, default 30), asserts lane order equals
+  journal first-appearance order, and that a stalled lane still exits 14
+  under `--exit-stalled` with more than one worker.
 - `host-watchers` in `ff-doctor --offline` and `ff-plan lint` (ADR-038): lane
   worktrees live inside the host repo, so a registered dev server serving it
   crawls every lane — the `mapforge` Vite service reached 87.9 GB of private
@@ -83,6 +90,12 @@ shipped, the ADRs own WHY.
   failure ADR-016 named for UI, relocated into code).
 
 ### Changed
+- `ff-status` reads lanes in parallel (ADR-039). The per-lane loop body is
+  now `lane_record`, run inside worker subshells over round-robin chunks of
+  the journal rows; each lane writes its own record file and stall marker,
+  and `emit` reduces the markers and concatenates the records by journal
+  index. Same JSON, same order, same exit codes. Measured 2026-09-10: the
+  200-lane fixture 69s -> 11.8s, the 140-lane godaddy-build 56s -> 12.8s.
 - A run's `elapsed_s` is its wall-clock span (first lane start → most recent
   activity), no longer `max(lane elapsed)`. The two coincide only for a single
   simultaneous wave; godaddy-build ran 123 lanes in waves across a night and
